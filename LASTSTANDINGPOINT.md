@@ -2,7 +2,7 @@
 
 ## Current phase
 
-Laptop baseline accepted; Windows VPS provisioning is in progress while four deployment foundations are staged in parallel.
+Laptop baseline accepted; GitHub `main` is now the canonical source authority. Windows VPS provisioning remains in progress while deployment foundations and a read-only MCP capability-plane baseline proceed in parallel.
 
 ## Accepted baseline
 
@@ -75,17 +75,17 @@ Laptop baseline accepted; Windows VPS provisioning is in progress while four dep
 - `project-docs/foundations/CONTEXT_CONTINUITY_BASELINE.md`
 - `project-docs/foundations/SKILL_CURATION_BASELINE.md`
 - `project-docs/foundations/BUZZ_COLLABORATION_PLANE_BASELINE.md`
+- `project-docs/foundations/MCP_CAPABILITY_PLANE_BASELINE.md`
 - JSON schemas for context checkpoints, external skill candidates, Buzz task envelopes, and Buzz result receipts.
-
 
 ## Plugin and GitHub continuity status
 
-- Atlassian Rovo is not installed. Plugin control-plane verification returned `not_installed`; the Founder account currently has no Jira/Confluence site available for authorization.
+- Atlassian Rovo is not installed. The Founder account currently has no Jira/Confluence site available for authorization.
 - GitHub identity and Codex Connector installation are active for `kopikonkf`.
 - Private repository `kopikonkf/aether-ai-os` is accessible with admin, maintain, pull, push, and triage permissions.
-- Write conformance passed through branch creation, file create/delete commits, and draft PR creation.
-- Draft PR #1 corrects the ineffective `gitignore` filename to `.gitignore` without writing directly to `main`.
-- GitHub is the source-code authority; `LASTSTANDINGPOINT.md` remains the canonical handoff file in the repository.
+- Write conformance passed through branch creation, commits, pull requests, CI inspection, failure diagnosis, and branch repair.
+- PR #1 and PR #2 were merged on 2026-07-29. `main` contains the sanitized Aether baseline and effective `.gitignore`.
+- GitHub `main` is the source-code authority; `LASTSTANDINGPOINT.md` remains the canonical handoff file in the repository.
 - Runtime state, secrets, SQLite files, logs, backups, wheels, ZIPs, and local environments must never be committed.
 
 ## Parallel deployment foundations staged
@@ -152,41 +152,24 @@ Provisioning acceptance evidence must be secret-safe and include:
 
 Do not start the full first pulse on the VPS before migration planning because demo commands write synthetic records into AETHER_HOME. Readiness and doctor are safe gates; full `-Action All` occurs after service/data-path preparation.
 
-## GitHub Source Authority — 2026-07-29
+## GitHub source authority — 2026-07-29
 
-- Repository: `kopikonkf/aether-ai-os` (private)
-- GitHub App installation: ACTIVE for `kopikonkf`
-- Permissions proven: admin, maintain, pull, push, triage
-- Write conformance: PASSED
-- Proof branch: `agent/github-connectivity-proof`
-- Draft PR: `#1 Prove GitHub write connectivity and fix .gitignore`
-- Repository safety correction: renamed ineffective `gitignore` to `.gitignore` on the proof branch
-- GitHub is now the intended source-code authority; `LASTSTANDINGPOINT.md` remains the canonical handoff artifact inside the repository.
-- Do not merge or publish runtime state, `.env`, SQLite databases, logs, frames, backups, wheels, or release ZIPs into source control.
+- Repository: `kopikonkf/aether-ai-os` (private).
+- Canonical branch: `main`.
+- PR #1 merged: effective `.gitignore`, removal of ineffective `gitignore`, and connector write proof.
+- PR #2 merged into the proof branch, then PR #1 merged the complete stacked source into `main`.
+- Current `main` head after source import: `20fcb4723894fa163f5da8b1c0e05514f04f7317`.
+- Sanitized source import contains 619 source, test, documentation, and deployment paths.
+- GitHub Actions final import run passed package installation, compilation, Core, Tools, root deployment, isolated Gateway tests, JSON/YAML parsing, and artifact upload.
+- MCP dependency is bounded to `mcp>=1.27,<2`; Gateway dev dependencies include `pytest-asyncio`.
 
-## Sanitized GitHub source import — 2026-07-29
+## MCP capability-plane baseline — 2026-07-29
 
-- Import source: Founder-accepted `v0.19.2-founder-alpha-frozen.2` plus staged post-freeze foundations.
-- Sanitized tree: 600+ source, test, documentation, and deployment files; no real `.env`, runtime databases, WAL/SHM files, wheels, ZIPs, logs, frames, or backups.
-- Local pre-publish verification:
-  - Core: 148 passed
-  - Tools: 52 passed, 1 optional skip
-  - Gateway: 103 passed across 48 isolated modules
-  - Root migration/deployment: 1 passed
-  - JSON: 21 parsed
-  - YAML: 34 parsed
-- Permanent CI workflow uses Python 3.11 and the same isolated Gateway module runner.
-- Planned stacked branch: `agent/sanitized-source-import`, based on `agent/github-connectivity-proof`.
-- Planned draft PR base: `agent/github-connectivity-proof`; retarget to `main` after PR #1 merges.
-
-## GitHub sanitized source bootstrap — 2026-07-29
-
-- PR #1 remains the safety prerequisite and is not merged automatically.
-- The original uploaded file was named `gitignore`; PR #1 replaces it with the effective `.gitignore` and removes the ineffective file.
-- The GitHub connector is proven for private-repository read/write, branches, commits, file mutations, and draft PRs.
-- Connector limitation: it does not accept a local directory/archive as a bulk source upload. Per-file import would create hundreds of API mutations and poor history.
-- One-time bootstrap package produced: `Aether_GitHub_Source_Bootstrap_20260729.zip`.
-- Bootstrap source contains 619 sanitized files and excludes runtime databases, real `.env`, WAL/SHM, wheels, ZIP releases, logs, frames, caches, and local virtual environments.
-- Verification: Core 148 passed; Tools 52 passed + 1 optional skip; Gateway 103 passed across 48 isolated modules; root migration test 1 passed; 21 JSON and 34 YAML files parsed.
-- One-time Founder action: run `PUSH_SANITIZED_SOURCE.ps1`; it clones `agent/github-connectivity-proof`, creates `agent/sanitized-source-import`, copies the sanitized tree, audits forbidden files, commits, and pushes.
-- After that push, ChatGPT will verify the branch, open a stacked draft PR targeting `agent/github-connectivity-proof`, inspect CI, and manage incremental source changes directly through GitHub.
+- Tracking issue: `#3 Build read-only Aether MCP capability-plane baseline`.
+- Active branch: `agent/mcp-capability-plane-baseline`.
+- The dormant legacy CKA MCP prototype is being replaced by a read-only Aether Operational MCP service.
+- Approved first resources: `aether://status`, `aether://capabilities`, and `aether://handoff`.
+- Approved first tools: `aether_status`, `aether_capability_manifest`, `aether_handoff`, bounded `memory_search`, and bounded `artifact_hash_verify`.
+- No mutation tools, approval decisions, shell, arbitrary file access, secret access, legacy CKA bulk access, or public HTTP exposure.
+- `stdio` is the default transport. Streamable HTTP requires explicit opt-in and loopback binding.
+- External MCP client manager, remote OAuth, mutation proposal tools, and generic MCP Builder remain deferred until the first server is conformed and Founder-proven.
