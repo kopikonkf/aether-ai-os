@@ -72,11 +72,14 @@ def main() -> int:
     checklist.write_text(
         "# Aether AionUi wiring checklist\n\n"
         "1. The Unified Senses page is available at `/#/senses` after router wiring.\n"
-        "2. Add a SiderNav entry that navigates to `/senses` using current Arco conventions.\n"
-        "3. Route `/senses*` and `/api/browser-senses*` to Aether Gateway at the reverse proxy.\n"
-        "4. Keep AETHER_OPERATOR_TOKEN and LiveKit API secrets outside renderer code.\n"
-        "5. Run AionUi lint, unit tests, WebUI start, and package build.\n\n"
-        "Only the known router anchors are eligible for automatic modification.\n",
+        "2. Add protected `/approvals` and `/senses` routes using the supplied snippets.\n"
+        "3. Add SiderNav entries for Approval Inbox and Unified Senses using current AionUi conventions.\n"
+        "4. Register AetherApprovalService/bridge in the main process and expose only the typed preload bridge.\n"
+        "5. Route `/api/approvals*`, `/senses*`, and `/api/browser-senses*` to Aether Gateway.\n"
+        "6. Keep AETHER_OPERATOR_TOKEN and LiveKit API secrets outside renderer code.\n"
+        "7. Verify the approval renderer receives no raw action arguments or result output.\n"
+        "8. Run AionUi lint, unit tests, WebUI start, and package build.\n\n"
+        "Only the known Unified Senses router anchors are eligible for automatic modification.\n",
         encoding="utf-8",
     )
     print(json.dumps({"status": "installed", "version": package.get("version"), "files": copied, "router": wiring, "checklist": str(checklist)}, indent=2))

@@ -73,7 +73,7 @@ from aether.experiments import ExperimentGovernor, ReversibleExperimentEngine, S
 from aether.skills import SkillDecisionConflict, SkillFactory, SkillFactoryBlocked, SkillNotFound, SQLiteSkillStore
 from aether_gateway.actions import RegistryToolExecutor
 from aether_gateway.approvals import (
-    ApprovalCoordinator, OperatorAuthError, OperatorAuthenticator, pending_to_dict,
+    ApprovalCoordinator, ApprovalInboxService, OperatorAuthError, OperatorAuthenticator, pending_to_dict,
 )
 from aether_gateway.adapters import DirectTextSenseAdapter, LocalProcessRuntimeAdapter
 from aether_gateway.adapters.telegram_bot import TelegramSenseAdapter
@@ -419,8 +419,9 @@ browser_sense_service = BrowserSenseService(
     maximum_frame_bytes=int(os.environ.get("AETHER_VISION_MAX_FRAME_BYTES", "750000")),
     default_ttl_seconds=int(os.environ.get("AETHER_BROWSER_SENSE_TTL_SECONDS", "3600")),
 )
-approval_inbox = TrustedApprovalInbox(pending_action_store, action_path, action_event_bus)
-approval_coordinator = ApprovalCoordinator(approval_inbox, cognitive_gateway)
+trusted_approval_inbox = TrustedApprovalInbox(pending_action_store, action_path, action_event_bus)
+approval_coordinator = ApprovalCoordinator(trusted_approval_inbox, cognitive_gateway)
+approval_inbox = ApprovalInboxService(approval_coordinator)
 operator_authenticator = OperatorAuthenticator()
 
 
@@ -537,7 +538,10 @@ class DelegateRequest(BaseModel):
 
 
 class ApprovalDecisionRequest(BaseModel):
-    reason: str
+    reason: str = Field(min_length=3, max_length=500)
+    expected_action_hash: str | None = Field(
+        default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$"
+    )
 
 
 class RuntimeConformanceRequest(BaseModel):
@@ -2323,11 +2327,7 @@ async def execute_coding_task(
 
 @app.get("/api/approvals/status")
 def approval_status():
-    approval_inbox.sweep_expired()
-    return {
-        status.value: len(pending_action_store.list(status))
-        for status in ApprovalStatus
-    }
+    return approval_inbox.status_counts()
 
 
 @app.get("/api/approvals")
@@ -2358,16 +2358,17 @@ def get_approval(
 async def _decide_approval(approval_id: str, req: ApprovalDecisionRequest, approved: bool, token: str | None):
     operator = _authenticate_operator(token)
     try:
-        outcome = await approval_coordinator.decide(
+        outcome = await approval_inbox.decide(
             approval_id,
             approved=approved,
             principal=operator.principal,
             reason=req.reason,
             channel=operator.channel,
+            expected_action_hash=req.expected_action_hash,
         )
     except ApprovalNotFound as exc:
         raise HTTPException(status_code=404, detail="Approval not found") from exc
-    except ApprovalStateError as exc:
+    except (ApprovalStateError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     response = {
         "approval": pending_to_dict(outcome.approval.pending),

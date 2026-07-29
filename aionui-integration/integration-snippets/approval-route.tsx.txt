@@ -1,0 +1,5 @@
+// Add near the other lazy page imports.
+const ApprovalInbox = React.lazy(() => import('@renderer/pages/approval-inbox'));
+
+// Add inside the protected route tree.
+<Route path='/approvals' element={withRouteFallback(ApprovalInbox)} />
