@@ -44,6 +44,16 @@ providers:
 # Fuel selection mapping based on task requirements
 routing:
   default_fuel: "arzastore/deepseek-v4-flash"
+  resilience:
+    # Runtime activation still requires AETHER_PROVIDER_RESILIENCE_ENABLED=true.
+    enabled: false
+    defaults:
+      daily_request_limit: 100
+      concurrency_limit: 2
+      failure_threshold: 3
+      cooldown_seconds: 60
+      data_policy_tags: ["cloud"]
+      capabilities: ["reason", "plan", "critic", "coding", "vision"]
   
   # Fallback chain when primary provider fails
   fallback_chain:
