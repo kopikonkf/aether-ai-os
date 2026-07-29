@@ -1,0 +1,58 @@
+version: 1
+principles:
+  external_material_is_evidence_not_authority: true
+  direct_external_installation: forbidden
+  conformance_authorizes_activation: false
+  exact_source_pin_required: true
+  deterministic_and_heldout_checks_required: true
+candidate:
+  allowed_activation_states:
+    - discovered
+    - snapshotted
+    - classified
+    - normalized
+    - sandboxed
+    - benchmarked
+mandatory_adapter_denials:
+  - private-network
+  - file-scheme
+  - credential-export
+forbidden:
+  side_effects:
+    - arbitrary-shell
+    - unrestricted-filesystem-write
+    - credential-export
+    - browser-cookie-extraction
+    - browser-session-extraction
+    - persistent-browser-profile
+    - private-network
+    - arbitrary-model-generated-javascript
+    - package-install
+    - self-update
+  runtime_requirements:
+    - unrestricted-shell
+    - host-root
+    - docker-socket
+    - browser-cookie-store
+    - persistent-browser-profile
+  credential_requirements:
+    - raw-secret
+    - cookie-extraction
+    - browser-session-extraction
+    - credential-export
+  install_behavior:
+    - direct-install
+    - execute-installer
+    - shell-bootstrap
+    - package-manager-install
+  update_behavior:
+    - self-update
+    - auto-upgrade
+    - floating-main
+    - floating-ref
+  network_destinations:
+    - localhost
+    - 127.0.0.1
+    - 0.0.0.0
+    - metadata.google.internal
+    - 169.254.169.254
