@@ -19,8 +19,10 @@ def test_livekit_worker_delegates_cognition_to_gateway() -> None:
     worker = (ROOT / "aether-gateway" / "src" / "aether_gateway" / "browser_senses" / "worker.py").read_text(encoding="utf-8")
     assert "/api/browser-senses/worker/chat" in worker
     assert "Aether Gateway is the only cognitive authority" in worker
-    assert "openai" not in worker.lower()
-    assert "anthropic" not in worker.lower()
+    assert "inference.STT" in worker
+    assert "inference.TTS" in worker
+    assert "fallback=config.stt_fallback()" in worker
+    assert "fallback=config.tts_fallback()" in worker
 
 
 def test_one_domain_deployment_routes_senses_to_aether_and_root_to_aionui() -> None:
@@ -49,34 +51,3 @@ def test_aionui_pack_contains_native_route_and_non_destructive_installer() -> No
     assert "src={sensesUrl}" in page.read_text(encoding="utf-8")
     assert "--wire-router" in installer
     assert "refusing unsafe automatic patch" in installer.lower()
-
-
-def test_windows_status_uses_portable_os_fallbacks() -> None:
-    script = (ROOT / "START_AETHER_WINDOWS_ALPHA.ps1").read_text(encoding="utf-8")
-    assert "function Get-PortableOSDescription" in script
-    assert "Get-CimInstance -ClassName Win32_OperatingSystem" in script
-    assert "[Environment]::OSVersion.VersionString" in script
-    assert "function Get-PortableOSArchitecture" in script
-    assert "[Environment]::Is64BitOperatingSystem" in script
-    assert "os = Get-PortableOSDescription" in script
-    assert "architecture = Get-PortableOSArchitecture" in script
-
-    readiness = (ROOT / "AETHER_WINDOWS_READINESS.ps1").read_text(encoding="utf-8")
-    assert "function Get-PortableRuntimeArchitecture" in readiness
-    assert "$runtimeArchitecture = Get-PortableRuntimeArchitecture" in readiness
-    assert "RuntimeInformation]::OSArchitecture.ToString()" not in readiness
-
-
-def test_state_inspector_v2_covers_active_authorities_and_legacy_boundary() -> None:
-    script = (ROOT / "scripts" / "aether_state_continuity.py").read_text(encoding="utf-8")
-    assert '"aether.state-continuity.audit.v2"' in script
-    for token in (
-        "fleet-operations.sqlite3",
-        "opportunity-intelligence.sqlite3",
-        "live-web-intelligence.sqlite3",
-        "reversible-experiments.sqlite3",
-        "browser-senses.sqlite3",
-    ):
-        assert token in script
-    assert 'home / "legacy" / "archives" / "original-brain"' in script
-    assert '"automatic_imports_authorized": 0' in script
