@@ -29,6 +29,9 @@ dist/
 *.zip
 SHA256SUMS.txt
 
+# Local proof/evidence workspaces
+.proof/
+
 # Runtime state must never enter source control
 .aether-windows/
 AETHER_HOME/
