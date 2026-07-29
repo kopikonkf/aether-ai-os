@@ -69,3 +69,9 @@ Decompose into:
 7. source health/doctor report
 
 This candidate should run over Aether SourceCapabilityMesh rather than receiving unrestricted shell or browser authority.
+
+## Executable nutrition-conformance gate
+
+Issue #15 turns this baseline into executable contracts. A conformed external nutrition candidate must be pinned to an exact commit and artifact hash, declare license/publisher/capabilities, avoid forbidden host authority, bind to exact passed SourceCapabilityMesh adapter receipts, and provide deterministic plus held-out checks.
+
+A passing receipt means only `eligible_for_benchmark=true`. It never authorizes activation. Founder activation through the governed Skill Factory remains a separate terminal decision.
