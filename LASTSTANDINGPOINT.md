@@ -2,7 +2,9 @@
 
 ## Current phase
 
-The Founder-accepted laptop baseline remains `v0.19.2-founder-alpha-frozen.2`. GitHub `main` is the canonical source authority. Windows VPS provisioning is in progress. The read-only Aether Operational MCP baseline is merged and CI-conformed. Its package and entrypoint are installed in the separate Founder laptop development checkout; Codex registration and zero-mutation Founder proof remain pending.
+The Founder-accepted laptop baseline remains `v0.19.2-founder-alpha-frozen.2`. GitHub `main` is the canonical source authority. Windows VPS provisioning is still waiting on provider delivery. The read-only Aether Operational MCP baseline is installed in a separate Founder laptop development checkout; local Codex registration and zero-mutation Founder proof remain pending.
+
+Source foundations merged after the frozen.2 acceptance now include DNA integrity/governance hardening, constitutional authority coherence, the generic AionUi Approval Inbox integration pack, and governed external nutrition conformance. GitHub merges do not automatically upgrade the accepted laptop runtime.
 
 ## Capability truth model
 
@@ -12,7 +14,7 @@ Use this progression for every capability:
 IMPLEMENTED → WIRED → CONFORMED → ACTIVE → FOUNDER-PROVEN
 ```
 
-Code existence alone never proves runtime activation or Founder acceptance.
+Code existence, a merged PR, or a green CI run never proves host activation or Founder acceptance.
 
 ## Accepted laptop baseline
 
@@ -20,7 +22,7 @@ Code existence alone never proves runtime activation or Founder acceptance.
 - Windows launcher doctor/stdout bug fixed.
 - Gateway healthy on Windows 10.
 - Telegram and Browser Senses live.
-- Telegram one-tap approval proven.
+- Telegram one-tap approval Founder-proven.
 - Central Telegram `CommandRegistry` active.
 - Governed write proof completed.
 - Trust observation epoch persists in `runtime_state/profile_start.json`.
@@ -44,12 +46,16 @@ Code existence alone never proves runtime activation or Founder acceptance.
 
 - Repository: `kopikonkf/aether-ai-os` (private).
 - Canonical branch: `main`.
-- PR #1 and PR #2 merged the effective `.gitignore`, GitHub write proof, and sanitized Aether source baseline.
-- PR #4 merged the read-only MCP capability-plane baseline.
-- PR #4 merge commit was `4dcf2e55df7cc03ef7d53f9a23fbac38c2d510d4`.
-- PR #6 merged the Windows MCP Founder proof runbook and complete canonical roadmap.
+- PR #1/#2: effective `.gitignore`, write proof, and sanitized source baseline.
+- PR #4: read-only MCP capability-plane baseline.
+- PR #6: MCP Founder proof runbook and complete operational/Buzz roadmap.
+- PR #8: canonical `AGENTS.md`, `SOUL.md`, and `MEMORY.md` contracts.
+- PR #10: checksum-backed DNA verification and hard governance vetoes.
+- PR #12: non-overlapping DNA authority domains and canonical-memory continuity semantics.
+- PR #14: shared HTTP ApprovalInboxService wiring and generic AionUi Approval Inbox integration pack.
+- PR #16: governed external nutrition conformance harness.
 - GitHub Actions verifies package installation, compilation, Core, Tools, root deployment tests, isolated Gateway tests, JSON/YAML parsing, and test receipts.
-- GitHub connector write flow is proven for branches, commits, pull requests, CI diagnosis, repairs, and review state.
+- GitHub connector write flow is proven for branches, commits, pull requests, CI diagnosis/repair, and review state.
 - `LASTSTANDINGPOINT.md` is the canonical cross-session handoff.
 - Never commit runtime state, real `.env`, credentials, SQLite/WAL/SHM files, logs, frames, backups, wheels, release ZIPs, caches, or virtual environments.
 
@@ -59,30 +65,50 @@ Code existence alone never proves runtime activation or Founder acceptance.
 - `AGENTS.md` defines the repository execution contract for Codex, OpenCode, ChatGPT Chief Architect sessions, and future workers.
 - `MEMORY.md` defines the memory-authority map and cross-session continuity protocol without duplicating dynamic handoff state.
 - The ChatGPT project session serves as Chief Architect for architecture, sequencing, acceptance criteria, integration review, and canonical handoff maintenance. It is not a production runtime authority.
-- Codex is the repository-native engineering and verification worker. It is used for bounded issue execution, tests, CI repair, host conformance, and reviewable diffs.
-- OpenCode remains an accepted aggressive task-completion worker and may be preferred for long mechanical implementations or provider-flexible coding work.
+- Codex is the repository-native engineering and verification worker for bounded issue execution, tests, CI repair, host conformance, and reviewable diffs.
+- OpenCode remains the preferred aggressive task-completion worker for long mechanical implementations and provider-flexible coding work.
 - Codex and OpenCode are replaceable bodies behind Aether governance; neither may bypass approvals, expose secrets, mutate production state ad hoc, or claim unsupported capability.
-- On the production VPS, the default is bounded inspection and conformance from the Founder laptop or a temporary CLI session. ChatGPT desktop/Codex must not run persistently as a production daemon.
+- ChatGPT desktop/Codex must not run persistently as a production daemon on the VPS.
+
+## DNA, Genome, North Star, persona
+
+- Dee is the ultimate constitutional amendment and final acceptance authority.
+- `north_star.yaml` is the highest directional, mission, and sacred-principle authority.
+- `Genome.md` defines epistemic, learning, self-audit, and evolution invariants.
+- `aether.core.json` is the machine-readable self-model/constraint projection within those domains.
+- Governance and Approval services own execution authorization.
+- DNA integrity is bound to a Founder-reviewed SHA-256 manifest and fails closed on mismatch.
+- Canonical memory is not identity, but governed canonical memory must survive verified host migration.
+- `aether-core/configs/persona.yaml` is persona v3 and remains aligned with `SOUL.md`.
+- Voice target: feminine, warm, youthful-adult, bright, articulate; avoid childish, shrill, robotic, or overly seductive delivery.
+- Founder Google voice audition reference: `https://www.youtube.com/watch?v=XjSltll-ESM`.
+- The URL is a reference only; exact voice ID/API availability/acoustic match remain pending audition. Dee retains preview, lock, veto, and fallback control.
 
 ## Telegram presentation status
 
 - Approval cards remain Founder-proven on frozen.2.
-- Safe-HTML `TelegramPresentationAdapter` is merged in GitHub with escaping, bounded splitting, links, headings/lists, inline/fenced code, and plain-text fallback.
+- Safe-HTML `TelegramPresentationAdapter` is merged with escaping, bounded splitting, links, headings/lists, inline/fenced code, and plain-text fallback.
 - Cognition receives a channel-capability snapshot and must not claim unsupported structured Rich Messages or streaming.
 - Generic Bot API structured Rich Messages remain deferred and non-blocking.
 - GitHub merge does not mean the adapter is installed or active on the accepted laptop/VPS runtime.
 
-## Shared Approval Inbox status
+## Shared Approval Inbox and AionUi status
 
 - Shared `ApprovalInboxService` is merged for Telegram, HTTP/AionUi, future CLI, and future collaboration surfaces.
-- It supports filtering, expiry handling, exact decisions, optional action-hash binding, and exact-once resume.
-- AionUi Approval Inbox UI remains pending.
+- HTTP status/list/get/approve/reject operations use the shared service.
+- Decisions support exact `expected_action_hash`; stale views are rejected before execution.
+- AionUi integration pack includes a native generic Approval Inbox page, typed IPC bridge, bounded projection, status filters, detail, full hash, reason, approve/reject, polling, replay, and error states.
+- Operator token remains in the Electron main process; raw action bodies, secret values, unbounded arguments, and result output do not enter renderer state.
+- Source pack: `CONFORMED`.
+- Installed into a pinned upstream AionUi checkout: `NO`.
+- `ACTIVE`: `NO`.
+- `FOUNDER-PROVEN`: `NO`.
 - No surface may bypass the same governed pending-action authority.
 
 ## Deployment foundations merged
 
 1. Telegram safe presentation adapter.
-2. Shared `ApprovalInboxService`.
+2. Shared `ApprovalInboxService` and generic AionUi Approval Inbox source pack.
 3. Quiescent `AETHER_HOME` export/import tooling using SQLite backup, quick-check, sidecar exclusion, and SHA-256 manifests.
 4. pywin32 `AetherGateway` Windows Service host with loopback binding, virtual service identity, ACLs, automatic startup, restart-on-failure, status, and uninstall paths.
 
@@ -90,69 +116,102 @@ Actual Windows Server service, ACL, restart, migration, and rollback behavior re
 
 ## MCP capability-plane baseline
 
-- Tracking issue #3 is closed as completed.
-- PR #4 is merged into `main`.
+- Tracking issue #3 closed; PR #4 merged.
 - Installed entrypoint: `aether-mcp`.
 - Default transport: local `stdio`.
-- Streamable HTTP requires explicit opt-in and is restricted to loopback.
-- Resources:
-  - `aether://status`
-  - `aether://capabilities`
-  - `aether://handoff`
-- Tools:
-  - `aether_status`
-  - `aether_capability_manifest`
-  - `aether_handoff`
-  - bounded read-only `memory_search`
-  - root-bounded `artifact_hash_verify`
+- Streamable HTTP requires explicit opt-in and loopback binding.
+- Resources: `aether://status`, `aether://capabilities`, `aether://handoff`.
+- Tools: `aether_status`, `aether_capability_manifest`, `aether_handoff`, bounded read-only `memory_search`, root-bounded `artifact_hash_verify`.
 - Advisory prompt: `aether_operational_context`.
-- Security boundary:
-  - no mutation tools
-  - no approval decisions
-  - no shell
-  - no arbitrary file reads
-  - no secret contents
-  - no legacy CKA bulk access
-  - no public MCP exposure
-  - no state creation for fresh AETHER_HOME reads
-- CI conformance:
-  - 50 Gateway modules
-  - 109 tests passed
-  - 0 skipped
-  - 0 failed modules
-  - exact MCP stdio handshake and capability enumeration passed against `mcp>=1.27,<2`
-- Current classification:
-  - service and contracts: `IMPLEMENTED`
-  - package entrypoint and stdio registration: `WIRED`
-  - protocol and read-only boundaries: `CONFORMED`
-  - installed in Founder laptop development checkout: `YES`
-  - entrypoint help proof: `YES` (`aether-mcp`, MCP SDK `1.29.0`)
-  - registered in local Codex client: `NO`
-  - `ACTIVE`: `NO`
-  - `FOUNDER-PROVEN`: `NO`
-- Local proof runbook:
-  - `project-docs/testing/MCP_FOUNDER_LOCAL_PROOF_WINDOWS.md`
-- Founder laptop evidence:
-  - clean repository at PR #6 merge
-  - Python 3.11 virtual environment created under `C:\Github\aether-ai-os\.venv`
-  - editable Core, Tools, and Gateway packages installed
-  - `aether-mcp.exe --help` succeeded
-  - local Codex MCP registration not yet performed
-- Deferred until real patterns justify extraction:
-  - external MCP client manager
-  - MCP server registry and credential references
-  - remote OAuth
-  - mutation proposal tools
-  - generic MCP Builder
-  - public ingress
+- No mutation tools, approval decisions, shell, arbitrary file reads, secret contents, legacy CKA bulk access, public HTTP exposure, or state creation on fresh reads.
+- CI-conformed against `mcp>=1.27,<2` with exact stdio handshake/capability enumeration.
+- Installed in Founder laptop development checkout: `YES`.
+- `aether-mcp.exe --help`: `PROVEN` with MCP SDK `1.29.0`.
+- Registered in local Codex client: `NO`.
+- `ACTIVE`: `NO`.
+- `FOUNDER-PROVEN`: `NO`.
+- Runbook: `project-docs/testing/MCP_FOUNDER_LOCAL_PROOF_WINDOWS.md`.
+- Deferred: external MCP client manager, MCP registry/credential references, remote OAuth, mutation proposal tools, generic MCP Builder, public ingress.
 
-## Aether CLI decision
+## Aether CLI truth
 
-- A broad developer entrypoint exists: `python aether_cli.py ...`.
-- Package commands include `aether-gateway`, `aether-sense-worker`, and `aether-mcp`.
+- Broad cross-platform developer/Founder entrypoint exists: `python aether_cli.py ...`.
+- It exercises cognition, Senses, approvals, memory, skills, evolution, source/opportunity paths, runtime bodies, driver conformance, and operations demos.
+- Package commands include `aether-gateway`, `aether-sense-worker`, `aether-mcp`, `aether-boot`, `aether-check`, and `aether-daemon`.
 - One stable installed umbrella command named `aether` does not yet exist.
-- The accepted thin control-plane CLI must not duplicate Mind logic or bypass governance/runtime adapters.
-- CLI mutation commands must use the same governed action and approval path as Telegram and API.
+- Current classification:
+  - root developer harness: `IMPLEMENTED` and CI-tested;
+  - stable installed control-plane CLI: `NOT IMPLEMENTED`;
+  - VPS-ready/Founder-proven CLI: `NO`.
+- Accepted CLI design remains `project-docs/foundations/AETHER_CLI_DECISION.md`.
+- Stable CLI must remain a thin control surface and reuse Telegram/API/AionUi governance rather than duplicating Mind logic.
+- Proposed Nutrition Growth commands include `aether nutrition inspect|status|conform`, `aether sources status|doctor|enable`, `aether scout run`, `aether runtime conform`, and bounded `aether loop status|run`.
+
+## Skill curation and Nutrition Growth Plane
+
+- Existing Skill Factory governance is retained.
+- PR #16 made external nutrition intake executable and fail-closed.
+- External repositories require exact commit/artifact hash, license, publisher, declared side effects, runtime/network/credential/install/update requirements, normalization target, deterministic checks, and held-out checks.
+- Forbidden direct-install behavior includes arbitrary shell, unrestricted filesystem writes, direct system/package installation, self-update, cookie/session extraction, credential export, private network, persistent browser profiles, arbitrary generated JavaScript, and permission bypass.
+- Passing nutrition conformance means `eligible_for_benchmark=true` and always `eligible_for_activation=false`.
+- Founder activation remains a separate Skill Factory decision.
+- Foundation: `project-docs/foundations/NUTRITION_GROWTH_PLANE.md`.
+
+## SourceCapabilityMesh and autonomous observation
+
+- `SourceCapabilityMesh` is a health-aware ordered adapter registry; authority remains in Aether Core.
+- It owns stable adapter registration, immutable manifests, health checks, priority, source-kind filtering, public-observation policy, conformance eligibility guards, and bounded source selection.
+- It does not auto-install repositories, expose credentials/cookies, activate skills/runtimes, or approve mutations.
+- `AutonomousOpportunityScout` is observational and bounded: mesh health/eligibility → search/fetch → immutable snapshots → bounded claim extraction → opportunity evidence receipts.
+- Observation never grants mutation authority.
+
+Upstream dispositions:
+
+- `unclecode/crawl4ai`: library dependency behind Aether's existing `Crawl4AIRestrictedAdapter`.
+  - adapter code: `IMPLEMENTED`;
+  - package/version pin: pending;
+  - live-source conformance: pending;
+  - `ACTIVE`: `NO`;
+  - `FOUNDER-PROVEN`: `NO`.
+- `Panniantong/Agent-Reach`: capability-routing and doctor pattern/reference; do not directly install into production Aether because standard flows may install CLIs/system dependencies, use shell/MCP/browser sessions/cookies, register skills, and update routing backends.
+- `superiorlu/AITreasureBox`: catalog/evidence feed only; rankings/stars do not prove safety or compatibility.
+- `jim-schwoebel/awesome_ai_agents`: catalog and architecture research corpus; each linked project requires separate immutable intake.
+- `mvanhorn/last30days-skill`: reference/nutrition material, not a direct runtime install.
+- Aether-native candidate: `recent-signal-research` over SourceCapabilityMesh with freshness, provenance, contradiction handling, and cited synthesis.
+
+Nutrition access sequence:
+
+```text
+pin and conform Crawl4AI restricted dependency
+→ build Agent-Reach-inspired channel registry/doctor over SourceCapabilityMesh
+→ bounded AutonomousOpportunityScout Founder proof
+→ stable Aether CLI source/nutrition commands
+→ bounded Aether-native Ralph-style mission loop
+```
+
+## Aether-native Ralph-style loop decision
+
+- Ralph is an execution-loop pattern, not production code to copy unchanged.
+- Retain: one small story per fresh iteration, durable task/progress state, Git history/PR receipts, tests and CI feedback, reusable AGENTS learnings, explicit stop conditions.
+- Reject: `--dangerously-allow-all`, `--dangerously-skip-permissions`, unrestricted commits, direct production mutation, worker text as completion authority, and unbounded retries.
+- Aether-native loop:
+
+```text
+Founder-approved Mission/Issue/PRD
+→ immutable task envelope
+→ staging workspace and branch binding
+→ one highest-priority incomplete story
+→ one conformed worker body
+→ structured patch/artifacts
+→ independent verification
+→ governed approval when required
+→ commit/PR receipt
+→ bounded learning/checkpoint
+→ budget/stop evaluation
+→ fresh next iteration or halt
+```
+
+Completion must derive from authoritative task state and verification receipts, not only a textual completion promise.
 
 ## Context continuity decision
 
@@ -160,42 +219,32 @@ Actual Windows Server service, ACL, restart, migration, and rollback behavior re
 - `SQLiteConversationStore` retains 48 recent messages and deletes older session rows.
 - Canonical episodic memory preserves turns separately; lexical retrieval injects bounded relevant records.
 - Legacy idle-consolidation/dream modules are not composition-root wired and are not active.
-- Accepted staged Context Continuity Engine:
-  - immutable raw context ledger
-  - structured checkpoints
-  - protected recent tail
-  - tool-output externalization with typed recall handles
-  - summary DAG with source lineage
-  - soft/hard token thresholds
-  - deterministic convergence fallback
-  - bounded search/expand/doctor tools
+- Accepted staged engine: immutable raw context ledger, structured checkpoints, protected recent tail, tool-output externalization, summary DAG with lineage, token thresholds, deterministic convergence fallback, and bounded search/expand/doctor tools.
 - Do not activate automatic compaction before canary evaluation.
 
-## Skill curation and nutrition decision
+## Provider and runtime sequence
 
-- Existing Skill Factory governance is retained.
-- External skill intake remains the missing layer.
-- External skills must be pinned by exact commit/hash, classified, normalized, sandboxed, benchmarked, explicitly approved, observed, revised, and archived when needed.
-- `mvanhorn/last30days-skill` remains reference/nutrition material, not a direct runtime install.
-- Future Aether-native candidate: `recent-signal-research` over `SourceCapabilityMesh` with bounded credentials, freshness, provenance, contradiction handling, and cited synthesis.
-- Nutrition conformance remains pending in the operational sequence.
+Next non-VPS engineering lanes, one issue/branch/green PR at a time:
+
+```text
+provider resilience contracts
+→ Google TTS audition/fallback tooling
+→ OpenCode runtime-body conformance
+→ release/VPS evidence automation
+```
+
+Aether currently has one dedicated provider profile capped at 100 requests/day for the starting point. Codex uses the ChatGPT plan path and must not consume Aether production credentials. OpenCode and other runtime bodies should use separately attributable credential references, budgets, concurrency, error classification, circuit breakers, and fallback policy.
 
 ## Buzz collaboration-plane decision
 
 - Buzz is an optional future collaboration plane, not a replacement for Aether Mind, AionUi, memory authority, or governance.
 - Implementation starts only after AionUi and baseline stabilization.
-- Before deployment:
-  - pin exact Buzz release/commit and container image digests
-  - deploy in an isolated Linux/container boundary
-  - separate Founder, Aether, and worker cryptographic identities
-  - define signed task/result receipts and stop conditions
-  - prevent automatic Buzz-history ingestion into canonical memory
-  - prove cancellation, restart deduplication, outage isolation, and bounded context capsules
+- Before deployment: pin exact release/commit/image digests; isolated Linux/container boundary; separate Founder/Aether/worker identities; signed task/result receipts; no automatic Buzz-history ingestion; cancellation/restart dedup/outage isolation/context-capsule proof.
 - Huddle is a future multi-party audio Sense, not an initial authority surface.
 
 ## Canonical operational sequence
 
-Completed or accepted foundation:
+Completed or accepted source foundations:
 
 ```text
 inspect current state
@@ -203,9 +252,12 @@ inspect current state
 → central Telegram command registry
 → Telegram regular/safe-rich presentation adapter
 → Aether Operational MCP baseline
+→ DNA integrity/governance hardening
+→ generic AionUi Approval Inbox source pack
+→ external nutrition conformance harness
 ```
 
-Active executable sequence:
+Active host sequence:
 
 ```text
 provision Windows VPS
@@ -214,28 +266,27 @@ provision Windows VPS
 → quiescent AETHER_HOME migration
 → restore and verify AETHER_HOME on VPS
 → Cloudflare ingress
-→ AionUi/Senses public health
-→ generic AionUi Approval Inbox
-→ nutrition conformance
+→ install/verify AionUi and Senses public health
+→ install/verify generic AionUi Approval Inbox
+→ activate/conform selected nutrition source adapters
 → Google TTS audition and fallback proof
 → one conformed runtime body
 → Founder Acceptance
 → MVP v0.20 Governed Shipping
 ```
 
-`persistent Windows services` intentionally precedes production restore so the service identity, canonical paths, ACLs, stop/start behavior, and rollback boundary exist before migrated state becomes active.
+`persistent Windows services` intentionally precedes production restore so service identity, paths, ACLs, stop/start behavior, and rollback boundary exist before migrated state becomes active.
 
 Parallel non-blocking MCP gate:
 
 ```text
-install current GitHub main in a separate local development checkout
-→ register aether-mcp in a local Codex client
-→ enumerate exact MCP capabilities
+register aether-mcp in local Codex
+→ enumerate capabilities
 → read LASTSTANDINGPOINT
 → call aether_status
-→ perform one bounded memory_search
-→ verify one artifact hash
-→ compare repository and AETHER_HOME before/after
+→ bounded memory_search
+→ artifact hash verification
+→ compare repository/AETHER_HOME before and after
 → prove zero mutation
 → classify ACTIVE and FOUNDER-PROVEN
 ```
@@ -259,66 +310,47 @@ Do not jump directly to multi-agent orchestration or huddle before the one-room,
 
 ## Windows VPS provisioning gate
 
-Status: in progress; waiting for secret-safe Founder evidence.
+Status: waiting for provider delivery and secret-safe Founder evidence.
 
 Accepted target:
 
 - Windows Server 2025 or Windows Server 2022 x64 with Desktop Experience.
-- 4 vCPU minimum.
-- 8 GB RAM minimum.
-- 80 GB NVMe minimum.
-- Founder's planned 4 vCPU / 56 GB RAM profile is sufficient for current services; CPU is the likely bottleneck for local models or high parallelism.
+- 4 vCPU minimum; 8 GB RAM minimum; 80 GB NVMe minimum.
+- Planned 4 vCPU / 56 GB RAM profile is sufficient for current services; CPU is the likely bottleneck for local models/high parallelism.
 - Stable outbound Internet and fixed public IPv4.
 - Provider snapshot/restore capability.
-- Public inbound ports closed except RDP restricted to the Founder's current IP during provisioning.
-- Gateway port `8000` must never be exposed publicly.
+- Public inbound ports closed except RDP restricted to Founder's current IP during provisioning.
+- Gateway port `8000` must never be public.
 
 Canonical VPS paths:
 
 ```text
-release:
-C:\Aether\releases\Aether_OS_v0.19.2-founder-alpha-frozen.2
-
-service-owned AETHER_HOME:
-C:\ProgramData\Aether
-
-backups:
-C:\ProgramData\Aether\backups
-
-logs:
-C:\ProgramData\Aether\logs
-
-service metadata:
-C:\ProgramData\Aether\services
+release: C:\Aether\releases\Aether_OS_v0.19.2-founder-alpha-frozen.2
+AETHER_HOME: C:\ProgramData\Aether
+backups: C:\ProgramData\Aether\backups
+logs: C:\ProgramData\Aether\logs
+service metadata: C:\ProgramData\Aether\services
 ```
 
-Provisioning evidence must include only:
+Provisioning evidence must include only Windows product/version/build/architecture, CPU/RAM/disk summary, Firewall profile summary, Python 3.11.x path/version, and `AETHER_WINDOWS_READINESS.ps1` output. Never include passwords, tokens, public IP addresses, `.env`, provider credentials, or API keys.
 
-- Windows product/version/build/architecture;
-- CPU, RAM, and disk summary;
-- Windows Firewall profile summary;
-- Python 3.11.x path/version;
-- `AETHER_WINDOWS_READINESS.ps1` output after the frozen.2 release is copied.
-
-Never include passwords, tokens, public IP addresses, `.env`, provider credentials, or API keys.
-
-Do not run the full first pulse on the VPS before service/data-path and migration preparation because demo commands can write synthetic state.
+Do not run the full first pulse before service/data-path and migration preparation because demo commands can write synthetic state.
 
 ## Migration caveat
 
 - The previously uploaded AETHER_HOME ZIP contained WAL/SHM files and was valid for inspection only.
 - Final migration must be quiescent:
-  - stop Gateway and every writer
-  - verify no listener/writer remains
-  - checkpoint SQLite
-  - create a clean snapshot
-  - generate SHA-256 manifest
-  - verify source integrity
-  - transfer
-  - restore under service-owned paths
-  - normalize ACLs
-  - verify destination integrity and hashes
-  - boot with controlled execution
+  - stop Gateway and every writer;
+  - verify no listener/writer remains;
+  - checkpoint SQLite;
+  - create a clean snapshot;
+  - generate SHA-256 manifest;
+  - verify source integrity;
+  - transfer;
+  - restore under service-owned paths;
+  - normalize ACLs;
+  - verify destination integrity/hashes;
+  - boot with controlled execution.
 - Never treat a live-copy ZIP as the final migration artifact.
 
 ## Foundation documents
@@ -326,10 +358,11 @@ Do not run the full first pulse on the VPS before service/data-path and migratio
 - `project-docs/foundations/AETHER_CLI_DECISION.md`
 - `project-docs/foundations/CONTEXT_CONTINUITY_BASELINE.md`
 - `project-docs/foundations/SKILL_CURATION_BASELINE.md`
+- `project-docs/foundations/NUTRITION_GROWTH_PLANE.md`
 - `project-docs/foundations/BUZZ_COLLABORATION_PLANE_BASELINE.md`
 - `project-docs/foundations/MCP_CAPABILITY_PLANE_BASELINE.md`
 - `project-docs/testing/MCP_FOUNDER_LOCAL_PROOF_WINDOWS.md`
-- JSON schemas for context checkpoints, external skill candidates, Buzz task envelopes, and Buzz result receipts.
+- JSON schemas for context checkpoints, external nutrition candidates, Buzz task envelopes, and Buzz result receipts.
 
 ## Non-negotiable authority rules
 
@@ -339,5 +372,6 @@ Do not run the full first pulse on the VPS before service/data-path and migratio
 - AionUi is the private Founder cockpit.
 - Buzz is a collaboration plane only.
 - MCP and ACP are protocols/connectors, not authorities.
+- External repositories are nutrition/candidates until conformed and explicitly promoted.
 - Reading the world never automatically grants permission to change it.
 - Every mutation must pass the same governed action path, approval policy, exact action binding, and authoritative receipt requirements.
