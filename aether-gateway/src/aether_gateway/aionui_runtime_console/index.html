@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="aether-api-base" content="" />
+  <title>Aether Runtime Fleet</title>
+  <link rel="stylesheet" href="/aionui/runtime-console/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">AETHER OS · RUNTIME OPERATIONS</p>
+        <h1>Fleet Console</h1>
+        <p class="subtitle">Observe drivers, schedule backend operations, and handle incidents without transferring authority to the UI.</p>
+      </div>
+      <div class="top-actions">
+        <span id="connectionBadge" class="badge neutral">Disconnected</span>
+        <button id="refreshButton" class="button secondary" type="button">Refresh</button>
+        <button id="runDueButton" class="button primary" type="button">Run due jobs</button>
+      </div>
+    </header>
+
+    <section id="authPanel" class="panel auth-panel">
+      <div>
+        <h2>Operator session</h2>
+        <p>The token is kept in session storage only and is never written into the page, URL, or local storage.</p>
+      </div>
+      <label>
+        Gateway URL
+        <input id="gatewayInput" type="url" autocomplete="off" placeholder="http://127.0.0.1:8000" />
+      </label>
+      <label>
+        Operator token
+        <input id="tokenInput" type="password" autocomplete="off" placeholder="X-Aether-Operator-Token" />
+      </label>
+      <button id="connectButton" class="button primary" type="button">Connect</button>
+    </section>
+
+    <section id="summary" class="summary-grid" aria-live="polite"></section>
+
+    <section class="panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">DRIVER FLEET</p><h2>Routing readiness</h2></div>
+        <span id="generatedAt" class="muted"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Driver</th><th>Availability</th><th>Conformance</th><th>Quota</th><th>Reliability</th><th>Receipt</th><th>Route</th></tr></thead>
+          <tbody id="driversBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="two-column">
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">SCHEDULER</p><h2>Fleet jobs</h2></div><span id="schedulerState" class="badge neutral">Unknown</span></div>
+        <div id="jobsList" class="stack"></div>
+      </section>
+      <section class="panel">
+        <div class="section-heading"><div><p class="eyebrow">BUDGETS</p><h2>Daily operating envelope</h2></div></div>
+        <div id="budgetPanel"></div>
+      </section>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">INCIDENTS</p><h2>Operator queue</h2></div>
+        <label class="inline-control"><input id="showResolved" type="checkbox" /> Show resolved</label>
+      </div>
+      <div id="incidentsList" class="stack"></div>
+    </section>
+
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">AUDIT</p><h2>Recent scheduled runs</h2></div></div>
+      <div id="runsList" class="timeline"></div>
+    </section>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+  <script type="module" src="/aionui/runtime-console/app.js"></script>
+</body>
+</html>

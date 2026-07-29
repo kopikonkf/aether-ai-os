@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.local/schemas/buzz-result-receipt.v1.json",
+  "title": "Aether Buzz Result Receipt",
+  "type": "object",
+  "required": ["mission_id", "task_id", "event_id", "signer_pubkey", "status", "payload_hash", "completed_at"],
+  "properties": {
+    "mission_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "event_id": {"type": "string"},
+    "signer_pubkey": {"type": "string"},
+    "status": {"enum": ["completed", "failed", "cancelled", "expired"]},
+    "summary": {"type": "string"},
+    "artifact_refs": {"type": "array", "items": {"type": "object", "required": ["ref", "hash"], "properties": {"ref": {"type": "string"}, "hash": {"type": "string"}}}},
+    "test_receipts": {"type": "array", "items": {"type": "string"}},
+    "payload_hash": {"type": "string", "minLength": 32},
+    "completed_at": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,40 @@
+version: 1
+policy_id: aether.external-coding-runtime.v1
+default: deny
+protocol:
+  name: aether.coding-jsonl.v1
+  handshake_timeout_seconds: 15
+  task_timeout_seconds: 180
+  maximum_frames: 512
+  maximum_frame_bytes: 65536
+  maximum_stdout_bytes: 1048576
+  maximum_stderr_bytes: 65536
+  allowed_frame_types:
+    - task.accepted
+    - task.progress
+    - task.log
+    - artifact.patch
+    - task.completed
+    - task.error
+process:
+  shell: false
+  inherit_provider_credentials: false
+  inherit_operator_credentials: false
+  sanitized_environment: true
+  network_isolation: policy_only
+patch_ingestion:
+  maximum_files: 10
+  maximum_total_bytes: 262144
+  maximum_diff_chars: 16000
+  require_before_sha256_for_existing_files: true
+  apply_to_staging_before_production: true
+  independent_verification_required: true
+  production_hash_recheck_required: true
+  atomic_production_replace: true
+  rollback_on_apply_failure: true
+streaming:
+  normalize_progress: true
+  preserve_runtime_sequence: true
+  persist_every_progress_frame: true
+  reject_unknown_frame_types: true
+  reject_out_of_order_sequence: true

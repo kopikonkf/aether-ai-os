@@ -1,0 +1,66 @@
+# Aether Core V2 LLM Configuration
+# INDEPENDENT FROM NOUS RESEARCH CONFIG
+
+providers:
+  arzastore:
+    base_url: "https://router.arzastore.com/v1/chat/completions"
+    api_key_env: "ARZASTORE_API_KEY"
+    name: "Arzastore Router"
+    models:
+      - "deepseek-v4-flash"
+      - "deepseek-v4-pro"
+      - "claude-sonnet-4.5"
+      - "claude-opus-4.8"
+      - "gpt-4o"
+      
+  openagentic:
+    base_url: "https://openagentic.id/api/v1/chat/completions"
+    api_key_env: "OPENAGENTIC_API_KEY"
+    name: "OpenAgentic"
+    models:
+      - "claude-sonnet-5"
+      - "claude-sonnet-4.6"
+      - "claude-sonnet-4.5"
+      - "claude-opus-4.8"
+      - "gpt-5"
+      - "deepseek-3.2"
+      
+  kenari:
+    base_url: "https://kenari.id/v1/chat/completions"
+    api_key_env: "KENARI_API_KEY"
+    name: "Kenari"
+    models:
+      - "deepseek-v4-flash:free"
+      - "deepseek-v4-pro:free"
+      
+  gemini:
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    api_key_env: "GEMINI_API_KEY"
+    name: "Gemini"
+    models:
+      - "gemini-3.1-flash-lite-preview"
+      - "gemini-3.1-pro-preview"
+
+# Fuel selection mapping based on task requirements
+routing:
+  default_fuel: "arzastore/deepseek-v4-flash"
+  
+  # Fallback chain when primary provider fails
+  fallback_chain:
+    - "arzastore/deepseek-v4-flash"
+    - "openagentic/claude-sonnet-4.5"
+    - "gemini/gemini-3.1-flash-lite-preview"
+    - "kenari/deepseek-v4-flash:free"
+  
+  task_complexity:
+    low: "arzastore/deepseek-v4-flash"
+    medium: "arzastore/deepseek-v4-pro"
+    high: "arzastore/claude-sonnet-4.5"
+    critical: "arzastore/claude-opus-4.8"
+    existential: "war_council"
+
+  budget:
+    zero: "gemini/gemini-3.1-flash-lite-preview"
+    low: "arzastore/deepseek-v4-flash"
+    medium: "arzastore/claude-sonnet-4.5"
+    high: "openagentic/claude-sonnet-5"

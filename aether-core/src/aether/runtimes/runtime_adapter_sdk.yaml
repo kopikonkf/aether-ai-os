@@ -1,0 +1,24 @@
+version: 1
+policy_id: aether.runtime-adapter-sdk.v1
+default: deny
+selection:
+  maximum_attempts: 2
+  require_healthy: true
+  require_all_capabilities: true
+  require_all_features: true
+workspace:
+  require_binding: true
+  require_session_match: true
+  require_writable_for_edits: true
+execution:
+  route_operation: coding.delegate
+  body_operation: coding.task.execute
+  maximum_edits: 10
+  maximum_total_bytes: 262144
+  require_verification_for_writes: true
+fallback:
+  enabled: true
+  do_not_fallback_on_pending_approval: true
+escalation:
+  on_no_runtime: true
+  on_all_failures: true

@@ -1,0 +1,8 @@
+import { AetherMissionService } from './process/services/aetherMission/AetherMissionService';
+import { registerAetherMissionBridge } from './process/bridge/aetherMissionBridge';
+
+const aetherMissionService = new AetherMissionService({
+  baseUrl: process.env.AETHER_GATEWAY_URL ?? 'http://127.0.0.1:8000',
+  operatorToken: process.env.AETHER_OPERATOR_TOKEN ?? '',
+});
+const disposeAetherMissionBridge = registerAetherMissionBridge(aetherMissionService);

@@ -1,0 +1,49 @@
+version: "0.8"
+authority: aether_internal_evolution_policy
+scope: internal_only
+principles:
+  one_bounded_target_per_candidate: true
+  fresh_sandbox_per_evaluation: true
+  candidate_generator_is_non_authoritative: true
+  production_mutation_requires_trusted_governance: true
+  rollback_point_required: true
+  prior_failure_recall_required: true
+  zero_regressions_required: true
+  heldout_evaluation_required: true
+  external_business_lane_separate: true
+protected_paths:
+  - src/aether/dna
+  - src/aether/bootstrap
+  - src/aether/governance
+  - project-docs
+  - LASTSTANDINGPOINT.md
+protected_names:
+  - north_star.yaml
+  - aether.core.json
+  - Genome.md
+allowed_target_types:
+  - code
+  - skill
+  - prompt
+  - workflow
+  - tool
+constraints:
+  max_files_per_candidate: 1
+  max_candidate_bytes: 262144
+  max_growth_ratio: 0.35
+  max_commands_per_phase: 8
+  max_command_timeout_seconds: 600
+  minimum_improvement: 0.01
+  maximum_regressions: 0
+  require_baseline_hash_match: true
+  require_deterministic_checks: true
+  require_heldout_checks: true
+trusted_principals:
+  - founder
+  - operator
+promotion:
+  direct_write_by_model: false
+  exact_candidate_hash_required: true
+  atomic_replace_required: true
+  backup_required: true
+  rollback_requires_current_promoted_hash: true

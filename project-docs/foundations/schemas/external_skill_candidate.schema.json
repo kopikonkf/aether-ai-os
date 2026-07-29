@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.local/schemas/external-skill-candidate.v1.json",
+  "title": "Aether External Skill Candidate",
+  "type": "object",
+  "required": ["candidate_id", "repository", "commit_sha", "skill_path", "skill_hash", "license", "requested_tools", "activation_state"],
+  "properties": {
+    "candidate_id": {"type": "string"},
+    "repository": {"type": "string"},
+    "commit_sha": {"type": "string", "minLength": 7},
+    "skill_path": {"type": "string"},
+    "skill_hash": {"type": "string", "minLength": 32},
+    "version": {"type": ["string", "null"]},
+    "license": {"type": "string"},
+    "requested_tools": {"type": "array", "items": {"type": "string"}},
+    "side_effects": {"type": "array", "items": {"type": "string"}},
+    "runtime_requirements": {"type": "array", "items": {"type": "string"}},
+    "credential_requirements": {"type": "array", "items": {"type": "string"}},
+    "network_destinations": {"type": "array", "items": {"type": "string"}},
+    "risk_findings": {"type": "array", "items": {"type": "string"}},
+    "activation_state": {"enum": ["discovered", "snapshotted", "classified", "normalized", "sandboxed", "benchmarked", "approved", "active", "rejected", "archived"]}
+  },
+  "additionalProperties": true
+}

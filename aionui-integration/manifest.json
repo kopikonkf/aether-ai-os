@@ -1,0 +1,46 @@
+{
+  "integration_id": "aether.aionui-sidecar.v0192",
+  "authority": "operator-shell-only",
+  "target": {
+    "repository": "iOfficeAI/AionUi",
+    "major_version": 2,
+    "architecture": "renderer-same-origin-sidecar-and-main-process"
+  },
+  "features": {
+    "runtime_fleet": {
+      "console_endpoint": "/api/runtime-fleet/console",
+      "ui_fallback": "/aionui/runtime-console",
+      "ipc_prefix": "aether:fleet"
+    },
+    "mission_operations": {
+      "console_endpoint": "/api/mission-operations/console",
+      "ui_fallback": "/aionui/mission-console",
+      "ipc_prefix": "aether:mission"
+    },
+    "opportunity_intelligence": {
+      "console_endpoint": "/api/opportunity-intelligence/console",
+      "ui_fallback": "/aionui/opportunity-console",
+      "ipc_prefix": "aether:opportunity"
+    },
+    "live_web_experiments": {
+      "console_endpoint": "/api/experiments/console",
+      "ui_fallback": "/aionui/experiment-console",
+      "ipc_prefix": "aether:experiment"
+    },
+    "unified_browser_senses": {
+      "status_endpoint": "/api/browser-senses/status",
+      "ui_route": "/senses",
+      "aionui_route": "/#/senses",
+      "transport": "livekit-or-browser-fallback"
+    }
+  },
+  "security": {
+    "operator_token_owner": "AionUi main process",
+    "renderer_receives_operator_token": false,
+    "renderer_may_approve_actions": false,
+    "renderer_may_approve_mission_plans": true,
+    "mission_plan_approval_does_not_approve_step_actions": true,
+    "browser_session_token_storage": "sha256-only-server-ledger",
+    "livekit_api_secret_in_renderer": false
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.local/schemas/context-checkpoint.v1.json",
+  "title": "Aether Context Checkpoint",
+  "type": "object",
+  "required": ["checkpoint_id", "session_id", "objective", "progress", "decisions", "next_steps", "source_refs", "content_hash"],
+  "properties": {
+    "checkpoint_id": {"type": "string", "minLength": 1},
+    "session_id": {"type": "string", "minLength": 1},
+    "objective": {"type": "string"},
+    "progress": {"type": "array", "items": {"type": "string"}},
+    "decisions": {"type": "array", "items": {"type": "string"}},
+    "founder_constraints": {"type": "array", "items": {"type": "string"}},
+    "open_questions": {"type": "array", "items": {"type": "string"}},
+    "blockers": {"type": "array", "items": {"type": "string"}},
+    "active_artifacts": {"type": "array", "items": {"type": "object", "required": ["ref", "hash"], "properties": {"ref": {"type": "string"}, "hash": {"type": "string"}}}},
+    "action_receipts": {"type": "array", "items": {"type": "string"}},
+    "next_steps": {"type": "array", "items": {"type": "string"}},
+    "source_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "parent_checkpoint_ids": {"type": "array", "items": {"type": "string"}},
+    "estimated_source_tokens": {"type": "integer", "minimum": 0},
+    "estimated_checkpoint_tokens": {"type": "integer", "minimum": 0},
+    "content_hash": {"type": "string", "minLength": 32}
+  },
+  "additionalProperties": true
+}

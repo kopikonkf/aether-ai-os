@@ -1,0 +1,8 @@
+contextBridge.exposeInMainWorld('aetherOpportunity', {
+  snapshot: () => ipcRenderer.invoke('aether:opportunity:snapshot'),
+  scout: (input) => ipcRenderer.invoke('aether:opportunity:scout', input),
+  score: (input) => ipcRenderer.invoke('aether:opportunity:score', input),
+  decide: (candidateId, input) => ipcRenderer.invoke('aether:opportunity:decide', candidateId, input),
+  mandate: (candidateId, input) => ipcRenderer.invoke('aether:opportunity:mandate', candidateId, input),
+  convert: (candidateId) => ipcRenderer.invoke('aether:opportunity:convert', candidateId),
+});

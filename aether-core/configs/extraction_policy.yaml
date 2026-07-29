@@ -1,0 +1,19 @@
+extraction_policy:
+  sentence_min_chars: 24
+  sentence_max_chars: 400
+  max_claims_per_source: 20
+  claim_markers:
+    - " should "
+    - " must "
+    - " can "
+    - " may "
+    - " will "
+    - " is "
+    - " are "
+    - " requires "
+    - " improves "
+    - " causes "
+    - " supports "
+    - " indicates "
+  preserve_raw_text: true
+  create_candidate_beliefs: false

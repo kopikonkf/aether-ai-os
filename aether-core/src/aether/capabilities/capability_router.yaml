@@ -1,0 +1,23 @@
+version: 1
+policy_id: aether.capability-router.v1
+matching:
+  exact_capability_required: true
+  active_only: true
+  allow_stale: false
+  maximum_attempts: 2
+  minimum_success_rate_weight: 0.10
+compatibility:
+  require_healthy_runtime: true
+  require_all_runtime_features: true
+  require_all_side_effects_supported: true
+  require_input_schema_validation: true
+  require_output_schema_validation: true
+fallback:
+  enabled: true
+  do_not_fallback_on_pending_approval: true
+  record_failure_fingerprint: true
+execution:
+  action_operation: skill.execute
+  runtime_target: runtime
+  default_risk: low
+  direct_skill_execution_exposed_to_models: false

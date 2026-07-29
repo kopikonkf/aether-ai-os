@@ -1,0 +1,22 @@
+[Unit]
+Description=AionUi WebUI for Aether
+After=network-online.target aether-gateway.service
+Wants=network-online.target
+Requires=aether-gateway.service
+
+[Service]
+Type=simple
+User=aether
+Group=aether
+WorkingDirectory=/opt/aionui
+EnvironmentFile=-/etc/aether/aionui.env
+ExecStart=/usr/local/bin/bun run webui:prod:remote
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aionui
+
+[Install]
+WantedBy=multi-user.target

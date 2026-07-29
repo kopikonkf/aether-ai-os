@@ -1,0 +1,68 @@
+schema_version: '0.7'
+status: active
+ownership:
+  canonical_authority: aether_core
+  retrieval_authority: none_projection_only
+  knowledge_promotion_authority: trusted_governance
+  identity_authority: aether_dna
+  rule: External providers, indexes, and Obsidian may be rebuilt or replaced without changing Aether identity, beliefs, canonical episodes, or governed knowledge decisions.
+operational:
+  durable_sessions:
+    provider: aether.sqlite.sessions
+    path: ${AETHER_HOME}/sessions/cognitive-sessions.sqlite3
+    max_messages: 48
+  canonical_episodic_store:
+    provider: aether.memory.canonical.sqlite
+    path: ${AETHER_HOME}/memory/canonical-episodes.sqlite3
+    append_only: true
+    direct_knowledge_promotion: forbidden
+    direct_belief_promotion: forbidden
+  knowledge_proposal_store:
+    provider: aether.knowledge.proposals.sqlite
+    path: ${AETHER_HOME}/memory/knowledge-proposals.sqlite3
+    proposal_records_immutable: true
+    evidence_records_immutable: true
+    decision_records_immutable: true
+  retrieval_projection:
+    provider: aether.memory.retrieval.sqlite-lexical
+    path: ${AETHER_HOME}/memory/retrieval-index.sqlite3
+    rebuildable: true
+    external_provider_required: false
+  obsidian_projection:
+    enabled: true
+    path: ${AETHER_HOME}/obsidian/vault
+    authority: projection_only
+    projection_modes: [explicit_session_digest, governed_curated_knowledge]
+retrieval:
+  before_cognition: true
+  namespaces: [episodes, knowledge]
+  max_hits: 6
+  require_provenance: true
+  injection_rule: Retrieved records are evidence, not immutable truth.
+curation:
+  explicit_candidate_metadata_only: true
+  direct_conversation_to_candidate: forbidden
+  duplicate_detection: required
+  contradiction_detection: required
+  evidence_bundle_required: true
+  trusted_terminal_decision_required: true
+  automatic_belief_promotion: forbidden
+write_pipeline:
+  - persist_bounded_session_messages
+  - append_canonical_episode
+  - attach_provenance_and_content_hash
+  - project_to_retrieval_index
+  - optionally_mark_explicit_curator_candidate
+  - build_evidence_backed_knowledge_proposal
+  - require_trusted_governance_decision
+  - append_promoted_knowledge
+  - optionally_project_curated_knowledge_to_obsidian
+rebuild:
+  source: canonical_episodic_store
+  command: python aether_cli.py memory-rebuild
+  provider_specific_ids_in_core: forbidden
+installation_policy:
+  install_all_evaluated_providers: false
+  core_external_memory_dependencies: []
+  enabled_provider: aether_native_sqlite
+  optional_future_adapters: [mnemosyne, mem0, supermemory]

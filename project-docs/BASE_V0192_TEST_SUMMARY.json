@@ -1,0 +1,60 @@
+{
+  "release": "0.19.2",
+  "title": "Unified Browser Senses + One-Domain Sidecar Deployment",
+  "generated_at": "2026-07-28",
+  "summary": {
+    "passed": 276,
+    "skipped": 1,
+    "failed": 0
+  },
+  "packages": {
+    "aether-core": {
+      "passed": 145,
+      "skipped": 0,
+      "execution": "single isolated package process"
+    },
+    "aether-tools": {
+      "passed": 47,
+      "skipped": 1,
+      "execution": "single isolated package process",
+      "skip_reason": "optional MCP environment"
+    },
+    "aether-gateway": {
+      "passed": 84,
+      "skipped": 0,
+      "execution": "each test file in an isolated process group",
+      "collected_tests": 84
+    }
+  },
+  "architecture_verifier": {
+    "passed": 93,
+    "failed": 0
+  },
+  "founder_first_pulse": {
+    "passed": 13,
+    "failed": 0
+  },
+  "wheel_smoke": {
+    "core_version": "0.19.2",
+    "gateway_version": "0.19.2",
+    "tools_version": "0.3.0",
+    "browser_sense_policy_packaged": true,
+    "browser_console_packaged": true,
+    "sense_worker_entrypoint": true,
+    "missing_livekit_dependency_is_non_fatal": true
+  },
+  "visual_and_asset_checks": {
+    "javascript_syntax": "passed with node --check",
+    "static_layout_render": "passed",
+    "chromium_navigation": "not executed; container browser policy returned ERR_BLOCKED_BY_ADMINISTRATOR for localhost and file URLs",
+    "api_and_static_routes": "passed through FastAPI tests"
+  },
+  "live_execution_truth": {
+    "livekit_sdk_installed": false,
+    "livekit_credentials_configured": false,
+    "real_microphone_stt_tts_session_executed": false,
+    "real_camera_vision_provider_call_executed": false,
+    "full_upstream_aionui_build_executed": false,
+    "docker_image_build_executed": false
+  }
+}

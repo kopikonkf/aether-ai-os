@@ -1,0 +1,17 @@
+{
+  "id": "aether.runtime-operations-console",
+  "version": "0.18.0",
+  "title": "Aether Runtime Fleet",
+  "entry": "/aionui/runtime-console",
+  "authority": "operator-shell-only",
+  "backend": "Aether Gateway",
+  "tokenStorage": "sessionStorage",
+  "capabilities": [
+    "fleet.observe",
+    "fleet.run-due",
+    "fleet.schedule.update",
+    "fleet.incident.acknowledge",
+    "fleet.incident.resolve",
+    "runtime.conformance.request"
+  ]
+}

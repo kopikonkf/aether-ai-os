@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aether-core"
+version = "0.19.2"
+description = "Aether Cognitive Core — provider-neutral cognition, governance, and event contracts"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "websockets>=11.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "pydantic-settings>=2.0.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+telegram = ["telethon>=1.30.0"]
+hub = ["aiosqlite>=0.19.0", "bcrypt>=4.0.0", "python-multipart>=0.0.6"]
+dev = ["pytest>=7.0", "ruff>=0.1.0"]
+all = ["aether-core[telegram,hub,dev]"]
+
+[project.scripts]
+aether-hub = "aether.hub.server:main"
+aether-boot = "aether.executive.boot:main"
+aether-check = "aether.consciousness.integration_audit:main"
+aether-daemon = "aether.adapters.daemon:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"aether.dna" = ["*.md", "*.yaml", "*.json"]
+"aether.bootstrap" = ["*.yaml"]
+"aether.governance" = ["*.yaml"]
+"aether.memory" = ["*.yaml"]
+"aether.knowledge" = ["*.yaml"]
+"aether.evolution" = ["*.yaml"]
+"aether.skills" = ["*.yaml"]
+"aether.capabilities" = ["*.yaml"]
+"aether.runtimes" = ["*.yaml"]
+"aether.missions" = ["*.yaml"]
+"aether.opportunities" = ["*.yaml"]
+"aether.web_intelligence" = ["*.yaml"]
+"aether.experiments" = ["*.yaml"]
+"aether.browser_senses" = ["*.yaml"]

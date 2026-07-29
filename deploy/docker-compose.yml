@@ -1,0 +1,68 @@
+services:
+  aether-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+    env_file:
+      - ../aether-core/.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      AETHER_HOME: /var/lib/aether
+    volumes:
+      - aether-data:/var/lib/aether
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  aether-sense-worker:
+    profiles: ["livekit"]
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.livekit
+    env_file:
+      - ../aether-core/.env
+    environment:
+      AETHER_GATEWAY_URL: http://aether-gateway:8000
+    depends_on:
+      aether-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  aionui-web:
+    build:
+      context: ..
+      dockerfile: deploy/aionui/Dockerfile
+      args:
+        AIONUI_REF: ${AIONUI_REF:-main}
+    environment:
+      AETHER_GATEWAY_URL: http://aether-gateway:8000
+    depends_on:
+      aether-gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.8-alpine
+    environment:
+      AETHER_DOMAIN: ${AETHER_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - aether-gateway
+      - aionui-web
+    restart: unless-stopped
+
+volumes:
+  aether-data:
+  caddy-data:
+  caddy-config:

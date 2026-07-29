@@ -1,0 +1,35 @@
+version: aether.mission-orchestrator.v1
+authority:
+  northstar: src/aether/dna/north_star.yaml
+  opportunity_evidence_is_not_permission: true
+  claimed_value_is_not_revenue: true
+  realized_value_is_not_verified_value: true
+lanes:
+  - internal-maintenance
+  - external-value
+opportunity:
+  minimum_independent_sources: 2
+  contradiction_blocks_execution: true
+  require_revenue_hypothesis_for_external_lane: true
+execution:
+  maximum_steps: 20
+  maximum_steps_per_run: 5
+  require_explicit_retry_reason: true
+  approval_pending_pauses_mission: true
+  failure_creates_cee_learning_trigger: true
+budgets:
+  default_max_cost_usd: 10.0
+  default_max_duration_seconds: 3600
+  default_max_step_attempts: 10
+  default_max_high_risk_actions: 0
+governance:
+  trusted_principals:
+    - founder
+    - operator
+  model_self_approval: forbidden
+  background_self_approval: forbidden
+outcomes:
+  external_reference_required_for_realized_value: true
+  trusted_verifier_required_for_verified_value: true
+  mission_lessons_become_knowledge_candidates_only: true
+  automatic_knowledge_or_belief_promotion: forbidden

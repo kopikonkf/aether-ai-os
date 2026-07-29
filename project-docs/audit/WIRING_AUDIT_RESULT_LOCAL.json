@@ -1,0 +1,178 @@
+{
+  "release": "0.19.2",
+  "audit_schema": "aether.capability-wiring.v1",
+  "aether_home": "/tmp/aether-wiring-audit-j7kvc43g",
+  "summary": {
+    "route_count": 128,
+    "registered_tools": [
+      "bash",
+      "edit",
+      "glob",
+      "grep",
+      "memory",
+      "read",
+      "webfetch",
+      "write"
+    ],
+    "registered_source_adapters": [
+      "source.adapter.ai-treasurebox",
+      "source.adapter.awesome-ai-agents",
+      "source.adapter.crawl4ai-restricted",
+      "source.adapter.public-http"
+    ],
+    "crawl4ai_importable": false,
+    "agent_reach_importable": false
+  },
+  "capabilities": {
+    "cognition": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/chat"
+      ],
+      "blockers": []
+    },
+    "browser_senses": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/browser-senses/text"
+      ],
+      "blockers": []
+    },
+    "approvals": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/approvals"
+      ],
+      "blockers": []
+    },
+    "knowledge": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/knowledge/proposals"
+      ],
+      "blockers": []
+    },
+    "evolution": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/evolution/status"
+      ],
+      "blockers": []
+    },
+    "skills": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/skills"
+      ],
+      "blockers": []
+    },
+    "runtime": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/runtime-drivers/status"
+      ],
+      "blockers": []
+    },
+    "missions": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/missions"
+      ],
+      "blockers": []
+    },
+    "opportunities": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/opportunity-intelligence/scout-runs"
+      ],
+      "blockers": []
+    },
+    "web_intelligence": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/web-intelligence/acquire"
+      ],
+      "blockers": []
+    },
+    "experiments": {
+      "state": "WIRED",
+      "evidence": [
+        "FastAPI route registered: /api/experiments/plans"
+      ],
+      "blockers": []
+    },
+    "governed_tools": {
+      "state": "WIRED",
+      "evidence": [
+        "registered tools: bash, edit, glob, grep, memory, read, webfetch, write"
+      ],
+      "blockers": []
+    }
+  },
+  "external_nutrition": {
+    "agent_reach": {
+      "state": "REFERENCE_ONLY",
+      "registered_adapter": false,
+      "package_importable": false,
+      "active": false,
+      "notes": [
+        "SourceCapabilityMesh is Agent-Reach-inspired.",
+        "No Agent-Reach adapter, CLI bridge, doctor bridge, or skill projection is registered in v0.19.2."
+      ]
+    },
+    "crawl4ai": {
+      "state": "WIRED_DORMANT",
+      "registered_adapter": true,
+      "package_importable": false,
+      "health": "unavailable",
+      "health_reason": "crawl4ai package is not installed",
+      "configured": false,
+      "enabled": false,
+      "conformance": "none",
+      "active": false
+    },
+    "public_http": {
+      "state": "WIRED_DORMANT",
+      "registered_adapter": true,
+      "health": "healthy",
+      "configured": false,
+      "enabled": false,
+      "conformance": "none",
+      "active": false
+    },
+    "ai_treasurebox": {
+      "state": "STATIC_CATALOG_ACTIVE",
+      "registered_adapter": true,
+      "health": "healthy",
+      "active": true,
+      "live_refresh": false,
+      "notes": [
+        "Registered at Gateway startup as StaticCatalogAdapter.",
+        "Current content is a small hard-coded seed snapshot, not a live GitHub ingestion pipeline."
+      ]
+    },
+    "awesome_ai_agents": {
+      "state": "STATIC_CATALOG_ACTIVE",
+      "registered_adapter": true,
+      "health": "healthy",
+      "active": true,
+      "live_refresh": false,
+      "notes": [
+        "Registered at Gateway startup as StaticCatalogAdapter.",
+        "Current content is a small hard-coded seed snapshot, not a live GitHub ingestion pipeline."
+      ]
+    }
+  },
+  "runtime_drivers": [
+    {
+      "error": "AttributeError: 'RuntimeDriverStatus' object has no attribute 'driver_id'"
+    }
+  ],
+  "truth_model": {
+    "IMPLEMENTED": "code and contract exist",
+    "WIRED": "constructed and reachable from runtime/API",
+    "CONFORMED": "exact environment adapter canary has passed",
+    "ACTIVE": "enabled and eligible for execution",
+    "FOUNDER_PROVEN": "real user-facing execution receipt exists"
+  }
+}
