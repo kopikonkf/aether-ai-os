@@ -1,0 +1,7 @@
+{
+  "name": "Aether Opportunity Intelligence",
+  "short_name": "Opportunity Intelligence",
+  "version": "0.18.0",
+  "start_url": "/aionui/opportunity-console",
+  "display": "standalone"
+}

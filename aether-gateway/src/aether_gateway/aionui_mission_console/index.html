@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Aether Mission Operations</title>
+  <link rel="stylesheet" href="/aionui/mission-console/styles.css" />
+</head>
+<body>
+<main class="shell">
+  <header class="topbar">
+    <div><p class="eyebrow">AETHER OS · EXTERNAL CEE</p><h1>Mission Console</h1><p class="subtitle">Review evidence, authorize bounded missions, resume governed steps, and distinguish claimed value from verified revenue.</p></div>
+    <div class="actions"><span id="connection" class="badge neutral">Disconnected</span><button id="refresh" class="button secondary">Refresh</button></div>
+  </header>
+  <section class="panel auth">
+    <label>Gateway URL<input id="gateway" type="url" /></label>
+    <label>Operator token<input id="token" type="password" autocomplete="off" /></label>
+    <button id="connect" class="button primary">Connect</button>
+  </section>
+  <section id="summary" class="summary"></section>
+  <section class="grid">
+    <section class="panel"><div class="section-heading"><div><p class="eyebrow">OPPORTUNITIES</p><h2>Evidence briefs</h2></div></div><div id="briefs" class="stack"></div></section>
+    <section class="panel"><div class="section-heading"><div><p class="eyebrow">MISSIONS</p><h2>Execution queue</h2></div></div><div id="missions" class="stack"></div></section>
+  </section>
+  <section class="panel"><div class="section-heading"><div><p class="eyebrow">VALUE LEDGER</p><h2>Claimed, realized, verified</h2></div></div><div id="value" class="value-grid"></div></section>
+  <div id="toast" class="toast"></div>
+</main>
+<script type="module" src="/aionui/mission-console/app.js"></script>
+</body>
+</html>

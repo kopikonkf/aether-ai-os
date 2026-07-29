@@ -1,0 +1,4 @@
+// packages/desktop/src/renderer/components/layout/Router.tsx
+const UnifiedSenses = React.lazy(() => import('@renderer/pages/unified-senses'));
+// Inside ProtectedLayout routes:
+<Route path='/senses' element={withRouteFallback(UnifiedSenses)} />

@@ -1,0 +1,10 @@
+Cloudflare dashboard published application route:
+
+Hostname: aether.<your-domain>
+Service:  http://localhost:8080
+
+Install remotely managed tunnel service from an elevated Command Prompt:
+
+cloudflared.exe service install <TUNNEL_TOKEN>
+
+Do not paste the tunnel token into chat, source control, logs, or screenshots.

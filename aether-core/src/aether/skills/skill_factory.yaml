@@ -1,0 +1,45 @@
+version: 0.9
+principles:
+  owner: aether
+  runtime_installation: adapter_owned
+  automatic_activation: forbidden
+  automatic_deletion: forbidden
+  telemetry_may_change_identity: false
+  telemetry_may_change_beliefs: false
+  curator_may_activate_revision: false
+  archived_artifacts_are_retained: true
+candidate_constraints:
+  maximum_artifact_bytes: 65536
+  maximum_commands_per_phase: 4
+  maximum_command_timeout_seconds: 180
+  allowed_trigger_types:
+    - repeated-success
+    - capability-gap
+    - revision
+  repeated_success:
+    minimum_observations: 3
+    minimum_success_rate: 0.8
+    minimum_evidence_records: 3
+  capability_gap:
+    minimum_evidence_records: 1
+  revision:
+    minimum_evidence_records: 1
+benchmark:
+  minimum_candidate_score: 0.7
+  minimum_improvement: 0.01
+  maximum_regressions: 0
+  heldout_required: true
+lifecycle:
+  stale_after_days_without_usage: 30
+  minimum_usage_for_failure_review: 5
+  maximum_failure_rate: 0.5
+  archive_requires_trusted_principal: true
+  reactivation_requires_benchmark: true
+trusted_principals:
+  - founder
+  - operator
+protected_capabilities:
+  - identity.modify
+  - dna.modify
+  - northstar.modify
+  - belief.promote

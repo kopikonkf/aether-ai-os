@@ -1,0 +1,13 @@
+{
+  "console_id": "aether.unified-browser-senses.v1",
+  "title": "Aether Senses",
+  "route": "/senses",
+  "livekit_client_version": "2.17.2",
+  "capabilities": ["text", "microphone", "speaker", "camera", "screen-share"],
+  "security": {
+    "operator_token_storage": "memory-only",
+    "browser_session_token_ttl": "bounded",
+    "camera_analysis": "explicit-or-bounded-opt-in",
+    "requires_secure_context": true
+  }
+}

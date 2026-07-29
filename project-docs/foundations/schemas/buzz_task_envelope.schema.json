@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether.local/schemas/buzz-task-envelope.v1.json",
+  "title": "Aether Buzz Task Envelope",
+  "type": "object",
+  "required": ["mission_id", "task_id", "objective", "worker_pubkey", "allowed_scope", "budget", "required_receipts", "expires_at"],
+  "properties": {
+    "mission_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "objective": {"type": "string"},
+    "worker_pubkey": {"type": "string"},
+    "room_id": {"type": "string"},
+    "allowed_scope": {"type": "object"},
+    "budget": {"type": "object", "properties": {"time_seconds": {"type": "integer", "minimum": 1}, "cost_usd": {"type": "number", "minimum": 0}}},
+    "required_receipts": {"type": "array", "items": {"type": "string"}},
+    "stop_conditions": {"type": "array", "items": {"type": "string"}},
+    "context_capsule_ref": {"type": ["string", "null"]},
+    "expires_at": {"type": "string"}
+  },
+  "additionalProperties": false
+}

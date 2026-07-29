@@ -1,0 +1,5 @@
+// packages/desktop/src/renderer/components/layout/Router.tsx
+const RuntimeOperationsPage = React.lazy(() => import('@renderer/pages/runtime-operations'));
+
+// Inside the authenticated <Route> group:
+<Route path='/runtime-operations' element={withRouteFallback(RuntimeOperationsPage)} />

@@ -1,0 +1,21 @@
+{$AETHER_DOMAIN:localhost} {
+    encode zstd gzip
+
+    @browser_senses path /senses /senses/* /api/browser-senses /api/browser-senses/*
+    handle @browser_senses {
+        reverse_proxy aether-gateway:8000
+    }
+
+    handle_path /aether/* {
+        reverse_proxy aether-gateway:8000
+    }
+
+    handle /health {
+        rewrite * /api/status
+        reverse_proxy aether-gateway:8000
+    }
+
+    handle {
+        reverse_proxy aionui-web:25808
+    }
+}

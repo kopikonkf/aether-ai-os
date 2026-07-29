@@ -1,0 +1,53 @@
+[
+  {
+    "candidate_id": "legacy-skill:code-review",
+    "source_path": "skills/code-review.md",
+    "source_sha256": "e7b42e450411343d1fe911b6028a9d40296c1faf27f37f956742c6955dd17be1",
+    "name": "code-review",
+    "trigger": "review code",
+    "reported_legacy_uses": 12,
+    "reported_legacy_success_rate": 0.85,
+    "state": "inactive_candidate",
+    "trust": "unverified_self_reported_metadata",
+    "required_gates": [
+      "schema_normalization",
+      "sandbox_benchmark",
+      "security_review",
+      "governance_approval"
+    ]
+  },
+  {
+    "candidate_id": "legacy-skill:debug",
+    "source_path": "skills/debug.md",
+    "source_sha256": "06b1a7d3072e093bee033a5e0a0cf2c05779b551021e4965b44cfd8a79ea8ee1",
+    "name": "debug",
+    "trigger": "bug",
+    "reported_legacy_uses": 20,
+    "reported_legacy_success_rate": 0.9,
+    "state": "inactive_candidate",
+    "trust": "unverified_self_reported_metadata",
+    "required_gates": [
+      "schema_normalization",
+      "sandbox_benchmark",
+      "security_review",
+      "governance_approval"
+    ]
+  },
+  {
+    "candidate_id": "legacy-skill:refactor",
+    "source_path": "skills/refactor.md",
+    "source_sha256": "aef381275919f4d3547bc5d7ec153fa12cd7a599fa859904baebaef476592274",
+    "name": "refactor",
+    "trigger": "refactor",
+    "reported_legacy_uses": 8,
+    "reported_legacy_success_rate": 0.75,
+    "state": "inactive_candidate",
+    "trust": "unverified_self_reported_metadata",
+    "required_gates": [
+      "schema_normalization",
+      "sandbox_benchmark",
+      "security_review",
+      "governance_approval"
+    ]
+  }
+]

@@ -1,0 +1,6 @@
+// packages/desktop/src/renderer/components/layout/Sider/index.tsx
+// Add an Aether runtime entry using the same Arco/Icon Park and tooltip patterns
+// already used by SiderNav. The navigation target is:
+Promise.resolve(navigate('/runtime-operations')).catch((error) => {
+  console.error('Navigation failed:', error);
+});

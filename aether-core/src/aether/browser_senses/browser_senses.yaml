@@ -1,0 +1,44 @@
+version: 1
+policy_id: aether.browser-senses.v1
+purpose: Transport browser text, microphone, speaker, and bounded visual perception without transferring cognitive authority from Aether.
+
+authority:
+  cognition: aether-core
+  identity: aether-core
+  memory: aether-core
+  action_governance: aether-core
+  media_transport: gateway-adapter
+
+sessions:
+  default_ttl_seconds: 3600
+  maximum_ttl_seconds: 86400
+  operator_issued: true
+  token_storage: sha256-only
+
+media:
+  microphone:
+    transport: livekit-webrtc
+    requires_secure_context: true
+    requires_browser_permission: true
+  speaker:
+    transport: livekit-webrtc
+    requires_browser_autoplay_unlock: true
+  camera:
+    transport: livekit-webrtc-and-bounded-keyframe
+    automatic_analysis_default: false
+    maximum_keyframe_bytes: 750000
+    allowed_content_types: [image/jpeg, image/png, image/webp]
+  screen_share:
+    enabled_by_default: false
+
+privacy:
+  persist_raw_audio: false
+  persist_transcripts: canonical-memory-policy
+  persist_visual_keyframes: bounded-local-reference
+  log_raw_media: false
+  redact_media_from_events: true
+
+failure_behavior:
+  missing_livekit_sdk: degrade-to-text-and-browser-native-fallback
+  missing_livekit_credentials: degrade-to-text-and-browser-native-fallback
+  missing_vision_capability: reject-vision-turn-without-blocking-session

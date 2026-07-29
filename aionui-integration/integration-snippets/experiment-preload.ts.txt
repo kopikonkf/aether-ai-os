@@ -1,0 +1,11 @@
+// Add inside contextBridge.exposeInMainWorld('electronAPI', ...), or expose a dedicated object.
+aetherExperiment: {
+  snapshot: () => ipcRenderer.invoke('aether:experiment:snapshot'),
+  configureSource: (input: unknown) => ipcRenderer.invoke('aether:experiment:configure-source', input),
+  conform: (adapterId: string, input: unknown) => ipcRenderer.invoke('aether:experiment:conform', adapterId, input),
+  refreshEvidence: (input: unknown) => ipcRenderer.invoke('aether:experiment:refresh-evidence', input),
+  discover: (input: unknown) => ipcRenderer.invoke('aether:experiment:discover', input),
+  createPlan: (input: unknown) => ipcRenderer.invoke('aether:experiment:create-plan', input),
+  runPlan: (planId: string) => ipcRenderer.invoke('aether:experiment:run-plan', planId),
+  recordDemand: (runId: string, input: unknown) => ipcRenderer.invoke('aether:experiment:record-demand', runId, input),
+}

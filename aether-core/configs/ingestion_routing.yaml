@@ -1,0 +1,16 @@
+ingestion_routing:
+  local_text:
+    route_to: obsidian_digest
+    requires_network: false
+  local_markdown:
+    route_to: obsidian_digest
+    requires_network: false
+  local_json:
+    route_to: obsidian_digest
+    requires_network: false
+  local_csv:
+    route_to: obsidian_digest
+    requires_network: false
+  external_url:
+    route_to: external_fetch_queue
+    requires_network: true

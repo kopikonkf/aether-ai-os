@@ -1,0 +1,2 @@
+// Add a fixed operator navigation entry targeting `/missions` using the current
+// SiderNav conventions and an Icon Park operations/target icon.

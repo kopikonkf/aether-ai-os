@@ -1,0 +1,45 @@
+version: 1
+name: aether_bootstrap_policy
+authority:
+  north_star: src/aether/dna/north_star.yaml
+  genome: src/aether/dna/Genome.md
+  duplicate_north_star: forbidden
+principles:
+  - storage_is_not_knowledge
+  - observations_are_not_beliefs
+  - confidence_requires_evidence
+  - integration_precedes_module_growth
+  - growth_is_measured_by_verified_learning_not_loc
+sequence:
+  - empty_state
+  - first_experience
+  - pattern_formation
+  - concept_formation
+  - belief_proposal
+  - prediction
+  - outcome_validation
+  - honest_audit
+state_requirements:
+  empty_state:
+    identity_loaded: true
+    north_star_verified: true
+    memory_provider_required: false
+  first_experience:
+    durable_event_required: true
+  belief_proposal:
+    direct_conversation_to_belief: forbidden
+    provenance_required: true
+    evidence_required: true
+  outcome_validation:
+    compare_prediction_to_observed_outcome: true
+  honest_audit:
+    inflated_metrics: forbidden
+    failed_improvement_requires_investigation: true
+forbidden:
+  - seed_mass_beliefs_on_first_boot
+  - claim_traits_without_behavioral_evidence
+  - skip_evidence_collection
+  - inflate_confidence
+  - build_unintegrated_modules
+  - measure_growth_by_lines_of_code
+  - confuse_storage_with_knowledge

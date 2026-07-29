@@ -1,0 +1,153 @@
+version: 3
+policy_id: aether.runtime-driver-pack.v3
+principles:
+  - Drivers translate vendor protocols into Aether-owned contracts.
+  - Missing CLIs or credentials never prevent Aether Core from booting.
+  - A binary enters live routing only while an exact conformance receipt is valid.
+  - Driver credentials are file-referenced or explicitly allowlisted and never written to telemetry.
+  - Vendor output is untrusted execution evidence until independently verified.
+  - Reliability and quota state change ranking, never governance authority.
+  - Drivers cannot approve actions, mutate DNA, or bypass workspace bindings.
+  - Runtime operations are observable through an Aether-owned console, not vendor dashboards.
+
+discovery:
+  auto_refresh_on_status: true
+  version_timeout_seconds: 5
+  unavailable_is_non_fatal: true
+
+conformance:
+  required_for_live_routing: true
+  receipt_ttl_hours: 24
+  renewal_window_minutes: 120
+  suite_id: aether.runtime-driver-conformance.v2
+  required_checks:
+    - executable-hash
+    - version-probe
+    - authentication-readiness
+    - protocol-handshake
+    - capability-discovery
+    - no-shell-boundary
+    - credential-isolation
+
+reliability:
+  initial_score: 0.5
+  maximum_fallback_candidates: 3
+  consecutive_failure_penalty: 0.08
+  quota_penalty:
+    rate-limited: 15
+    quota-exhausted: 100
+    authentication-failed: 100
+    unavailable: 100
+  ranking_is_advisory_only: true
+
+operations_console:
+  policy_id: aether.runtime-operations-console.v1
+  expose_secret_values: false
+  expose_executable_hashes: false
+  show_receipt_expiry: true
+  show_reliability: true
+  show_quota_classification: true
+  allow_operator_refresh: true
+  allow_operator_receipt_renewal: true
+
+execution:
+  preferred_live_drivers:
+    - opencode-cli
+    - google-gemini-cli
+    - anthropic-claude-code
+    - openai-codex-cli
+  require_staging_workspace: true
+  require_independent_verification: true
+  require_production_hash_recheck: true
+  maximum_vendor_events: 2500
+  maximum_vendor_stdout_bytes: 4194304
+  maximum_vendor_stderr_bytes: 262144
+  maximum_generated_files: 20
+  maximum_generated_bytes: 524288
+
+credentials:
+  deny_by_default: true
+  never_forward:
+    - AETHER_OPERATOR_TOKEN
+    - TELEGRAM_BOT_TOKEN
+    - ANTHROPIC_API_KEY
+    - GEMINI_API_KEY
+    - GOOGLE_API_KEY
+    - AWS_SECRET_ACCESS_KEY
+  driver_specific_only: true
+  prefer_file_reference: true
+
+drivers:
+  - driver_id: opencode-cli
+    display_name: OpenCode CLI
+    vendor: OpenCode
+    implementation: live
+    enabled_by_default: true
+    executable_candidates: [opencode]
+    version_argv: [--version]
+    routing_key: runtime://coding/opencode-cli
+    adapter_id: runtime.coding.opencode-cli
+    priority: 2
+    credential_env_names: [AETHER_OPENCODE_API_KEY_FILE, AETHER_OPENCODE_AUTH_FILE]
+    model_env_name: AETHER_OPENCODE_MODEL
+    default_model: opencode/north-mini-code-free
+    translator_module: aether_gateway.runtime_drivers.opencode_cli
+    environment_policy_id: aether.runtime-driver.opencode.file-credential-v1
+    quota_classification: provider-stream-and-exit-code
+  - driver_id: google-gemini-cli
+    display_name: Google Gemini CLI
+    vendor: Google
+    implementation: live
+    enabled_by_default: true
+    executable_candidates: [gemini]
+    version_argv: [--version]
+    routing_key: runtime://coding/google-gemini-cli
+    adapter_id: runtime.coding.google-gemini-cli
+    priority: 3
+    credential_env_names: [AETHER_GEMINI_API_KEY_FILE, AETHER_GEMINI_CREDENTIALS_FILE]
+    model_env_name: AETHER_GEMINI_MODEL
+    default_model: gemini-2.5-flash
+    translator_module: aether_gateway.runtime_drivers.gemini_cli
+    environment_policy_id: aether.runtime-driver.gemini.policy-file-v1
+    quota_classification: provider-stream-and-exit-code
+  - driver_id: anthropic-claude-code
+    display_name: Anthropic Claude Code
+    vendor: Anthropic
+    implementation: live
+    enabled_by_default: true
+    executable_candidates: [claude]
+    version_argv: [--version]
+    routing_key: runtime://coding/anthropic-claude-code
+    adapter_id: runtime.coding.anthropic-claude-code
+    priority: 4
+    credential_env_names: [AETHER_CLAUDE_API_KEY_FILE, AETHER_CLAUDE_CONFIG_DIR]
+    model_env_name: AETHER_CLAUDE_MODEL
+    default_model: sonnet
+    translator_module: aether_gateway.runtime_drivers.claude_code
+    environment_policy_id: aether.runtime-driver.claude.tool-allowlist-v1
+    quota_classification: provider-stream-and-exit-code
+  - driver_id: openai-codex-cli
+    display_name: OpenAI Codex CLI
+    vendor: OpenAI
+    implementation: live
+    enabled_by_default: true
+    executable_candidates: [codex]
+    version_argv: [--version]
+    routing_key: runtime://coding/openai-codex-cli
+    adapter_id: runtime.coding.openai-codex-cli
+    priority: 5
+    credential_env_names: [OPENAI_API_KEY, CODEX_HOME]
+    model_env_name: AETHER_CODEX_MODEL
+    translator_module: aether_gateway.runtime_drivers.codex_cli
+    environment_policy_id: aether.runtime-driver.codex.explicit-credentials-v1
+    quota_classification: provider-stream-and-exit-code
+  - driver_id: cursor-agent
+    display_name: Cursor Agent
+    vendor: Cursor
+    implementation: planned
+    enabled_by_default: false
+    executable_candidates: [cursor-agent, cursor]
+    version_argv: [--version]
+    routing_key: runtime://coding/cursor-agent
+    adapter_id: runtime.coding.cursor-agent
+    priority: 40

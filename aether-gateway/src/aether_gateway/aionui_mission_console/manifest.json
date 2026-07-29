@@ -1,0 +1,9 @@
+{
+  "id": "aether.mission-console",
+  "version": "1.0.0",
+  "authority": "operator-shell-only",
+  "api": "/api/mission-operations/console",
+  "claimed_value_is_revenue": false,
+  "mission_plan_approval_approves_step_actions": false,
+  "renderer_receives_operator_token": false
+}

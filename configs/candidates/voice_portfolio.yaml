@@ -1,0 +1,63 @@
+policy_id: aether.voice-portfolio.v1
+selection_authority:
+  aether_may_choose: true
+  founder_may_lock_or_veto: true
+  adapter_may_change: true
+  voice_choice_must_not_change_identity: true
+
+language_behavior:
+  default: id
+  code_switching: natural Indonesian-English daily conversation
+  avoid: forced translation, formal textbook Indonesian, fake slang
+
+mode_traits:
+  casual: [warm, friendly, breezy, casual]
+  work: [clear, knowledgeable, even]
+  business: [firm, clear, mature]
+  reflection: [warm, soft, gentle]
+  alert: [firm, clear, bright]
+  celebration: [upbeat, lively, bright]
+
+# Google documents voice characteristics, not gender labels. The candidate pool
+# must be auditioned by Aether and Dee before production lock-in.
+voices:
+  - id: Aoede
+    traits: [breezy, warm, casual]
+    enabled: true
+    aether_affinity: 0.90
+    founder_rating: 0.50
+  - id: Leda
+    traits: [youthful, bright]
+    enabled: true
+    aether_affinity: 0.80
+    founder_rating: 0.50
+  - id: Achernar
+    traits: [soft, gentle]
+    enabled: true
+    aether_affinity: 0.78
+    founder_rating: 0.50
+  - id: Vindemiatrix
+    traits: [gentle, warm]
+    enabled: true
+    aether_affinity: 0.85
+    founder_rating: 0.50
+  - id: Sulafat
+    traits: [warm, knowledgeable]
+    enabled: true
+    aether_affinity: 0.88
+    founder_rating: 0.50
+  - id: Laomedeia
+    traits: [upbeat, lively]
+    enabled: true
+    aether_affinity: 0.75
+    founder_rating: 0.50
+  - id: Autonoe
+    traits: [bright, clear]
+    enabled: true
+    aether_affinity: 0.72
+    founder_rating: 0.50
+  - id: Despina
+    traits: [smooth, mature]
+    enabled: true
+    aether_affinity: 0.70
+    founder_rating: 0.50

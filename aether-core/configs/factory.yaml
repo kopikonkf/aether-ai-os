@@ -1,0 +1,45 @@
+schema_version: "0.1"
+source_basis: founder_factory_v1
+status: active_methodology_config
+
+principles:
+  - experience_before_concept
+  - concept_before_belief
+  - belief_before_prediction
+  - prediction_before_confidence
+  - audit_before_expansion
+
+learning_sequence:
+  - observe
+  - detect_pattern
+  - form_concept_with_provenance
+  - propose_falsifiable_belief
+  - make_prediction
+  - validate_outcome
+  - revise_or_retire
+
+factories:
+  objective:
+    input: north_star_direction
+    output: bounded_objective
+  experiment:
+    input: uncertainty_or_hypothesis
+    output: evidence
+  capability:
+    input: repeated_workflow_or_failure_pattern
+    output: verified_skill_candidate
+  business:
+    input: cross_niche_opportunity
+    output: governed_market_experiment
+    trading_role: one_division_among_many
+  evolution:
+    input: failure_trace_or_performance_gap
+    output: verified_improvement_candidate
+
+quality_gates:
+  all_knowledge_traceable: true
+  beliefs_falsifiable: true
+  predictions_validated: true
+  metrics_behavior_changing: true
+  audit_before_new_module: true
+  direct_observation_to_belief: forbidden

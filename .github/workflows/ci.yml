@@ -1,0 +1,52 @@
+name: Aether CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install source packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./aether-core -e ./aether-tools -e "./aether-gateway[dev]"
+      - name: Compile source
+        run: python -m compileall -q aether-core/src aether-tools/src aether-gateway/src scripts deploy/windows
+      - name: Core tests
+        run: python -m pytest -q aether-core/tests
+      - name: Tools tests
+        run: python -m pytest -q aether-tools/tests
+      - name: Root deployment tests
+        run: python -m pytest -q tests
+      - name: Gateway tests in isolated processes
+        run: python scripts/run_gateway_tests_isolated.py --output gateway-test-receipt.json
+      - name: Parse JSON and YAML assets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import yaml
+          for path in Path('.').rglob('*.json'):
+              json.loads(path.read_text('utf-8'))
+          for path in [*Path('.').rglob('*.yaml'), *Path('.').rglob('*.yml')]:
+              yaml.safe_load(path.read_text('utf-8'))
+          PY
+      - name: Upload Gateway test receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-test-receipt
+          path: gateway-test-receipt.json
+          if-no-files-found: ignore

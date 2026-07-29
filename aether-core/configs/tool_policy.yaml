@@ -1,0 +1,33 @@
+# Tool Policy — konfigurasi untuk aether_tools primitives
+# Variabel: ${AETHER_HOME} (aether-home), ${AETHER_CORE} (aether-core repo)
+
+file:
+  write_roots:
+    - "${AETHER_HOME}"
+  read_roots:
+    - "${AETHER_HOME}"
+    - "${AETHER_CORE}/src/aether"
+    - "${AETHER_CORE}/configs"
+  max_read_lines: 500
+
+bash:
+  cwd: "${AETHER_HOME}/20_Dee_Workspace/execution"
+  blocked:
+    - rm
+    - sudo
+    - curl
+    - wget
+    - nc
+    - format
+    - del
+    - rmdir
+    - chmod
+    - chown
+    - dd
+    - mkfs
+    - mount
+  timeout_max: 60
+
+web:
+  max_bytes: 1048576
+  https_only: true

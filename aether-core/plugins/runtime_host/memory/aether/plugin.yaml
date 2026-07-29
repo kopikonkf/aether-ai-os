@@ -1,0 +1,4 @@
+name: aether
+kind: exclusive
+version: 0.1.0
+description: Aether mind as aether-agent memory provider

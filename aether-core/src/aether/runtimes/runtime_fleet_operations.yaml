@@ -1,0 +1,62 @@
+version: 1
+policy_id: aether.runtime-fleet-operations.v1
+principles:
+  - AionUi is an operator shell; fleet execution authority remains in Aether backend.
+  - Scheduled jobs may observe and queue work but cannot approve governed actions.
+  - Receipt renewal is queued by default and requires an operator unless explicitly enabled.
+  - Quota, cost, and reliability influence ranking but never governance authority.
+  - Incidents are durable, deduplicated by semantic fingerprint, and retain transition history.
+  - Repeated high-severity incidents may create a CEE trigger but never an automatic code promotion.
+
+scheduler:
+  enabled_by_default: true
+  poll_interval_seconds: 10
+  jobs:
+    health-probe:
+      interval_seconds: 300
+      enabled: true
+    receipt-renewal:
+      interval_seconds: 1800
+      enabled: true
+      mode: queue-only
+    budget-evaluation:
+      interval_seconds: 600
+      enabled: true
+    incident-sweep:
+      interval_seconds: 900
+      enabled: true
+
+budgets:
+  daily_invocation_limit: 200
+  daily_cost_limit_usd: 10.0
+  minimum_reliability_score: 0.35
+  maximum_consecutive_failures: 3
+  unknown_cost_is_zero: false
+
+fallback:
+  maximum_attempts: 3
+  retry_cooldown_seconds: 300
+  do_not_retry_same_fingerprint_without_reason: true
+  stop_on_pending_approval: true
+
+receipt_renewal:
+  queue_only_by_default: true
+  auto_renew_environment_flag: AETHER_FLEET_AUTO_RENEW
+  renewal_ttl_hours: 24
+
+incidents:
+  cee_trigger_min_occurrences: 2
+  cee_trigger_severities: [high, critical]
+  operator_escalation_severities: [high, critical]
+  auto_resolve_when_condition_clears: true
+
+console:
+  route: /aionui/runtime-console
+  poll_interval_seconds: 15
+  token_storage: session-only
+  expose_secret_values: false
+
+conformance_attestation:
+  mode: adapter-contract-only
+  routing_requires_attestation: false
+  distributed_deployments_must_supply_signer: true

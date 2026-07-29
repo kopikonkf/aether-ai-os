@@ -1,0 +1,27 @@
+{
+  "schema": "aether.legacy-claim-registry.profile.v1",
+  "source_sha256": "5b793e22e59521ca4e2e4939ab1c0b3b9d46a9d2f10cf59f886cc6035453a37b",
+  "record_count": 2590,
+  "unique_surface_text_count": 1990,
+  "duplicate_surface_text_count": 600,
+  "empty_subject_count": 2590,
+  "empty_predicate_count": 2590,
+  "revision_link_count": 0,
+  "orbit_counts": {
+    "STABLE": 2567,
+    "EPHEMERAL": 1,
+    "OPERATIONAL": 22
+  },
+  "identity_relevance_counts": {
+    "0.9": 1,
+    "1.0": 2566,
+    "0.8": 12,
+    "0.7": 11
+  },
+  "created_at_min": "2026-07-20T14:20:50Z",
+  "created_at_max": "2026-07-20T16:05:53Z",
+  "confidence_mean": 0.9969469111969111,
+  "evidence_strength_mean": 0.9971013513513514,
+  "assessment": "not safe for bulk import: high self-confidence, missing structured subject/predicate, duplicates, and no revision chain",
+  "decision": "preserve registry; later sample and curate through governed knowledge proposals"
+}
