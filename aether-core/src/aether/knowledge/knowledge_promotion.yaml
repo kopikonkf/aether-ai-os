@@ -1,0 +1,28 @@
+version: 0.7.0
+authority:
+  canonical_experience: aether.memory.canonical.sqlite
+  proposal_store: aether.knowledge.proposals.sqlite
+  promoted_knowledge_namespace: knowledge
+  obsidian: projection_only
+principles:
+  direct_conversation_to_knowledge: forbidden
+  direct_conversation_to_belief: forbidden
+  automatic_belief_promotion: forbidden
+  model_self_approval: forbidden
+  contradictions_must_remain_visible: true
+  decisions_are_terminal_and_immutable: true
+promotion:
+  minimum_supporting_evidence: 2
+  minimum_distinct_sources: 2
+  maximum_confidence: 0.90
+  duplicate_proposals: blocked
+  unresolved_contradictions: blocked
+  require_trusted_principal: true
+  require_decision_reason: true
+candidate_detection:
+  explicit_metadata_only: true
+  metadata_key: knowledge_candidate
+  minimum_group_size: 2
+projection:
+  curated_folder: 05_Knowledge/Aether Curated
+  rebuildable: true

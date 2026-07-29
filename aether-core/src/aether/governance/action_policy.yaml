@@ -1,0 +1,34 @@
+version: 1
+policy_id: aether.governed-actions.v1
+default: deny
+allowed_scopes: [read, write, execute, network, memory]
+auto_approve:
+  - target: tool
+    operation: read
+    scopes: [read]
+    max_risk: low
+    reversible: true
+  - target: tool
+    operation: glob
+    scopes: [read]
+    max_risk: low
+    reversible: true
+  - target: tool
+    operation: grep
+    scopes: [read]
+    max_risk: low
+    reversible: true
+  - target: runtime
+    operation: echo
+    scopes: [execute]
+    max_risk: low
+    reversible: true
+  - target: runtime
+    operation: skill.execute
+    scopes: [execute]
+    max_risk: low
+    reversible: true
+approval_required:
+  scopes: [write, network, memory]
+  risks: [high, critical]
+  irreversible: true

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Aether Opportunity Intelligence</title>
+  <link rel="manifest" href="/aionui/opportunity-console/manifest.json" />
+  <link rel="stylesheet" href="/aionui/opportunity-console/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">AETHER EXTERNAL CEE</p>
+        <h1>Opportunity Intelligence</h1>
+        <p>Explore freely. Experiment reversibly. Act within mandate. Escalate consequences.</p>
+      </div>
+      <button id="refresh" type="button">Refresh intelligence</button>
+    </header>
+    <section id="error" class="error hidden"></section>
+    <section class="metrics" id="metrics"></section>
+    <section class="grid">
+      <article class="panel span-7">
+        <div class="panel-head"><h2>Source capability mesh</h2><span id="source-health"></span></div>
+        <div id="sources" class="cards"></div>
+      </article>
+      <article class="panel span-5">
+        <div class="panel-head"><h2>Progressive autonomy</h2></div>
+        <div id="authority" class="authority"></div>
+      </article>
+      <article class="panel span-12">
+        <div class="panel-head"><h2>Opportunity portfolio</h2><span>Evidence-weighted, budget-bound</span></div>
+        <div id="candidates" class="candidate-list"></div>
+      </article>
+      <article class="panel span-6">
+        <div class="panel-head"><h2>Scout runs</h2></div>
+        <div id="runs" class="timeline"></div>
+      </article>
+      <article class="panel span-6">
+        <div class="panel-head"><h2>Experiment mandates</h2></div>
+        <div id="mandates" class="timeline"></div>
+      </article>
+    </section>
+  </main>
+  <script src="/aionui/opportunity-console/app.js" defer></script>
+</body>
+</html>

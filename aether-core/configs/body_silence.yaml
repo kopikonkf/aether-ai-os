@@ -1,0 +1,21 @@
+# aether-core/configs/body_silence.yaml
+# Copy to ~/.aether/config.yaml (or merge). Castrates aether-agent entity defaults.
+# Spec: docs/superpowers/specs/2026-07-23-aether-body-subordination-design.md §7
+
+auxiliary:
+  background_review:
+    enabled: false   # dream = Aether only
+
+memory:
+  write_approval: true
+  # provider: "aether"   # enable after Memory plugin installed
+
+skills:
+  write_approval: true
+
+context:
+  engine: "aether"   # requires ContextEngine plugin
+
+# Optional: hide built-in memory toolset when Aether MemoryProvider is active
+# agent:
+#   disabled_toolsets: ["memory"]

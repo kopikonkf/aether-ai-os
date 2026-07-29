@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.0",
+  "created": "2026-06-15",
+  "updated": "2026-06-15",
+  "metrics": {
+    "prediction_accuracy": {
+      "type": "gauge",
+      "source": "world_model.db/consequences",
+      "computation": "1 - avg(surprise_score) over last 100",
+      "current": 0.55,
+      "target": 0.70,
+      "trend": "stable",
+      "improvement_path": "pattern_finder → better signal selection → higher accuracy",
+      "related_goals": ["improve_prediction"],
+      "related_metrics": ["surprise_score", "confidence"],
+      "collection": "metrics_bus.py → record('prediction_accuracy', value)",
+      "pulse_frequency": "every 5 episodes"
+    },
+    "self_model_accuracy": {
+      "type": "gauge",
+      "source": "self_model.db/self_state",
+      "computation": "clamped(stability + evidence_backed_ratio)",
+      "current": 0.46,
+      "target": 0.65,
+      "trend": "stable",
+      "improvement_path": "calibrate traits against actual outcomes → evidence traces",
+      "related_goals": ["improve_self_understanding"],
+      "related_metrics": ["stability", "trait_accuracy"],
+      "collection": "metrics_bus.py → record('self_model_accuracy', value)",
+      "pulse_frequency": "every 5 episodes"
+    },
+    "belief_calibration": {
+      "type": "gauge",
+      "source": "decisions.db/beliefs + belief_evidence",
+      "computation": "evidence_score * 0.6 + confidence_health * 0.4",
+      "current": 0.979,
+      "target": 0.80,
+      "trend": "stable",
+      "improvement_path": "already high — maintain through lifecycle engine",
+      "related_goals": ["integrate_knowledge"],
+      "related_metrics": ["evidence_count", "avg_confidence"],
+      "collection": "metrics_bus.py → record('belief_calibration', value)",
+      "pulse_frequency": "every 5 episodes"
+    },
+    "concept_formation": {
+      "type": "gauge",
+      "source": "consciousness.db/instances + patterns + concepts",
+      "computation": "healthy_ratio_scoring with abstraction_penalty",
+      "current": 0.375,
+      "target": 0.60,
+      "trend": "stable",
+      "improvement_path": "more instances → pattern detection → concept formation → meta",
+      "related_goals": ["integrate_knowledge"],
+      "related_metrics": ["instance_count", "pattern_count", "concept_count"],
+      "collection": "metrics_bus.py → record('concept_formation', value)",
+      "pulse_frequency": "every 5 episodes"
+    },
+    "goal_completion": {
+      "type": "ratio",
+      "source": "decisions.db/active_goals",
+      "computation": "completed / total",
+      "current": 0.10,
+      "target": 0.50,
+      "trend": "stable",
+      "improvement_path": "goal_generator → auto_generate → track progress → complete",
+      "related_goals": ["improve_prediction", "improve_self_understanding", "integrate_knowledge"],
+      "related_metrics": ["active_goals", "completed_goals"],
+      "collection": "metrics_bus.py → record('goal_completion', value)",
+      "pulse_frequency": "every 5 episodes"
+    }
+  },
+  "vision_metrics": {
+    "can_see": {"status": true, "level": "V0"},
+    "can_describe": {"status": true, "level": "V0"},
+    "can_compare": {"status": false, "level": "V2"},
+    "can_learn": {"status": false, "level": "V3"},
+    "can_form_concepts": {"status": false, "level": "V3"},
+    "can_improve_prediction": {"status": false, "level": "V4"},
+    "can_improve_decisions": {"status": false, "level": "V5"}
+  },
+  "belief_performance": {
+    "total_beliefs": 80,
+    "tested_beliefs": 0,
+    "validated_beliefs": 0,
+    "invalidated_beliefs": 0,
+    "untested_beliefs": 80,
+    "accuracy": null
+  },
+  "knowledge_integration": {
+    "memory_count": 108,
+    "lesson_count": 34,
+    "insight_count": 50,
+    "goal_count": 7,
+    "linked_goals": 0,
+    "integration_score": 0.0
+  },
+  "collection_habits": {
+    "memory_growth_rate": "high",
+    "lesson_extraction_rate": "low",
+    "insight_rate": "moderate",
+    "goal_linking_rate": "zero"
+  }
+}

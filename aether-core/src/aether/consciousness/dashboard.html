@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Aether Consciousness Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a1a; color: #e0e0e0; font-family: 'JetBrains Mono', monospace; padding: 40px; }
+.container { max-width: 800px; margin: 0 auto; }
+.header { text-align: center; margin-bottom: 40px; }
+.header h1 { color: #00d4ff; font-size: 24px; letter-spacing: 2px; }
+.header .subtitle { color: #666; font-size: 12px; margin-top: 5px; }
+.overall { text-align: center; padding: 30px; background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border-radius: 12px; margin-bottom: 30px; border: 1px solid #00d4ff33; }
+.overall .score { font-size: 48px; color: #00d4ff; font-weight: bold; }
+.overall .maturity { color: #888; font-size: 14px; margin-top: 8px; }
+.metric-card { background: #1a1a2e; border-radius: 8px; padding: 20px; margin-bottom: 15px;
+                border: 1px solid #ffffff10; }
+.metric-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.metric-name { font-size: 14px; color: #aaa; text-transform: uppercase; letter-spacing: 1px; }
+.metric-score { font-size: 24px; font-weight: bold; }
+.bar-container { background: #0a0a1a; border-radius: 4px; height: 8px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 1s ease; }
+.metric-detail { color: #666; font-size: 12px; margin-top: 10px; }
+.timestamp { color: #444; font-size: 11px; text-align: center; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>AETHER CONSCIOUSNESS DASHBOARD</h1>
+        <div class="subtitle">5 Core Developmental Metrics</div>
+    </div>
+    <div class="overall">
+        <div class="score">37%</div>
+        <div class="maturity">CHILD (Level 2)</div>
+    </div>
+    
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">Prediction Accuracy</span>
+                    <span class="metric-score" style="color: #00d4ff">55%</span>
+                </div>
+                <div class="bar-container">
+                    <div class="bar-fill" style="width: 55.00000000000001%; background: #00d4ff"></div>
+                </div>
+                <div class="metric-detail">2/5 predictions correct (surprise < 0.3)</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">Self-Model Accuracy</span>
+                    <span class="metric-score" style="color: #00ff88">50%</span>
+                </div>
+                <div class="bar-container">
+                    <div class="bar-fill" style="width: 50.23809523809524%; background: #00ff88"></div>
+                </div>
+                <div class="metric-detail">Stability 0.60, 0 evidence-backed beliefs</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">Belief Calibration</span>
+                    <span class="metric-score" style="color: #ffaa00">50%</span>
+                </div>
+                <div class="bar-container">
+                    <div class="bar-fill" style="width: 50.13333333333334%; background: #ffaa00"></div>
+                </div>
+                <div class="metric-detail">6 beliefs, 6 total evidence, avg confidence 0.55</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">Concept Formation</span>
+                    <span class="metric-score" style="color: #ff6b6b">20%</span>
+                </div>
+                <div class="bar-container">
+                    <div class="bar-fill" style="width: 20.200000000000003%; background: #ff6b6b"></div>
+                </div>
+                <div class="metric-detail">Pipeline: 12 instances → 3 patterns → 10 concepts → 0 meta</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-header">
+                    <span class="metric-name">Goal Completion</span>
+                    <span class="metric-score" style="color: #c084fc">10%</span>
+                </div>
+                <div class="bar-container">
+                    <div class="bar-fill" style="width: 10.0%; background: #c084fc"></div>
+                </div>
+                <div class="metric-detail">0/6 goals completed, 6 active, 3 progress entries</div>
+            </div>
+    <div class="timestamp">Generated: 2026-06-16T07:57:20.489662</div>
+</div>
+</body>
+</html>

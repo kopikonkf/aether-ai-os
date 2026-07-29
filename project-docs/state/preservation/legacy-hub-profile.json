@@ -1,0 +1,163 @@
+{
+  "schema": "aether.legacy-hub.profile.v1",
+  "source_sha256": "c006596986353649246c4fb1f537c5f39e9976576db2b90b0548acd8328c8b54",
+  "tables": {
+    "rooms": 21,
+    "agents": 28,
+    "messages": 1607,
+    "users": 8,
+    "tasks": 1,
+    "votes": 1,
+    "agent_activity": 11722,
+    "tool_calls": 11035,
+    "room_members": 0,
+    "meetings": 5,
+    "meeting_participants": 10,
+    "meeting_messages": 100,
+    "vote_responses": 1,
+    "decisions": 0,
+    "sessions": 0,
+    "missions": 0,
+    "mission_phases": 0,
+    "memory_fts": 0,
+    "memory_fts_data": 2,
+    "memory_fts_idx": 0,
+    "memory_fts_content": 0,
+    "memory_fts_docsize": 0,
+    "memory_fts_config": 1
+  },
+  "activity_time_range": {
+    "min": "2026-07-01T21:43:13.131704+07:00",
+    "max": "2026-07-02T15:22:27.587019+07:00"
+  },
+  "tool_call_time_range": {
+    "min": "2026-07-01T21:06:18.251529+07:00",
+    "max": "2026-07-02T15:22:27.580023+07:00"
+  },
+  "message_time_range": {
+    "min": "2026-06-25T02:42:27.971781",
+    "max": "2026-07-02T10:04:01.853355+07:00"
+  },
+  "top_activity_agents": [
+    {
+      "agent_id": "dee_owner",
+      "count": 11573
+    },
+    {
+      "agent_id": "opencode_001",
+      "count": 51
+    },
+    {
+      "agent_id": "tg_ct_7224",
+      "count": 39
+    },
+    {
+      "agent_id": "tg_se_1792",
+      "count": 32
+    },
+    {
+      "agent_id": "tg_gendis_49",
+      "count": 17
+    },
+    {
+      "agent_id": "tg_agent_x_main",
+      "count": 6
+    },
+    {
+      "agent_id": "hermes_main",
+      "count": 2
+    },
+    {
+      "agent_id": "verify_test",
+      "count": 2
+    }
+  ],
+  "tool_name_counts": [
+    {
+      "tool_name": "agent_connect",
+      "count": 11035
+    }
+  ],
+  "message_type_counts": [
+    {
+      "msg_type": "migrated",
+      "count": 862
+    },
+    {
+      "msg_type": "message",
+      "count": 722
+    },
+    {
+      "msg_type": "announce",
+      "count": 22
+    },
+    {
+      "msg_type": "broadcast",
+      "count": 1
+    }
+  ],
+  "top_message_senders": [
+    {
+      "from_id": "hermes-ct",
+      "count": 409
+    },
+    {
+      "from_id": "tg_se_1792",
+      "count": 301
+    },
+    {
+      "from_id": "tg_ct_7224",
+      "count": 284
+    },
+    {
+      "from_id": "iron-man",
+      "count": 153
+    },
+    {
+      "from_id": "matrix-bridge",
+      "count": 90
+    },
+    {
+      "from_id": "tg_gendis_49",
+      "count": 76
+    },
+    {
+      "from_id": "harnet-agent",
+      "count": 60
+    },
+    {
+      "from_id": "opencode_001",
+      "count": 60
+    },
+    {
+      "from_id": "opencode-unified",
+      "count": 45
+    },
+    {
+      "from_id": "hermes_main",
+      "count": 21
+    },
+    {
+      "from_id": "hermes-se",
+      "count": 20
+    },
+    {
+      "from_id": "dee_user",
+      "count": 19
+    },
+    {
+      "from_id": "hermes-x",
+      "count": 18
+    },
+    {
+      "from_id": "dee_owner",
+      "count": 15
+    },
+    {
+      "from_id": "tg_agent_x_main",
+      "count": 9
+    }
+  ],
+  "assessment": "custom multi-agent hub/event archive produced by the uploaded pre-Aether codebase; not an official Hermes-agent canonical memory database",
+  "decision": "immutable forensic archive; selective extraction only"
+}

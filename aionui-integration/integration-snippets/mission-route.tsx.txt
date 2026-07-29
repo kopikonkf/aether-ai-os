@@ -1,0 +1,2 @@
+const MissionOperations = React.lazy(() => import('@renderer/pages/mission-operations'));
+<Route path='/missions' element={withRouteFallback(MissionOperations)} />

@@ -1,0 +1,6 @@
+name: aether_bridge
+version: 0.1.0
+description: North Star gate + experience feedback for aether-agent body
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call

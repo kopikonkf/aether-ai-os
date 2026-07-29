@@ -1,0 +1,1292 @@
+{
+  "schema": "aether.legacy-brain.preservation-manifest.v1",
+  "source": "Source Code Aether.zip/aether-vps-backup-20260723.zip/hermes-brain",
+  "source_file_count": 157,
+  "source_total_bytes": 7378397,
+  "policy": "preserve everything by hash; inject nothing automatically",
+  "classification_counts": {
+    "forensic_database": 3,
+    "founder_workspace_archive": 22,
+    "generated_operational_evidence": 5,
+    "generated_projection_index": 15,
+    "legacy_decision_candidate": 4,
+    "legacy_goal_candidate": 1,
+    "legacy_knowledge_registry": 2,
+    "legacy_miscellaneous": 2,
+    "legacy_reflection_archive": 17,
+    "legacy_research_archive": 39,
+    "legacy_skill_candidate": 3,
+    "legacy_strategy_candidate": 17,
+    "legacy_vault_archive": 19,
+    "local_obsidian_configuration": 5,
+    "secret_quarantine": 3
+  },
+  "action_counts": {
+    "aether_review_later": 17,
+    "candidate_review": 66,
+    "historical_archive": 5,
+    "human_review": 22,
+    "preserve_hash_only": 3,
+    "preserve_immutable": 3,
+    "preserve_only": 26,
+    "rebuildable_archive": 15
+  },
+  "files": [
+    {
+      "path": "20_Dee_Workspace/execution/aether_home.html",
+      "size_bytes": 13047,
+      "sha256": "34799b6a55a751860c89d5ba9eb8d75666ff1e38fc72f8dcd8901ce77e9c5ea3",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "20_Dee_Workspace/execution/handoff.md",
+      "size_bytes": 8793,
+      "sha256": "7218f3296c25d7af172c7d3215186ca4c57401e119a442543e83cac1d7f14ec3",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "20_Dee_Workspace/execution/log.md",
+      "size_bytes": 200,
+      "sha256": "fe9e5e5bb827063be353ff180924aab14cf8c0c2abd99de3cf29c1723a539253",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "20_Dee_Workspace/execution/safe_fetch.py",
+      "size_bytes": 274,
+      "sha256": "5dabb0b9ef407d6590840144bb7a55f806d1db72e1a36deb31d5cbdc6648dc41",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "20_Dee_Workspace/principal architect/2026-07-22_AETHER_vs_HERMES-AGENT_Overlap_Conflict_Analysis_by_DeepSeek_V4_Flash.md",
+      "size_bytes": 33122,
+      "sha256": "b28d044ee878722094ec7b41b95e6574e046af5edc714af66174e9bdb9ee5b6b",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "20_Dee_Workspace/principal architect/AETHER-HERMES-INTEGRATION-ARCHITECTURE-claude-sonnet-4-5.md",
+      "size_bytes": 19311,
+      "sha256": "c1fe933ca86eea89890bfae5a5b72fb5b01048d2511ffbdb66b2816b44985161",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "20_Dee_Workspace/principal architect/AETHER-HERMES-INTEGRATION-claude-sonnet-4-5.md",
+      "size_bytes": 11548,
+      "sha256": "99b0d77e09ae715d28a4002db23a2bdb9fe6a89356600343d39d3580115f13af",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "20_Dee_Workspace/principal architect/claude-opus-4.8.md",
+      "size_bytes": 33302,
+      "sha256": "549cfda181296d065089854b1441b5f237e65b83cd12185f01c1e997095a5c87",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "hermes_hub.db",
+      "size_bytes": 5226496,
+      "sha256": "c006596986353649246c4fb1f537c5f39e9976576db2b90b0548acd8328c8b54",
+      "classification": "forensic_database",
+      "import_action": "preserve_immutable",
+      "note": "extract only through reviewed, provenance-bearing jobs"
+    },
+    {
+      "path": "hermes_hub.db-shm",
+      "size_bytes": 32768,
+      "sha256": "fd4c9fda9cd3f9ae7c962b0ddf37232294d55580e1aa165aa06129b8549389eb",
+      "classification": "forensic_database",
+      "import_action": "preserve_immutable",
+      "note": "extract only through reviewed, provenance-bearing jobs"
+    },
+    {
+      "path": "hermes_hub.db-wal",
+      "size_bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "classification": "forensic_database",
+      "import_action": "preserve_immutable",
+      "note": "extract only through reviewed, provenance-bearing jobs"
+    },
+    {
+      "path": "knowledge/cka/registry.json",
+      "size_bytes": 261,
+      "sha256": "df6db544abbcd0bee37cc298322df3fd545a99fe81073d5e0743fe2388590ff5",
+      "classification": "legacy_knowledge_registry",
+      "import_action": "candidate_review",
+      "note": "sample, deduplicate, evidence-check; never bulk promote"
+    },
+    {
+      "path": "obsidian/vault/.obsidian/app.json",
+      "size_bytes": 2,
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "classification": "local_obsidian_configuration",
+      "import_action": "preserve_only",
+      "note": "do not merge into new vault configuration"
+    },
+    {
+      "path": "obsidian/vault/.obsidian/appearance.json",
+      "size_bytes": 2,
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "classification": "local_obsidian_configuration",
+      "import_action": "preserve_only",
+      "note": "do not merge into new vault configuration"
+    },
+    {
+      "path": "obsidian/vault/.obsidian/community-plugins.json",
+      "size_bytes": 3,
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "classification": "local_obsidian_configuration",
+      "import_action": "preserve_only",
+      "note": "do not merge into new vault configuration"
+    },
+    {
+      "path": "obsidian/vault/.obsidian/core-plugins.json",
+      "size_bytes": 696,
+      "sha256": "763cf20a921fd9955735b278006820b90b207b2fc04d9e79ca648279c7c14276",
+      "classification": "local_obsidian_configuration",
+      "import_action": "preserve_only",
+      "note": "do not merge into new vault configuration"
+    },
+    {
+      "path": "obsidian/vault/.obsidian/workspace.json",
+      "size_bytes": 4685,
+      "sha256": "12a51049c0a32e33cbeab31eb3fe472ba87fa20682636ad977fb0200ec162257",
+      "classification": "local_obsidian_configuration",
+      "import_action": "preserve_only",
+      "note": "do not merge into new vault configuration"
+    },
+    {
+      "path": "obsidian/vault/00_System/README.md",
+      "size_bytes": 207,
+      "sha256": "6190638617122efa5c96f8702c3761fac0c01d4f27c542efd9b7e35380650784",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/00_System/SNIPER_Workspace_Index.md",
+      "size_bytes": 361,
+      "sha256": "ee4111d959dc3b62aac7b0f8c3a08f84d0198256525f40dfad3bb628071fbdc9",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Dashboard_Index.md",
+      "size_bytes": 282,
+      "sha256": "8aec057e4d06c50cbc0595b08345457f0ecd51b7e01265d44bf3e4730ffdf1ff",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Executive_Index.md",
+      "size_bytes": 116,
+      "sha256": "c6f29aabb9c4ee56ae7c9274024173aaac393c29dd5c25a5feebeb3f607fa8e0",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Goal_Index.md",
+      "size_bytes": 240,
+      "sha256": "7606cc7d222d7c901e352b721b9dc71a658b218aacf9a916b593bd175472b6d9",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Governance_Index.md",
+      "size_bytes": 253,
+      "sha256": "83d39e81c0dfa057673c6dcc0298d1bd08cbfe1226c12f142a0112b058924779",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Ingestion_Index.md",
+      "size_bytes": 120,
+      "sha256": "54813a0319844f9664b1fb7ed2b370f868ad6f0431e7534b0d37c66dd24b36d2",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Initiative_Index.md",
+      "size_bytes": 376,
+      "sha256": "5f6ccacb6053d8b78d161a6249bfe291cda6b1c4dd4ef62c6fb1639448875532",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Knowledge_Lifecycle_Index.md",
+      "size_bytes": 213,
+      "sha256": "e94cec3a9c69de3e23b13e5cf71801cd0ecf8431c2101bd978492a2c2d9a9b20",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Link_Graph.md",
+      "size_bytes": 486,
+      "sha256": "a17da94c6b72c74d24a8463b9d250fd1d7b39c49a17f4f19c8bf2b6c3904eff2",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Self_Evolution_Index.md",
+      "size_bytes": 171,
+      "sha256": "d41e2bcab1ef1ec74e682c49a248c19426189d1e8060d5da29e49dada9488bac",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Tag_Index.md",
+      "size_bytes": 3535,
+      "sha256": "5f9ff6a5069b64270c22b69532d52215b5657d1c07e7cdd45da7cc7e315f3494",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/Vault_Index.md",
+      "size_bytes": 2949,
+      "sha256": "c0049b0212ba13c7e3b095fe73a8ccb1d1e358e2cc370de030bc6b3d2c493bc5",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/War_Council_Index.md",
+      "size_bytes": 258,
+      "sha256": "7cd8428a38bd2f244262498b71cb88711e8d7e2bc370cc970e5db29aade5755c",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/link_graph.json",
+      "size_bytes": 657,
+      "sha256": "8767687492958f103d57be8decb92d6919f79ba277256b9f673eb64b46111231",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/tag_index.json",
+      "size_bytes": 3807,
+      "sha256": "348c67691e17202b9a2d89c5a1e9d894bf88ed5f1622e78ff3554402200fcab0",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/00_System/indexes/vault_index.json",
+      "size_bytes": 14709,
+      "sha256": "dc6609e3416ba3e07bf33fa5273d44e36dc81d750c61897c81bd3b2982ed533c",
+      "classification": "generated_projection_index",
+      "import_action": "rebuildable_archive",
+      "note": "preserve for forensics; regenerate from accepted content"
+    },
+    {
+      "path": "obsidian/vault/01_Objectives/2026-07-10-goal-update-solopreneur.md",
+      "size_bytes": 3487,
+      "sha256": "517f363609aaa5382dca67e6be9b6e655f74209ca84ddb9fa45978ba744b53fb",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/01_Objectives/README.md",
+      "size_bytes": 215,
+      "sha256": "9c8bcbc41f96a9f8423e57fb7d1db5f36ca7f37de849b75a7f27dc8c38946dc8",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/01_Objectives/goal_self_fund_10_usd_per_day_66c50ee803844713.md",
+      "size_bytes": 1019,
+      "sha256": "b09519cc2639e318e79d421988804b4ebfe7afc2042355c9f8302aa1fa4f0e46",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/01_Objectives/goal_self_fund_1_usd_per_day_start_day_milestone_1_66c50ee803844713.md",
+      "size_bytes": 1227,
+      "sha256": "cfca0ba3472a753246bad20b54d94733199220f8994e1975febbd2cb40c27c13",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/02_Projects/README.md",
+      "size_bytes": 211,
+      "sha256": "5319c2806f7b9e08babfd6119b3671aaf6bed4c2568e9aca3224dabcb29be924",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/02_Projects/brainbiz-crossvps-routing-map-20260711.md",
+      "size_bytes": 7407,
+      "sha256": "f11a13c40c488e6b87f351d3c12efecf102e46d13c619e55efe0ea7bd797fbb0",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/02_Projects/brainbiz-subdomain-to-path-migration.md",
+      "size_bytes": 8555,
+      "sha256": "4690ce09b6835f3d07f061f0ed9c4704ebd6cbcc6974e213c18c3273dbeddf3d",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/02_Projects/initiative_automation_services_revenue_stream_1450e648fa0d41af.md",
+      "size_bytes": 1684,
+      "sha256": "63c8100dccc59ba9dc0d4a9fdcf2b547a70d4b70e969eba062548700e6d98631",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/02_Projects/initiative_xauusd_trading_1_day_risk_strategy_090e46ddd3c841be.md",
+      "size_bytes": 2269,
+      "sha256": "1be6d026d2bbecd6155d3a69c08a1515b0590a842dc4abc8623a5632f6bd7dd0",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/03_Sources/README.md",
+      "size_bytes": 209,
+      "sha256": "66ba84a1b476bef709bcbc3af577b68d9ab790d6c51ca3ca855e79bdb6db64ba",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/04_Digests/README.md",
+      "size_bytes": 209,
+      "sha256": "e3aead1405ae9c20f5e47ca92f41a73834253b35b61872d9385244bbb3ce8af0",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_20t19_35_27z.md",
+      "size_bytes": 461,
+      "sha256": "d19588f787d45b4ed0bdf7f7ca0025db219b63e894cf1bd6920acde55ba30e17",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_21t09_18_02z.md",
+      "size_bytes": 461,
+      "sha256": "e09934471ef6e2b384668659ad6760bc67febb0af4cc1c3739a7e6054c392dba",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_21t13_18_03z.md",
+      "size_bytes": 461,
+      "sha256": "a26da24a242617794188c4aa427a08bd7eb2029c0ff88165c14bdd97292960e5",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_21t17_18_04z.md",
+      "size_bytes": 461,
+      "sha256": "42b08077ca380a35529346666a6b03a15209e6c4d823f36fa53c7e8e91e65933",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_21t21_18_05z.md",
+      "size_bytes": 461,
+      "sha256": "641fe6127ac7121ec397826755e4d7d3e9ac7e7198d74e8a7ab93b927e42e9eb",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_22t01_18_06z.md",
+      "size_bytes": 461,
+      "sha256": "ca70561b184d0a9aafeadf8899119675200da7ec7ae212605ed45bad207c3965",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_22t05_18_07z.md",
+      "size_bytes": 461,
+      "sha256": "3e69df224e628d55b9c9cfc173edd5715cb6c24b017d36082d63e2fd7cbff86a",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_22t09_18_08z.md",
+      "size_bytes": 461,
+      "sha256": "93276b68322a9ff239a05d4c016becd49e457419520eb367f249f2f7009dec0f",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_22t13_18_09z.md",
+      "size_bytes": 461,
+      "sha256": "679d173e7d0c82b17eacc95393cf84e3f86fd7135b53b70917beac05edb312b3",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/04_Reflections/reflection_2026_07_22t17_18_10z.md",
+      "size_bytes": 461,
+      "sha256": "c29037c61699016228d15dec9578dda4d6c139bca24af23a97985a5f07568520",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/05_Knowledge/Providers/AGENTMAIL_CONFIG.md",
+      "size_bytes": 810,
+      "sha256": "4fc29721ef66b9e4e4f72942c728f8bfd59e9f10a9054308e8a9606c99b79350",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/05_Knowledge/Providers/PRIME_PROVIDER_CONFIG.md",
+      "size_bytes": 4603,
+      "sha256": "689a3ed80a7d71ef8ae231a302d191a20d784916543b57ae704ee96a60f1c046",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/05_Knowledge/README.md",
+      "size_bytes": 213,
+      "sha256": "be36184addb9880d87ef8376f009901096a037f5ae0ab0d95e403b25ce2026a3",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/05_Knowledge/Strategies/auto_registrant.py",
+      "size_bytes": 4077,
+      "sha256": "39906ea692458cd856810710f0ae5aefc94c8f9d6347375ac45f7480373aa3f1",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/05_Knowledge/Strategies/credential_pool_template.yaml",
+      "size_bytes": 1421,
+      "sha256": "b5dfa5812bd1a20b05b16ba45a9017d89100cae6fe0d849a921b2b3fbfe2ce2f",
+      "classification": "secret_quarantine",
+      "import_action": "preserve_hash_only",
+      "note": "never index, copy into vault, or import automatically"
+    },
+    {
+      "path": "obsidian/vault/06_Beliefs/README.md",
+      "size_bytes": 209,
+      "sha256": "bf731208d4ae9ebac900e321e5c8fc2228e76a1fd7ad57b0ddbb21bebb56bb62",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/07_Experiments/README.md",
+      "size_bytes": 217,
+      "sha256": "da998f704caec2523fe2161bc4e728b98cff1cd2f7dcb9a4c0df975868b44d0d",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/08_Reflections/Daily/reflection-2026-07-09.md",
+      "size_bytes": 5325,
+      "sha256": "965267c3dcdce5e94c943ff892855f435da8bbaf891580df8061ab90818037bb",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/08_Reflections/Daily/reflection-2026-07-11.md",
+      "size_bytes": 6325,
+      "sha256": "c4747b07d89fe2d0f7cbe9524a933511d03142b01335365582ca08bdf06995ec",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/08_Reflections/README.md",
+      "size_bytes": 217,
+      "sha256": "8cff23bae5956702e66da641a690c060fd504b6c336d42da7f21cabee4ffcbe3",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/08_Reflections/Sessions/SESSION_STATE.md",
+      "size_bytes": 2810,
+      "sha256": "13aed4c999bcf231c25a17b81dd213fcaf9d7ad6d0c8d170477076bc68e7091d",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/08_Reflections/Sessions/SSU.md",
+      "size_bytes": 4357,
+      "sha256": "fbe2fb1f0bad6b0e02f53daf70e3f03a0c57cb9368c1418261a45257e0d99489",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/09_Decisions/README.md",
+      "size_bytes": 213,
+      "sha256": "6d4e29947b1b09498aebb4c1a5b85389aa730f695f61729217dc61eac866c58a",
+      "classification": "legacy_decision_candidate",
+      "import_action": "candidate_review",
+      "note": "import only with historical label and decision provenance"
+    },
+    {
+      "path": "obsidian/vault/09_Decisions/governance_assessment_allow_d569364297ad4117.md",
+      "size_bytes": 1489,
+      "sha256": "10b816e9a012e5eac35c2ba70c4abf2cb80e696848e31248dcfa7c8986709145",
+      "classification": "legacy_decision_candidate",
+      "import_action": "candidate_review",
+      "note": "import only with historical label and decision provenance"
+    },
+    {
+      "path": "obsidian/vault/09_Decisions/war_council_decision_proceed_9bdbecf3b8c14272.md",
+      "size_bytes": 963,
+      "sha256": "9b5c6dc61e9c5b288d64d6074d892bcec87c7f8e9ab0be64ea6880d998746199",
+      "classification": "legacy_decision_candidate",
+      "import_action": "candidate_review",
+      "note": "import only with historical label and decision provenance"
+    },
+    {
+      "path": "obsidian/vault/09_Decisions/war_council_self_fund_10_usd_per_day_strategy_340a92d358f74085.md",
+      "size_bytes": 1569,
+      "sha256": "1bfba9d0f5a8cf7db596ab5b51d0f0a9bd964bbc457debf577d801ccb9446771",
+      "classification": "legacy_decision_candidate",
+      "import_action": "candidate_review",
+      "note": "import only with historical label and decision provenance"
+    },
+    {
+      "path": "obsidian/vault/10_Reports/README.md",
+      "size_bytes": 209,
+      "sha256": "e1f9fdbec15996bd1bcc60c8c4af9005ca4ad5d52fc3a2b76ce3401b6eb2b066",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/10_Reports/SNIPER_Dashboard.md",
+      "size_bytes": 1541,
+      "sha256": "78ba0ad63eb659027f2a0755e3bc5f5c549e9de8f7bdf724ab836d5f10b7b5e1",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/10_Reports/daily-eval/2026-07-10.md",
+      "size_bytes": 2892,
+      "sha256": "b9c2273bfb496811d6dd250b78248f0e0515fd9151246ac591bef7df49186bbc",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/awesome-skills/2026-07-10.md",
+      "size_bytes": 6589,
+      "sha256": "ba957ab93b703f11cc5b99869e8982f5b7608efc91bd6816c13c3b46e0158109",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/awesome-skills/2026-07-11.md",
+      "size_bytes": 8606,
+      "sha256": "b077b303ed3b241461c54a86ceceb5f25ce77aaa8863f981c124f3c6a030285b",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/awesome-skills/2026-07-12.md",
+      "size_bytes": 6642,
+      "sha256": "4976a61a631a47833fb08aaaa7ce7c325caa75c2eaeb31446b6674b0581b3d90",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/business-scout/2026-07-10-competitive-intel.md",
+      "size_bytes": 5774,
+      "sha256": "38633b358a472125c03b148367318d2dc8fef6ddec0761d09699e4cc8b990bf9",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/business-scout/2026-07-10-execution-checklist.md",
+      "size_bytes": 4078,
+      "sha256": "c19783d0bb8dd70e9fa155a4d8507a2c884119a091374324ae5f5d1cfc0df558",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/business-scout/2026-07-10-indonesia-personas.md",
+      "size_bytes": 10904,
+      "sha256": "c113c99d4815c4be07a01bcafd2f395efe8a460db7df573d22bad07800e91b19",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/business-scout/2026-07-10-market-deep-dive.md",
+      "size_bytes": 22472,
+      "sha256": "4f86536de3ad5abf1baaa5fc55595f76dd4a6b78e09768d6059b152de74ae845",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/business-scout/state.json",
+      "size_bytes": 422,
+      "sha256": "7eb279449390af8bd21d3ec18cf83a113e9adc9d27e06b46ee489d24c6bdead6",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/index.md",
+      "size_bytes": 521,
+      "sha256": "fa08a530b627e54afd5caf292583f5b65bacc5230d4a2c184d339830f15c37ab",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/scout/2026-07-10.md",
+      "size_bytes": 24612,
+      "sha256": "a57e56f3e48c0ff74e23d54c8aee2589472d631af8e96be4555ca7163e0fa2f7",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/scout/2026-07-11.md",
+      "size_bytes": 2541,
+      "sha256": "0142e4d65b41a722fe43f2bb8c52e6f454f499b9e123ad15310dd5190a5a0806",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/scout/2026-07-12.md",
+      "size_bytes": 4885,
+      "sha256": "ef5713e4d9ff0180ec3b6291194a4149b55fed778a213295ba68286a9d8aa040",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/scout/scout-reader-2026-07-10.md",
+      "size_bytes": 17623,
+      "sha256": "96e26cb7f5f2dc0dcbc6b28d5da0bd4da718780870df0e786f80253ab2fc9b51",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/scout/scout-reader-2026-07-11.md",
+      "size_bytes": 25336,
+      "sha256": "058034a07f9452dfaa274e62aec5c2edc2b6f27e53371921d287dcdeee9439b6",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/11_Learning/state.json",
+      "size_bytes": 1635,
+      "sha256": "4d5ce402908219a0e5cc2a8ee34e2abe3737f27a96e52dbafbdb89d3f89b162a",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/12_Docs/API_Keys_Backup.md",
+      "size_bytes": 6330,
+      "sha256": "49738d17aedddfdcea54e4cac8b1916c8f08ecf79e18a8c8505777d8134ca994",
+      "classification": "secret_quarantine",
+      "import_action": "preserve_hash_only",
+      "note": "never index, copy into vault, or import automatically"
+    },
+    {
+      "path": "obsidian/vault/12_Docs/ARCHITECTURE_MIGRATION.md",
+      "size_bytes": 8186,
+      "sha256": "c863fa86faf08e728ae93252e01ef1b9ed60446478fb52e50030a6beda1fcb86",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/12_Docs/HUB_AUDIT_REPORT.md",
+      "size_bytes": 22065,
+      "sha256": "2423b04bc7f6f1f71e99e6088c7954bf29bee9081685b0b5b089cc2cb39bb1e9",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/12_Docs/INFRASTRUCTURE_MANUAL.md",
+      "size_bytes": 12917,
+      "sha256": "34e40d5cfce3f71c8978b86fbade48237a11b2090e19aa982095803517d74cfa",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/12_Docs/MENTION_NOTIFICATION_ARCHITECTURE.md",
+      "size_bytes": 18749,
+      "sha256": "1b81f9ef4ef27c5b973f56fb20b357f783cb7dec66caf04b6f611bc4b32c07d1",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/CT_COMPETITION_REPORT.md",
+      "size_bytes": 3343,
+      "sha256": "5ba54811ab695f85be33908d07d5fcc1fcc26250b1b8514c78cacb623a8a088a",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/CT_EDGE_FINDINGS.md",
+      "size_bytes": 3656,
+      "sha256": "36d9b63194c7b09244fd63b4f7607b1cb54dae4a9b2a1e07d34a098cdee2ec1f",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/CT_README.md",
+      "size_bytes": 2233,
+      "sha256": "a21dfef69c675a2a5665a50791843a6442e9a5d69345ea9f21895a5747b54afa",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/CT_status.md",
+      "size_bytes": 1247,
+      "sha256": "46b10aa4b257d6d1b651173606c2a0e4786dbabd4ebb687be1e672ba428e56e4",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/GENDIS_COMPETITION_REPORT.md",
+      "size_bytes": 2202,
+      "sha256": "b29f204d38819667104774bca942269b2b57146a671252c23bdc265df97386b6",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/GENDIS_EDGE_FINDINGS.md",
+      "size_bytes": 2258,
+      "sha256": "3d94679d539f28db527f45097aba828339b4b59a70e71e9231d4914cfd51f21f",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/GENDIS_MILESTONE.md",
+      "size_bytes": 1144,
+      "sha256": "59436da8ccde21e6374863fe905947f4134b8bbea1dd37494d848b46ee8a3a81",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/trading-engines/GENDIS_MILESTONE_REPORT.md",
+      "size_bytes": 3355,
+      "sha256": "db7fff4e8a2fbff5c9dcf30969f0a56f45d7e9e9ba7bfe04790ba1fe3f5244e8",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/13_Trading/v6-ml/V6_PROGRESS.md",
+      "size_bytes": 2674,
+      "sha256": "d256ac27bfe01b7edbe265267ec12b0af39e3cd775f7b8d65dc6a063e11629f1",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/14_Data/audits/audit-2026-07-08.md",
+      "size_bytes": 137,
+      "sha256": "6c9042c158893c8117aff37de45341a3fd40457431e23cbd5f76c57721dcd255",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/14_Data/audits/audit-2026-07-09.md",
+      "size_bytes": 137,
+      "sha256": "079e61c605007db69db6fef94f0998f1be3830f7a9c634298b900df4caf23f76",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/14_Data/audits/audit-2026-07-10.md",
+      "size_bytes": 3453,
+      "sha256": "c73bd213e18f57366289102b5e1335943b998659f3b22ee7c08ce212ca9616d7",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/14_Data/audits/audit-2026-07-11.md",
+      "size_bytes": 2225,
+      "sha256": "9e76182d1512acb16f1dc261f90603258ae8c403a79af02c0ce9031ac84ca02f",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/14_Data/audits/audit-2026-07-12.md",
+      "size_bytes": 2419,
+      "sha256": "b832613e0ebc8dda36dec4f6f12b41ab7d6a90cab275b8eaf8324bb7bfe7414e",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/14_Data/audits/codescan-2026-07-11.md",
+      "size_bytes": 1398,
+      "sha256": "8148fb5c6a0c84233d6793e39f4adfc9f3635ad4da71ee60a2fb97fa1baf5649",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/14_Data/audits/security-fixes-2026-07-11.md",
+      "size_bytes": 2030,
+      "sha256": "41b3883dbb6993aed4af2896b220fe5d73aba63071e002b1410fcfeb831a4e1c",
+      "classification": "legacy_research_archive",
+      "import_action": "candidate_review",
+      "note": "freshness and evidence review required before use"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/AUTOMATION_PIPELINE.md",
+      "size_bytes": 6389,
+      "sha256": "e262ebbbbadf3cffa5e813f49f40375c0ea73292ee5540d1b6cda30b106f46da",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/SOLOPRENEUR_BLUEPRINT.md",
+      "size_bytes": 9624,
+      "sha256": "c3c384907996daae66ea1db15bbaa7b13ac0cbaf1152502db20a4d6e15bf7358",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/deepdive/2026-07-10.md",
+      "size_bytes": 2835,
+      "sha256": "55da87e8614e5c79dc1c4e94d961c5d5679975832841ab1891522fe7804f307c",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/opportunities/2026-07-10.md",
+      "size_bytes": 5584,
+      "sha256": "03a8f1b5a6c7e04a1af1878353ff28603a32436c2374d939b92b1e350199ccb4",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/research/2026-07-10.md",
+      "size_bytes": 1601,
+      "sha256": "c7597aa6905a0aec42b1a3086a0bd5d1e7f0af2cbef2d4dea1ad602443c1f99b",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/solopreneur-state.json",
+      "size_bytes": 2184,
+      "sha256": "7f7faf996ae1da41e9693cceadd258f1daa9a1dcd568c0de75fc1704c339cda1",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/task-chain-2026-07-10.md",
+      "size_bytes": 1651,
+      "sha256": "fe5decf207d122e3ae633cfc5236d4759302089302a0aa8acd0e653cdadc7811",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/15_Plan/tasks/2026-07-10.md",
+      "size_bytes": 3449,
+      "sha256": "4bc5e55be25fe9efd38f62c9ab59ccccb60f7e493f2e7cad8592b263c301955a",
+      "classification": "legacy_strategy_candidate",
+      "import_action": "candidate_review",
+      "note": "historical strategy; compare against current north star"
+    },
+    {
+      "path": "obsidian/vault/16_Diary/diary-2026-07-08.md",
+      "size_bytes": 854,
+      "sha256": "e774ddc01d08d8f317dcab285a220785efe5cd3855a67808c6d26d38ffc8d1b2",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/16_Diary/diary-2026-07-09.md",
+      "size_bytes": 824,
+      "sha256": "0e09dd51ff4ffda17989011feaf2d692d74424ea1df514ae40a626e7b225b421",
+      "classification": "legacy_reflection_archive",
+      "import_action": "aether_review_later",
+      "note": "not canonical identity; eligible for selective autobiographical review"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/00_Map_of_Content.md",
+      "size_bytes": 1824,
+      "sha256": "9a8411f55c5f325a3529dcc8cd2b2f556ff676200df07e935625ab0b39601508",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/execution/batch-1/2026-07-10.md",
+      "size_bytes": 2031,
+      "sha256": "349d6507c85c800865ba2ac7316610e056a6b3b716fb610b665b1928fecbdaf9",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/index.md",
+      "size_bytes": 710,
+      "sha256": "139c13b81a3b0eac15ac31d6e4278f04ad1ba47d771b9f6c5eded6b9a50c9efb",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/learning-path-reverse-engineering.md",
+      "size_bytes": 2215,
+      "sha256": "9f1e8377eb822aa01f2c0b9566db47cc445380c258c8cec2f413cf52937860b7",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/oc-brain-credential.md",
+      "size_bytes": 1015,
+      "sha256": "c64e14c98d89a12097f8ef764f5489d157b5b3c89167ed58e3bd8f979acc2132",
+      "classification": "secret_quarantine",
+      "import_action": "preserve_hash_only",
+      "note": "never index, copy into vault, or import automatically"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/progress-tracker.md",
+      "size_bytes": 1355,
+      "sha256": "7f9d3236915f225a577a0aeb8b9379e4e3c212b33da43f030e30eb6aaec6f770",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-arm-basics.md",
+      "size_bytes": 1394,
+      "sha256": "f5b020d986654b171e24a832231828b2a1ebe5df91206355b68128a0091291c7",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-ctf-challenges.md",
+      "size_bytes": 622,
+      "sha256": "9ebb76f59a4fd9e4aed087805c50e3adbc536963964c74ae7314b1e4bfb3505c",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-data-movement.md",
+      "size_bytes": 1075,
+      "sha256": "68e463727db8bdd4bb99206529607ae6ed4db44a20b5eb08774ba78944dd4932",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-embedded-systems.md",
+      "size_bytes": 782,
+      "sha256": "01364aa6e2c6d921464a6212aad76cef7ca26da00f16928636467a4916bc450c",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-ghidra-plugins.md",
+      "size_bytes": 761,
+      "sha256": "70eae2fd385ab3817c40f1e09baf12b970fe9850bf4f3c87e2a2ad4afacee36f",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-tools-setup.md",
+      "size_bytes": 1173,
+      "sha256": "ca67a04643de524f086b636316a80b839ea7a37f8d41654b285970f6ff24f27e",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-windows-hacking.md",
+      "size_bytes": 951,
+      "sha256": "f3fac9619687a916551708b43365304607c5ca5c8d861ddceba2b4951f6c206b",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-x64-architecture.md",
+      "size_bytes": 1213,
+      "sha256": "1fbe943840ead4095a0647a0801e01e70cdd16e97866fd34ccd154038991651a",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/20_Dee_Workspace/re-x86-foundations.md",
+      "size_bytes": 1459,
+      "sha256": "832ae3d8b377801aadfc0db70c418571b2a9933e9af38410b10dbb135ec3af1e",
+      "classification": "founder_workspace_archive",
+      "import_action": "human_review",
+      "note": "Founder-owned context; Aether may request selected import later"
+    },
+    {
+      "path": "obsidian/vault/90_Archive/README.md",
+      "size_bytes": 209,
+      "sha256": "a9e6750ff0e5d48db999c2568dbde1694d3cad2d088e4aca66e46525b1d6a04d",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/Refleksi.md",
+      "size_bytes": 344,
+      "sha256": "188599438f6d6a2792c87678dd649b9040e9a16c60e014b0d1c81e683070b698",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/Refleksi_Harian.md",
+      "size_bytes": 379,
+      "sha256": "85ce9de5ff9d3de5a744551cec0eb657de838b92766891fe0bf5f94cbd94fb27",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/Skill_Adaptation_Log.md",
+      "size_bytes": 341,
+      "sha256": "881e150884063c11c09e856ce8664d4d87a2961a71b3ad89fb2fb20c0a4ae47c",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/Test.md",
+      "size_bytes": 12,
+      "sha256": "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/Untitled 1.base",
+      "size_bytes": 39,
+      "sha256": "07bb42152a9f7290a4aa0940c11fffb8618248c567adbde6b1647f84312361ff",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/Untitled.base",
+      "size_bytes": 39,
+      "sha256": "07bb42152a9f7290a4aa0940c11fffb8618248c567adbde6b1647f84312361ff",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/audits/audit-2026-07-10.md",
+      "size_bytes": 4529,
+      "sha256": "658f47e9498c7150f57c4591b1fc6766421edadb817999f3324fd4f7db2429c0",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/index.md",
+      "size_bytes": 999,
+      "sha256": "b7a7316b835759350e1ec44673674c2019998dd3dca0763b736b9fc8cb9f2735",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "obsidian/vault/skills/Aether_Skills_Manifest.md",
+      "size_bytes": 391,
+      "sha256": "0ab7446df8d008ff347258546bb1286a5b61bc8cf5691e5b049777c2013e62da",
+      "classification": "legacy_vault_archive",
+      "import_action": "preserve_only",
+      "note": "available to later curation; not auto-indexed"
+    },
+    {
+      "path": "runtime_state/goals/goals.json",
+      "size_bytes": 80,
+      "sha256": "f95470b944ab7b22336fcdcff3217f7b40a9c45ad9c9e4b7b670652ac63ce430",
+      "classification": "legacy_goal_candidate",
+      "import_action": "candidate_review",
+      "note": "historical goal only; do not adopt as current north star"
+    },
+    {
+      "path": "runtime_state/knowledge/README.md",
+      "size_bytes": 132,
+      "sha256": "c96717d264f082e0ae76a0f25fa0086f6bc35c0e2b8ba4ea8bda21c681eb0ff4",
+      "classification": "legacy_miscellaneous",
+      "import_action": "preserve_only",
+      "note": "manual classification if later selected"
+    },
+    {
+      "path": "runtime_state/knowledge/claim_registry.json",
+      "size_bytes": 1581710,
+      "sha256": "5b793e22e59521ca4e2e4939ab1c0b3b9d46a9d2f10cf59f886cc6035453a37b",
+      "classification": "legacy_knowledge_registry",
+      "import_action": "candidate_review",
+      "note": "sample, deduplicate, evidence-check; never bulk promote"
+    },
+    {
+      "path": "runtime_state/logs/backend.log",
+      "size_bytes": 4446,
+      "sha256": "447ee2cd2652c4b8fd4816d65ac31c32f6b859d1f8410e7182061909e2e71f5d",
+      "classification": "generated_operational_evidence",
+      "import_action": "historical_archive",
+      "note": "do not ingest as memory"
+    },
+    {
+      "path": "runtime_state/logs/frontend.log",
+      "size_bytes": 361,
+      "sha256": "84ad2b0757bf99fb32f45106ea3f21b21542d4516651348be619e1eca228c9d7",
+      "classification": "generated_operational_evidence",
+      "import_action": "historical_archive",
+      "note": "do not ingest as memory"
+    },
+    {
+      "path": "runtime_state/reports/executive_workspace_init.json",
+      "size_bytes": 350,
+      "sha256": "ebdf90fcd14406cdb17edebaed23fbe1ec476175ecc29a2a827a5af6de5f8a5e",
+      "classification": "generated_operational_evidence",
+      "import_action": "historical_archive",
+      "note": "do not ingest as memory"
+    },
+    {
+      "path": "runtime_state/reports/knowledge_workspace_init.json",
+      "size_bytes": 388,
+      "sha256": "ce1453ddc136678d1c66b1933a9fa10740119f60c0f1c03f7c5e26b0316d7069",
+      "classification": "generated_operational_evidence",
+      "import_action": "historical_archive",
+      "note": "do not ingest as memory"
+    },
+    {
+      "path": "runtime_state/reports/obsidian_workspace_init.json",
+      "size_bytes": 637,
+      "sha256": "094f9064064d3f2d01a4be9d10214ec59e33f8231f00483e1e26a48d88887d69",
+      "classification": "generated_operational_evidence",
+      "import_action": "historical_archive",
+      "note": "do not ingest as memory"
+    },
+    {
+      "path": "runtime_state/trust_score.json",
+      "size_bytes": 49,
+      "sha256": "fcaf45df5601e193ee0a04f50a6d2821808f9bdbacc840e33a0b152a0bc2bbfe",
+      "classification": "legacy_miscellaneous",
+      "import_action": "preserve_only",
+      "note": "manual classification if later selected"
+    },
+    {
+      "path": "skills/code-review.md",
+      "size_bytes": 288,
+      "sha256": "e7b42e450411343d1fe911b6028a9d40296c1faf27f37f956742c6955dd17be1",
+      "classification": "legacy_skill_candidate",
+      "import_action": "candidate_review",
+      "note": "inactive until benchmark and governance approval"
+    },
+    {
+      "path": "skills/debug.md",
+      "size_bytes": 220,
+      "sha256": "06b1a7d3072e093bee033a5e0a0cf2c05779b551021e4965b44cfd8a79ea8ee1",
+      "classification": "legacy_skill_candidate",
+      "import_action": "candidate_review",
+      "note": "inactive until benchmark and governance approval"
+    },
+    {
+      "path": "skills/refactor.md",
+      "size_bytes": 269,
+      "sha256": "aef381275919f4d3547bc5d7ec153fa12cd7a599fa859904baebaef476592274",
+      "classification": "legacy_skill_candidate",
+      "import_action": "candidate_review",
+      "note": "inactive until benchmark and governance approval"
+    }
+  ]
+}

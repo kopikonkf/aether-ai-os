@@ -1,0 +1,9 @@
+// Add to AionUi preload after importing ipcRenderer/contextBridge and AETHER_FLEET_CHANNELS.
+contextBridge.exposeInMainWorld('aetherFleet', {
+  snapshot: () => ipcRenderer.invoke(AETHER_FLEET_CHANNELS.snapshot),
+  runDue: () => ipcRenderer.invoke(AETHER_FLEET_CHANNELS.runDue),
+  runJob: (kind) => ipcRenderer.invoke(AETHER_FLEET_CHANNELS.runJob, kind),
+  updateJob: (kind, input) => ipcRenderer.invoke(AETHER_FLEET_CHANNELS.updateJob, kind, input),
+  acknowledgeIncident: (incidentId, reason) => ipcRenderer.invoke(AETHER_FLEET_CHANNELS.acknowledge, incidentId, reason),
+  resolveIncident: (incidentId, reason) => ipcRenderer.invoke(AETHER_FLEET_CHANNELS.resolve, incidentId, reason),
+});

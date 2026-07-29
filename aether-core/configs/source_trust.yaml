@@ -1,0 +1,13 @@
+source_trust:
+  manual: 0.70
+  local_file: 0.60
+  markdown: 0.62
+  json: 0.55
+  csv: 0.50
+  html: 0.45
+  url_placeholder: 0.25
+  unknown: 0.30
+  rules:
+    high_trust_threshold: 0.75
+    minimum_claim_trust: 0.30
+    promotion_requires_evidence: true

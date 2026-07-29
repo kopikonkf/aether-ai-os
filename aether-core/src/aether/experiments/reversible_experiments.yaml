@@ -1,0 +1,28 @@
+version: 1
+purpose: mandate-bound-reversible-experimentation
+principles:
+  - a selected opportunity and active mandate are prerequisites
+  - private reversible work may proceed without per-step human approval
+  - external consequences require bounded mandate and review
+  - experiment workspaces are disposable and separate from production
+  - synthetic demand is never counted as measured demand
+  - measured and verified demand require external references
+budgets:
+  maximum_plan_cost_usd: 100
+  maximum_duration_seconds: 86400
+  maximum_artifact_bytes: 2000000
+  maximum_files: 50
+preview:
+  private_by_default: true
+  default_ttl_seconds: 86400
+  public_deployment_requires_external_review: true
+execution:
+  supported_step_kinds:
+    - write-artifact
+    - verify-artifact
+    - private-preview
+    - measure-demand
+    - external-action
+  shell_execution: false
+  network_execution: false
+  production_write: false

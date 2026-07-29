@@ -1,0 +1,27 @@
+{
+  "release": "0.19.2",
+  "build_id": "v0.19.2-founder-alpha-frozen.2",
+  "status": "frozen laptop baseline hotfix release",
+  "base": "Aether_OS_v0.19.2-founder-alpha-consolidated.1",
+  "includes": [
+    "complete v0.19.2 Core, Gateway, and Tools source",
+    "approved persona v3 and Browser Senses voice fallback",
+    "tool preflight before approval and deterministic execution receipts",
+    "Telegram one-tap signed approval controls",
+    "central Telegram CommandRegistry and command menu",
+    "persistent trust observation epoch",
+    "portable Windows OS description and architecture evidence",
+    "state continuity inspector schema v2",
+    "inert original-brain archive boundary with hash-only secret quarantine",
+    "capability wiring and live tool proof utilities",
+    "PowerShell launcher separates child stdout from process exit code",
+    "migration helper stops old Gateway by PID without invoking legacy status rendering"
+  ],
+  "excluded_from_runtime": [
+    "Google Gemini TTS provider adapter",
+    "Agent-Reach bridge",
+    "Windows persistent service installation",
+    "public deployment adapters for MVP v0.20",
+    "automatic legacy-brain semantic import"
+  ]
+}

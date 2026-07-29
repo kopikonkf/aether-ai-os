@@ -1,0 +1,13 @@
+ingestion:
+  version: 0.6.0
+  inbox_dir: ingestion/inbox
+  processed_dir: ingestion/processed
+  rejected_dir: ingestion/rejected
+  archive_dir: runtime_state/ingestion/archive
+  manifest_file: runtime_state/ingestion/manifest.jsonl
+  index_file: runtime_state/ingestion/index.json
+  max_inline_text_chars: 200000
+  write_obsidian_source_note: true
+  write_obsidian_digest_note: true
+  append_ledger: true
+  emit_events: true

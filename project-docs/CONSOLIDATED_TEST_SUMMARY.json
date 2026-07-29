@@ -1,0 +1,30 @@
+{
+  "schema": "aether.frozen-baseline.test-summary.v1",
+  "build_id": "v0.19.2-founder-alpha-frozen.1",
+  "date": "2026-07-29",
+  "tests": {
+    "aether_core": {"passed": 148, "failed": 0, "skipped": 0},
+    "aether_tools": {"passed": 52, "failed": 0, "skipped": 1},
+    "aether_gateway": {"collected": 97, "passed": 97, "failed": 0, "method": "each test file in a fresh process"},
+    "modified_surface_regression": {"passed": 17, "failed": 0}
+  },
+  "static_checks": {
+    "python_compile": "passed",
+    "json_files_parsed": 23,
+    "yaml_files_parsed": 52,
+    "browser_senses_javascript_syntax": "passed",
+    "state_inspector_v2_against_uploaded_aether_home": "passed",
+    "legacy_brain_v2_dry_run": "passed",
+    "wheel_import_and_package_data_smoke": "passed"
+  },
+  "wheels": {
+    "aether_core-0.19.2-py3-none-any.whl": "bdb9864f292a064732a557ab17393c43aab83a6e5e4445f7b09b53cdaecef869",
+    "aether_tools-0.3.0-py3-none-any.whl": "651a539bd12b152172a2704e79b0ae52b848cb3d7d49e6b89360533449a62c44",
+    "aether_gateway-0.19.2-py3-none-any.whl": "3f5dfa5adf876311eaa44684c6e15219c11fe5402d7a07dba84c20d51311aa3c"
+  },
+  "limitations": [
+    "PowerShell execution was statically verified but not run in the Linux build container.",
+    "The exact frozen ZIP still requires short Founder acceptance on Windows.",
+    "Google TTS, persistent Windows services, Cloudflare, nutrition adapters, and a real runtime body remain later gates."
+  ]
+}

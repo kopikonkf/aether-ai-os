@@ -1,0 +1,3 @@
+// Add an Aether Senses navigation entry that calls navigate('/senses').
+// Use the current AionUi SiderNav Arco component conventions; do not expose
+// AETHER_OPERATOR_TOKEN or LiveKit API secrets in renderer code.

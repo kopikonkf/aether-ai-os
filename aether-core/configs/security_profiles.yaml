@@ -1,0 +1,114 @@
+# Aether Security Profiles
+# Switch between profiles by setting SECURITY_PROFILE env var: strict/medium/loose
+
+profiles:
+  strict:
+    description: "Sandboxed mode - limited file access, command restrictions"
+    file:
+      read_roots:
+        - "${AETHER_HOME}"
+        - "${AETHER_CORE}"
+      write_roots:
+        - "${AETHER_HOME}"
+    bash:
+      cwd: "${AETHER_HOME}/20_Dee_Workspace/execution"
+      blocked: ["rm", "sudo", "curl", "wget", "nc", "format", "del", "rmdir", "chmod", "chown", "dd", "mkfs"]
+    webfetch:
+      enabled: true
+      https_only: true
+      blocked_domains: []
+    memory:
+      max_entries: 1000
+    
+  medium:
+    description: "Expanded access - more read roots, selective bash access"
+    file:
+      read_roots:
+        - "${AETHER_HOME}"
+        - "${AETHER_CORE}"
+        - "${AETHER_PROJECTS}"
+      write_roots:
+        - "${AETHER_HOME}"
+        - "${AETHER_WORKSPACE}"
+    bash:
+      cwd: "${AETHER_HOME}/20_Dee_Workspace/execution"
+      blocked: ["sudo", "format", "rmdir", "dd", "mkfs"]  # Allow rm with caution
+    webfetch:
+      enabled: true
+      https_only: false
+      blocked_domains: []
+    memory:
+      max_entries: 5000
+    
+  loose:
+    description: "Trusted agent - minimal restrictions, full project access"
+    file:
+      read_roots:
+        - "${AETHER_HOME}"
+        - "${AETHER_CORE}"
+        - "${AETHER_PROJECTS}"
+        - "${AETHER_DOCUMENTS}"
+      write_roots:
+        - "${AETHER_HOME}"
+        - "${AETHER_WORKSPACE}"
+      write_blocked_patterns:
+        - "${AETHER_SYSTEM_ROOT}/**"
+        - "${AETHER_SYSTEM_PROGRAMS}/**"
+        - "*.sys"
+        - "*.dll"
+    bash:
+      cwd: "${AETHER_HOME}/20_Dee_Workspace/execution"
+      blocked: ["format", "dd", "mkfs"]  # Only block destructive disk operations
+    webfetch:
+      enabled: true
+      https_only: false
+      blocked_domains: []
+    memory:
+      max_entries: 50000
+
+# Behavioral monitoring thresholds for automatic quarantine
+quarantine:
+  enabled: true
+  
+  # Error rate monitoring
+  error_threshold:
+    window_minutes: 15
+    max_errors: 10  # More than 10 errors in 15 mins → quarantine
+    
+  # Tool call patterns
+  tool_spam_threshold:
+    window_minutes: 5
+    max_calls: 50  # More than 50 tool calls in 5 mins → quarantine
+    
+  # File operation safety
+  write_threshold:
+    window_minutes: 10
+    max_writes: 30  # More than 30 file writes in 10 mins → quarantine
+    
+  # Cost control (API calls)
+  api_threshold:
+    window_minutes: 60
+    max_calls: 100  # More than 100 LLM calls per hour → quarantine
+    cost_limit_usd: 5.0  # Max $5/hour
+    
+  # Actions when quarantine triggered
+  action: "downgrade"  # Options: downgrade (to strict), pause, alert
+  cooldown_minutes: 30  # How long to stay in quarantine
+  notify: true  # Send notification to user
+
+# Trust score calculation
+trust_metrics:
+  # Agent earns trust by successful operations
+  success_weight: 1.0
+  error_weight: -2.0
+  tool_efficiency_weight: 0.5  # Fewer iterations to complete task = higher score
+  
+  # Thresholds for automatic profile upgrade
+  upgrade_thresholds:
+    strict_to_medium: 80  # Trust score 80+ for 7 days
+    medium_to_loose: 150  # Trust score 150+ for 14 days
+    
+  # Minimum observation period before upgrade (days)
+  min_observation_days:
+    strict_to_medium: 7
+    medium_to_loose: 14

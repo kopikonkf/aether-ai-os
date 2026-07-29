@@ -1,0 +1,105 @@
+schema_version: '0.1'
+status: internal_lane_runtime_enabled
+ownership:
+  authority: aether_core
+  north_star_source: src/aether/dna/north_star.yaml
+  external_optimizer_role: replaceable_candidate_generator
+  direct_self_modification: forbidden
+lanes:
+  internal_evolution:
+    status: active_v0_8
+    targets:
+    - skill
+    - tool_description
+    - prompt_component
+    - code
+    - workflow
+    - architecture
+  external_value:
+    status: reserved
+    targets:
+    - business_playbook
+    - market_hypothesis
+    - offer
+    - acquisition_process
+    - delivery_process
+    - unit_economics_model
+    niche_scope: open_ended
+    trading_role: one_division_among_many
+signals:
+  preferred_order:
+  - verified_failure_trace
+  - real_session_trace
+  - external_business_outcome
+  - golden_evaluation_set
+  - synthetic_evaluation_set
+  synthetic_only_promotion: forbidden
+candidate_engines:
+  default: provider_neutral_reflective_optimizer
+  optional:
+  - dspy_gepa
+  - dspy_miprov2
+  - code_evolver_external_cli
+  rule: engine_may_propose_but_never_authorize
+evaluation:
+  required_splits:
+  - train
+  - validation
+  - holdout
+  fitness_dimensions:
+  - correctness
+  - objective_completion
+  - procedure_compliance
+  - cost
+  - latency
+  - risk
+  - north_star_alignment
+  - durable_value
+  llm_judge_is_sufficient_alone: false
+  deterministic_or_external_evidence_required: true
+hard_gates:
+- semantic_purpose_preserved
+- all_applicable_tests_pass
+- holdout_improvement_positive
+- no_critical_benchmark_regression
+- cost_within_budget
+- risk_within_policy
+- no_known_failure_recurrence_without_reason
+- provenance_complete
+promotion:
+  output: immutable_candidate_artifact
+  lineage_required: true
+  rollback_required: true
+  governance_review_required: true
+  production_direct_write: forbidden
+  low_risk_auto_experiment_allowed: true
+  identity_or_north_star_change_requires_founder: true
+skill_lifecycle:
+  states:
+  - draft
+  - active
+  - stale
+  - archived
+  - retired
+  usage_telemetry_required: true
+  provenance_required: true
+  pin_supported: true
+  archive_before_retire: true
+  automatic_delete: forbidden
+  backup_before_mutation: true
+  dry_run_supported: true
+  rollback_supported: true
+  review_worker_isolated_from_main_session: true
+  review_worker_allowed_capabilities:
+  - memory_read
+  - skill_read
+  - candidate_write
+  arbitrary_terminal_or_filesystem_access: forbidden
+  prompt_only_protection_is_sufficient: false
+continuous_review:
+  enabled_by_default: false
+  scheduler: event_or_configured_interval
+  minimum_idle_gate_required: true
+  bounded_iterations_required: true
+  budget_required: true
+  report_per_run_required: true

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#080c14" />
+  <title>Aether — Unified Browser Senses</title>
+  <link rel="stylesheet" href="/senses/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">AETHER · SENSE FABRIC</p>
+        <h1>See. Hear. Speak.</h1>
+        <p class="sub">Browser media is transport. Aether remains the mind, memory, and governance authority.</p>
+      </div>
+      <div id="systemState" class="pill offline">OFFLINE</div>
+    </header>
+
+    <section class="grid">
+      <article class="panel media-panel">
+        <div class="panel-head"><h2>Camera</h2><span id="cameraState">not started</span></div>
+        <div class="video-stage">
+          <video id="localVideo" autoplay muted playsinline></video>
+          <canvas id="frameCanvas" hidden></canvas>
+          <div id="visionBadge" class="vision-badge">VISION IDLE</div>
+        </div>
+        <div class="controls wrap">
+          <button id="cameraButton" class="secondary">Enable camera</button>
+          <button id="visionButton" class="secondary" disabled>Ask what you see</button>
+          <label class="toggle"><input id="autoVision" type="checkbox" /> bounded vision every 15s</label>
+        </div>
+      </article>
+
+      <article class="panel voice-panel">
+        <div class="panel-head"><h2>Voice</h2><span id="voiceState">not started</span></div>
+        <div id="orb" class="orb"><div></div><div></div><div></div></div>
+        <div class="transcript" id="transcript">Connect a session, then speak.</div>
+        <div id="remoteAudio"></div>
+        <div class="controls wrap">
+          <button id="connectButton" class="primary">Connect senses</button>
+          <button id="micButton" class="secondary" disabled>Mute microphone</button>
+          <button id="fallbackTalk" class="secondary" disabled>Browser STT fallback</button>
+          <button id="disconnectButton" class="danger" disabled>Disconnect</button>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel chat-panel">
+      <div class="panel-head"><h2>Conversation</h2><span id="sessionLabel">no session</span></div>
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <form id="chatForm" class="composer">
+        <input id="chatInput" autocomplete="off" placeholder="Speak or type to Aether…" />
+        <button class="primary" type="submit">Send</button>
+      </form>
+    </section>
+
+    <section class="panel setup-panel">
+      <details>
+        <summary>Connection and privacy</summary>
+        <div class="setup-grid">
+          <label>Founder/operator token <input id="operatorToken" type="password" autocomplete="off" placeholder="kept in memory only" /></label>
+          <label>Display name <input id="displayName" value="Founder" /></label>
+          <label>Voice <select id="voiceSelect" aria-label="Aether browser voice"></select></label>
+          <label>Speaking rate <span id="voiceRateValue">1.02</span><input id="voiceRate" type="range" min="0.75" max="1.35" step="0.01" value="1.02" /></label>
+          <label>Voice pitch <span id="voicePitchValue">1.12</span><input id="voicePitch" type="range" min="0.75" max="1.50" step="0.01" value="1.12" /></label>
+          <label class="voice-preview">Voice preview <button id="previewVoice" type="button" class="secondary">Preview Aether voice</button></label>
+          <label>Vision prompt <input id="visionPrompt" value="Describe materially relevant objects, people, text, and changes visible in this frame." /></label>
+        </div>
+        <p>Microphone and camera access require HTTPS or localhost and explicit browser permission. No operator token is written to localStorage.</p>
+      </details>
+    </section>
+
+    <footer><span id="transportStatus">Transport not initialized.</span></footer>
+  </main>
+  <script type="module" src="/senses/app.js"></script>
+</body>
+</html>

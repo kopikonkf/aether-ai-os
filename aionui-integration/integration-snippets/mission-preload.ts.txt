@@ -1,0 +1,8 @@
+contextBridge.exposeInMainWorld('aetherMission', {
+  snapshot: () => ipcRenderer.invoke('aether:mission:snapshot'),
+  approve: (missionId: string, reason: string) => ipcRenderer.invoke('aether:mission:approve', missionId, reason),
+  reject: (missionId: string, reason: string) => ipcRenderer.invoke('aether:mission:reject', missionId, reason),
+  run: (missionId: string, maximumSteps?: number) => ipcRenderer.invoke('aether:mission:run', missionId, maximumSteps),
+  pause: (missionId: string, reason: string) => ipcRenderer.invoke('aether:mission:pause', missionId, reason),
+  cancel: (missionId: string, reason: string) => ipcRenderer.invoke('aether:mission:cancel', missionId, reason),
+});

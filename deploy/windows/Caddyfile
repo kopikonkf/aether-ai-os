@@ -1,0 +1,26 @@
+{
+    auto_https off
+    admin 127.0.0.1:2019
+}
+
+http://127.0.0.1:8080 {
+    encode zstd gzip
+
+    @browser_senses path /senses /senses/* /api/browser-senses /api/browser-senses/*
+    handle @browser_senses {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle_path /aether/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle /health {
+        rewrite * /api/status
+        reverse_proxy 127.0.0.1:8000
+    }
+
+    handle {
+        reverse_proxy 127.0.0.1:25808
+    }
+}

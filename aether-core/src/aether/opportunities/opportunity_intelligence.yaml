@@ -1,0 +1,73 @@
+version: 1
+identity:
+  owner: aether-core
+  purpose: autonomous-opportunity-intelligence
+principles:
+  - explore-freely
+  - experiment-reversibly
+  - act-within-mandate
+  - escalate-consequences
+  - learn-continuously
+observation:
+  public_search_default: allow
+  public_fetch_default: allow
+  public_crawl_default: allow-with-resource-budget
+  credentialed_sources: explicit-credential-handle
+  robots_and_terms: respect
+  private_network_targets: deny
+  local_file_targets: deny
+resource_limits:
+  maximum_sources_per_run: 12
+  maximum_snapshots_per_run: 40
+  maximum_bytes_per_run: 4000000
+  maximum_duration_seconds: 300
+  maximum_redirects: 5
+  maximum_depth: 3
+  maximum_pages_per_domain: 10
+crawl4ai_profile:
+  role: web-intelligence-substrate
+  allowed:
+    - public-http-https
+    - structured-extraction
+    - markdown-generation
+    - bounded-deep-crawl
+    - crash-recovery
+    - disposable-browser-session
+  denied_by_default:
+    - file-scheme
+    - private-network
+    - arbitrary-model-generated-javascript
+    - persistent-browser-profile
+    - filesystem-download
+    - credential-export
+    - unbounded-recursion
+source_mesh:
+  health_probe_required: true
+  manifest_required: true
+  bounded_fallback: true
+  maximum_adapter_attempts: 3
+claims:
+  direct_knowledge_write: deny
+  direct_belief_write: deny
+  immutable_snapshot_required: true
+  provenance_required: true
+  independent_sources_for_portfolio: 2
+portfolio:
+  maximum_selected_candidates: 3
+  maximum_total_experiment_budget_usd: 100.0
+  maximum_high_risk_candidates: 1
+  maximum_single_category_fraction: 0.5
+  minimum_evidence_confidence: 0.45
+  reserved_exploration_fraction: 0.2
+progressive_autonomy:
+  observe: autonomous
+  synthesize: autonomous
+  sandbox-experiment: budgeted-mandate
+  bounded-external: mission-mandate
+  high-consequence: explicit-action-approval
+forbidden:
+  - self-approval
+  - fabricate-evidence
+  - count-claimed-value-as-revenue
+  - irreversible-action-without-authority
+  - bypass-mission-orchestrator

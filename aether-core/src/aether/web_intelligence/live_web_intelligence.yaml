@@ -1,0 +1,25 @@
+version: 1
+purpose: live-web-intelligence-and-evidence-freshness
+principles:
+  - public observation is broadly allowed within explicit resource and domain policy
+  - credentials are opaque handles and never evidence content
+  - source conformance is exact to adapter manifest and source configuration
+  - freshness decay is evidence, not deletion
+  - adaptive source discovery produces proposals, never silent activation
+conformance:
+  default_ttl_seconds: 86400
+  require_all_checks: true
+  stale_on_manifest_change: true
+  stale_on_configuration_change: true
+freshness:
+  fresh_for_seconds: 86400
+  aging_for_seconds: 259200
+  maximum_stale_fraction: 0.35
+  refresh_batch_size: 25
+network:
+  allow_public_http_https: true
+  deny_private_networks: true
+  deny_loopback: true
+  deny_link_local: true
+  deny_file_scheme: true
+  require_domain_allowlist_for_live_configuration: true
