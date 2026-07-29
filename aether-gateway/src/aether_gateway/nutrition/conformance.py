@@ -3,14 +3,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from aether.contracts import (
+from aether.contracts import SourceConformanceState
+from aether.contracts.nutrition import (
     ExternalNutritionCandidate,
     NutritionConformanceCheck,
     NutritionConformanceReceipt,
     NutritionConformanceState,
-    SourceConformanceState,
-)
-from aether.contracts.nutrition import (
     external_nutrition_candidate_hash,
     nutrition_conformance_receipt_hash,
 )
