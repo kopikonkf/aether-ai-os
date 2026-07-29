@@ -9,11 +9,11 @@
     },
     "Genome.md": {
       "role": "epistemic-and-evolution-invariants",
-      "sha256": "bc474c7511f242e664491df0c130dc3bccb1ef68daefafe8f9f11cc746c47c8f"
+      "sha256": "743ba1861c2ea42fb88d6674cc5a14ddacf533e4547ffb9cabc2ef0b1a5e5dfd"
     },
     "aether.core.json": {
       "role": "machine-readable-self-model-and-constraints",
-      "sha256": "88eefd1770bc0e98bc81fb79a6b041769625dad3454e0a4126d73a806344639d"
+      "sha256": "8af281510dc002b86c0667e8cedcc6a5e676981e3535175acc8bb65a9eb98246"
     }
   }
 }
