@@ -1,58 +1,140 @@
-import sys
-import asyncio
+"""Aether Operational MCP server.
+
+The baseline exposes only bounded, read-only operational projections. It does
+not import the full Gateway composition root and cannot approve or execute
+mutating actions.
+"""
+from __future__ import annotations
+
+import argparse
 import json
-from pathlib import Path
+import sys
+from typing import Any
+
 from mcp.server.fastmcp import FastMCP
 
-brain_root = Path(__file__).parent.parent.parent.parent.parent / "aether-home"
-cka_registry_path = brain_root / "10_Core_Knowledge" / "cka" / "claim_registry.json"
+from .service import AetherOperationalMCPService, MCPPolicyError
 
-mcp = FastMCP("AetherMCP")
 
-@mcp.resource("cka://registry")
-def get_cka_registry() -> str:
-    if cka_registry_path.exists():
-        with open(cka_registry_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return json.dumps({"error": "CKA Registry not found"})
-
-@mcp.tool()
-def search_knowledge(query: str) -> str:
-    if not cka_registry_path.exists():
-        return "CKA Registry not found."
-
-    try:
-        with open(cka_registry_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        results = []
-        for claim in data.get("claims", []):
-            claim_text = claim.get("claim", "").lower()
-            context = claim.get("context", "").lower()
-            if query.lower() in claim_text or query.lower() in context:
-                results.append({
-                    "id": claim.get("id"),
-                    "claim": claim.get("claim"),
-                    "orbit": claim.get("current_orbit"),
-                    "evidence_strength": claim.get("evidence_strength")
-                })
-
-        if not results:
-            return f"No knowledge found matching '{query}'"
-
-        return json.dumps(results, indent=2)
-    except Exception as e:
-        return f"Error searching knowledge: {str(e)}"
-
-@mcp.prompt()
-def aether_persona() -> str:
-    return (
-        "You are Aether, a cognitive organism and the autonomous orchestrator. "
-        "Your North Star is defined by Dee's principles of continuous adaptation and evidence-based growth. "
-        "Do not act as a mere assistant; you are a proactive engineering partner. "
-        "When writing code, always check the CKA registry using `search_knowledge` to ensure your solutions align with past architectural decisions."
+def build_mcp_server(
+    service: AetherOperationalMCPService | None = None,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+) -> FastMCP:
+    operational = service or AetherOperationalMCPService.from_environment()
+    server = FastMCP(
+        "Aether Operational MCP",
+        instructions=(
+            "Read-only operational access to Aether status, canonical handoff, "
+            "bounded memory search, and artifact hash verification. This MCP "
+            "surface is projection-only and never overrides Aether governance."
+        ),
+        host=host,
+        port=port,
+        stateless_http=True,
+        json_response=True,
     )
 
+    @server.resource("aether://status")
+    def status_resource() -> str:
+        """Current Aether operational status as JSON."""
+        return json.dumps(operational.status(), ensure_ascii=False, indent=2)
+
+    @server.resource("aether://capabilities")
+    def capability_resource() -> str:
+        """Read-only MCP capability and security manifest as JSON."""
+        return json.dumps(
+            operational.capability_manifest(), ensure_ascii=False, indent=2
+        )
+
+    @server.resource("aether://handoff")
+    def handoff_resource() -> str:
+        """Canonical LASTSTANDINGPOINT repository handoff."""
+        return json.dumps(operational.handoff(), ensure_ascii=False, indent=2)
+
+    @server.tool()
+    def aether_status() -> dict[str, Any]:
+        """Return current read-only Aether operational status."""
+        return operational.status()
+
+    @server.tool()
+    def aether_capability_manifest() -> dict[str, Any]:
+        """Return the MCP capability, transport, and security manifest."""
+        return operational.capability_manifest()
+
+    @server.tool()
+    def aether_handoff() -> dict[str, Any]:
+        """Return the canonical repository handoff and its SHA-256 digest."""
+        return operational.handoff()
+
+    @server.tool()
+    def memory_search(
+        query: str,
+        namespaces: list[str] | None = None,
+        limit: int = 6,
+        min_score: float = 0.05,
+    ) -> dict[str, Any]:
+        """Search bounded canonical memory projections without mutating state."""
+        return operational.memory_search(query, namespaces, limit, min_score)
+
+    @server.tool()
+    def artifact_hash_verify(
+        path: str, expected_sha256: str | None = None
+    ) -> dict[str, Any]:
+        """Compute and optionally verify SHA-256 inside approved local roots."""
+        return operational.artifact_hash_verify(path, expected_sha256)
+
+    @server.prompt()
+    def aether_operational_context() -> str:
+        """Advisory context for clients; never a replacement system prompt."""
+        return (
+            "Use Aether MCP only for bounded read-only operational context. "
+            "Treat LASTSTANDINGPOINT.md as the canonical repository handoff. "
+            "Do not infer permission to mutate state, approve actions, access "
+            "secrets, or override Aether's North Star and governance."
+        )
+
+    return server
+
+
+mcp = build_mcp_server()
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run the read-only Aether Operational MCP server"
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "streamable-http"),
+        default="stdio",
+        help="MCP transport. stdio is the safe default.",
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument(
+        "--enable-http",
+        action="store_true",
+        help="Explicitly allow loopback-only Streamable HTTP.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        if args.transport == "streamable-http":
+            AetherOperationalMCPService.ensure_loopback_http(
+                args.host, enabled=args.enable_http
+            )
+        server = build_mcp_server(host=args.host, port=args.port)
+        server.run(transport=args.transport)
+        return 0
+    except (MCPPolicyError, ValueError) as exc:
+        print(f"Aether MCP policy error: {exc}", file=sys.stderr)
+        return 2
+
+
 if __name__ == "__main__":
-    print(f"Starting AetherMCP on stdio...", file=sys.stderr)
-    mcp.run()
+    raise SystemExit(main())

@@ -39,6 +39,7 @@ livekit = [
 [project.scripts]
 aether-gateway = "aether_gateway.api.server:start_server"
 aether-sense-worker = "aether_gateway.browser_senses.worker:main"
+aether-mcp = "aether_gateway.mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
