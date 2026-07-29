@@ -41,13 +41,20 @@ class ActionGovernor:
         if unknown:
             return ActionDecision(False, "denied", (f"Unknown scopes: {sorted(map(str, unknown))}",))
 
+        approval_principal = approval.principal.strip().casefold() if approval else ""
+        founder_approved = approval_principal in {"dee", "founder", "founder dee"}
         north_star = self.authority.evaluate(Proposal(
             action=f"{proposal.target}:{proposal.operation}",
             reason=proposal.reason,
             confidence=0.5,
             risk_pct={ActionRisk.LOW: 1, ActionRisk.MEDIUM: 10, ActionRisk.HIGH: 40, ActionRisk.CRITICAL: 90}[proposal.risk],
             proposal_type=ProposalType.EXECUTE_TASK,
-            metadata={"action_id": proposal.action_id},
+            metadata={
+                "action_id": proposal.action_id,
+                "irreversible": not proposal.reversible,
+                "approval_path_available": True,
+                "dee_approved": founder_approved,
+            },
         ))
         warnings.extend(north_star.warnings)
         if not north_star.approved:

@@ -1,0 +1,19 @@
+{
+  "schema": "aether.dna.integrity-manifest.v1",
+  "algorithm": "sha256",
+  "authority": "founder-reviewed-git-source",
+  "files": {
+    "north_star.yaml": {
+      "role": "sole-highest-direction-authority",
+      "sha256": "274ecf42906062246e70dc6490e64dc9e9e87a3c800e74610805195cdc1e8cf7"
+    },
+    "Genome.md": {
+      "role": "epistemic-and-evolution-invariants",
+      "sha256": "bc474c7511f242e664491df0c130dc3bccb1ef68daefafe8f9f11cc746c47c8f"
+    },
+    "aether.core.json": {
+      "role": "machine-readable-self-model-and-constraints",
+      "sha256": "88eefd1770bc0e98bc81fb79a6b041769625dad3454e0a4126d73a806344639d"
+    }
+  }
+}
