@@ -1,0 +1,6 @@
+const aetherApprovalService = new AetherApprovalService({
+  baseUrl: process.env.AETHER_GATEWAY_URL ?? 'http://127.0.0.1:8000',
+  operatorToken: process.env.AETHER_OPERATOR_TOKEN ?? '',
+});
+const unregisterAetherApproval = registerAetherApprovalBridge(aetherApprovalService);
+// Call unregisterAetherApproval() during app shutdown / hot reload cleanup.

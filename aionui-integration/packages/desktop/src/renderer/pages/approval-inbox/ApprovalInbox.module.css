@@ -1,0 +1,92 @@
+.page {
+  min-height: 100%;
+  padding: 20px;
+  overflow: auto;
+  background: var(--color-bg-1);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.metrics {
+  margin-bottom: 12px;
+}
+
+.metric {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.queue,
+.detail {
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border-2);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.rowMain {
+  min-width: 0;
+}
+
+.muted {
+  color: var(--color-text-3);
+}
+
+.detailBody,
+.decision {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hashBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.contextRow {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.35fr) minmax(0, 0.65fr);
+  gap: 10px;
+  padding: 4px 0;
+}
+
+@media (max-width: 1050px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .header,
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

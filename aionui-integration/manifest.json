@@ -12,6 +12,17 @@
       "ui_fallback": "/aionui/runtime-console",
       "ipc_prefix": "aether:fleet"
     },
+    "generic_approval_inbox": {
+      "status_endpoint": "/api/approvals/status",
+      "list_endpoint": "/api/approvals",
+      "detail_endpoint": "/api/approvals/{approval_id}",
+      "decision_endpoints": [
+        "/api/approvals/{approval_id}/approve",
+        "/api/approvals/{approval_id}/reject"
+      ],
+      "aionui_route": "/#/approvals",
+      "ipc_prefix": "aether:approval"
+    },
     "mission_operations": {
       "console_endpoint": "/api/mission-operations/console",
       "ui_fallback": "/aionui/mission-console",
@@ -41,6 +52,9 @@
     "renderer_may_approve_mission_plans": true,
     "mission_plan_approval_does_not_approve_step_actions": true,
     "browser_session_token_storage": "sha256-only-server-ledger",
-    "livekit_api_secret_in_renderer": false
+    "livekit_api_secret_in_renderer": false,
+    "renderer_may_request_approval_decisions": true,
+    "renderer_receives_raw_action_arguments": false,
+    "approval_decisions_require_expected_action_hash": true
   }
 }

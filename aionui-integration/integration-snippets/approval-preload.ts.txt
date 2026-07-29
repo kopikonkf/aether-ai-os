@@ -1,0 +1,9 @@
+// Add to AionUi preload after importing ipcRenderer/contextBridge and AETHER_APPROVAL_CHANNELS.
+contextBridge.exposeInMainWorld('aetherApproval', {
+  snapshot: (status) => ipcRenderer.invoke(AETHER_APPROVAL_CHANNELS.snapshot, status),
+  get: (approvalId) => ipcRenderer.invoke(AETHER_APPROVAL_CHANNELS.get, approvalId),
+  approve: (approvalId, reason, expectedActionHash) =>
+    ipcRenderer.invoke(AETHER_APPROVAL_CHANNELS.approve, approvalId, reason, expectedActionHash),
+  reject: (approvalId, reason, expectedActionHash) =>
+    ipcRenderer.invoke(AETHER_APPROVAL_CHANNELS.reject, approvalId, reason, expectedActionHash),
+});

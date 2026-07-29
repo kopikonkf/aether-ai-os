@@ -1,0 +1,7 @@
+// Add using the current AionUi navigation conventions.
+{
+  key: '/approvals',
+  label: 'Approval Inbox',
+  icon: <CheckOne />,
+  onClick: () => navigate('/approvals'),
+}

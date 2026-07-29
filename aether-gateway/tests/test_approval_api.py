@@ -37,12 +37,24 @@ def test_approval_api_requires_operator_and_blocks_replay(tmp_path, monkeypatch)
         headers = {"X-Aether-Operator-Token": "api-test-secret"}
         listed = client.get("/api/approvals", headers=headers)
         assert listed.status_code == 200
-        assert listed.json()["approvals"][0]["approval_id"] == approval_id
+        approval = listed.json()["approvals"][0]
+        assert approval["approval_id"] == approval_id
+        action_hash = approval["action_hash"]
+
+        mismatch = client.post(
+            f"/api/approvals/{approval_id}/approve",
+            headers=headers,
+            json={"reason": "Reject stale operator view", "expected_action_hash": "0" * 64},
+        )
+        assert mismatch.status_code == 409
+        assert "does not match" in mismatch.json()["detail"]
+        assert not (tmp_path / "home" / "api-test.txt").exists()
+        assert client.get("/api/approvals", headers=headers).json()["approvals"][0]["status"] == "pending"
 
         approved = client.post(
             f"/api/approvals/{approval_id}/approve",
             headers=headers,
-            json={"reason": "Exact payload reviewed"},
+            json={"reason": "Exact payload reviewed", "expected_action_hash": action_hash},
         )
         assert approved.status_code == 200
         assert approved.json()["approval"]["status"] == "consumed"
@@ -50,7 +62,7 @@ def test_approval_api_requires_operator_and_blocks_replay(tmp_path, monkeypatch)
         replay = client.post(
             f"/api/approvals/{approval_id}/approve",
             headers=headers,
-            json={"reason": "Duplicate HTTP request"},
+            json={"reason": "Duplicate HTTP request", "expected_action_hash": action_hash},
         )
         assert replay.status_code == 200
         assert replay.json()["replayed"] is True
