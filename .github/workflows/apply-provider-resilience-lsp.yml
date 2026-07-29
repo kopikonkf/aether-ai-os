@@ -7,12 +7,19 @@ on:
     paths:
       - project-docs/testing/provider-resilience-lsp.patch
       - .github/workflows/apply-provider-resilience-lsp.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - project-docs/testing/provider-resilience-lsp.patch
+      - .github/workflows/apply-provider-resilience-lsp.yml
 
 permissions:
   contents: write
 
 jobs:
   apply:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
