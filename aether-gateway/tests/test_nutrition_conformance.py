@@ -4,18 +4,19 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from aether.contracts import (
-    ExternalNutritionCandidate,
     LiveSourceConfiguration,
-    NutritionActivationState,
-    NutritionConformanceState,
     SourceAdapterManifest,
     SourceCapability,
     SourceConformanceCheck,
     SourceConformanceReceipt,
     SourceConformanceState,
-    SourceHealth,
     SourceKind,
     source_manifest_hash,
+)
+from aether.contracts.nutrition import (
+    ExternalNutritionCandidate,
+    NutritionActivationState,
+    NutritionConformanceState,
 )
 from aether.web_intelligence import SQLiteWebIntelligenceStore, WebIntelligenceEngine
 from aether_gateway.nutrition import NutritionConformanceService
