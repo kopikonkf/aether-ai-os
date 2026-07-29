@@ -202,3 +202,48 @@ def test_fallback_matrix_skips_budget_circuit_cooldown_and_policy_failures() -> 
     assert "circuit_open" in reasons["openai-exact-tts"]
     assert "cooldown_active" in reasons["cartesia"]
     assert reasons["local-tts"] == ("data_policy_disallowed:local",)
+
+
+def test_voice_fallback_progresses_google_to_openai_to_cartesia() -> None:
+    google_exhausted = ProviderCandidate(
+        provider_id="google-cloud-tts",
+        priority=10,
+        capabilities=frozenset({"voice.tts"}),
+        daily_budget_remaining=0,
+        data_policy_tags=frozenset({"cloud"}),
+    )
+    openai_ready = ProviderCandidate(
+        provider_id="openai-exact-tts",
+        priority=20,
+        capabilities=frozenset({"voice.tts"}),
+        data_policy_tags=frozenset({"cloud"}),
+    )
+    cartesia_ready = ProviderCandidate(
+        provider_id="cartesia",
+        priority=30,
+        capabilities=frozenset({"voice.tts"}),
+        data_policy_tags=frozenset({"cloud"}),
+    )
+
+    decision = select_fallback(
+        [cartesia_ready, openai_ready, google_exhausted],
+        required_capabilities={"voice.tts"},
+        allowed_data_policy_tags={"cloud"},
+        now=0,
+    )
+    assert decision.selected_provider_id == "openai-exact-tts"
+
+    openai_open = ProviderCandidate(
+        provider_id="openai-exact-tts",
+        priority=20,
+        capabilities=frozenset({"voice.tts"}),
+        circuit_state=CircuitState.OPEN,
+        data_policy_tags=frozenset({"cloud"}),
+    )
+    decision = select_fallback(
+        [cartesia_ready, openai_open, google_exhausted],
+        required_capabilities={"voice.tts"},
+        allowed_data_policy_tags={"cloud"},
+        now=0,
+    )
+    assert decision.selected_provider_id == "cartesia"
