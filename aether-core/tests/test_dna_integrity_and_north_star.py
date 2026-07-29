@@ -40,6 +40,73 @@ def test_default_dna_matches_founder_reviewed_manifest() -> None:
     assert all(item["matches"] for item in report["files"].values())
 
 
+def test_dna_authority_domains_are_explicit_and_non_overlapping() -> None:
+    identity = DNALoader().load_identity()
+    authority = identity["authority_model"]
+
+    assert "single source of truth" not in identity["description"].casefold()
+    assert authority["ultimate_constitutional_amendment_authority"] == "Dee"
+    assert authority["directional_mission_and_sacred_principles"] == "north_star.yaml"
+    assert authority["epistemic_learning_and_evolution_invariants"] == "Genome.md"
+    assert authority["machine_readable_self_model_and_constraints"] == "aether.core.json"
+    assert authority["execution_authority"] == "governance_and_approval_services"
+    assert "stop automatic mutation" in authority["conflict_rule"]
+
+
+def test_genome_preserves_identity_and_canonical_memory_across_host_migration() -> None:
+    genome = DNALoader().load_genome()
+
+    assert "The memory does not." not in genome
+    assert "Genome protects identity recoverability." in genome
+    assert "Governed canonical memory protects continuity." in genome
+    assert "Governed canonical memory should also survive through verified migration" in genome
+    assert "continuity must not be discarded by design" in genome
+
+
+def test_belief_and_canonical_memory_operations_are_not_auto_approvable() -> None:
+    identity = DNALoader().load_identity()
+    constraints = identity["constraints"]
+    auto_approvable = set(constraints["auto_approvable"])
+    governed = set(constraints["requires_governance_for"])
+    proposal_only = set(constraints["proposal_only"])
+
+    assert "belief_update_within_bounds" not in auto_approvable
+    assert "memory_storage" not in auto_approvable
+    assert {
+        "belief_promotion",
+        "knowledge_promotion",
+        "canonical_memory_write",
+        "memory_retention_policy_change",
+    }.issubset(governed)
+    assert {
+        "belief_candidate",
+        "knowledge_candidate",
+        "canonical_memory_candidate",
+    }.issubset(proposal_only)
+    assert auto_approvable == {
+        "improvement_proposal",
+        "skill_draft",
+        "low_risk_observation",
+        "test_generation",
+    }
+
+
+def test_machine_self_model_preserves_canonical_memory_policy() -> None:
+    memory_policy = DNALoader().load_identity()["memory_policy"]
+
+    assert memory_policy["identity_is_independent_of_memory"] is True
+    assert memory_policy["canonical_memory_should_be_preserved"] is True
+    assert memory_policy["canonical_memory_authority"] == "AETHER_HOME"
+    assert memory_policy["direct_belief_write"] == "forbidden"
+    assert memory_policy["knowledge_requires"] == "governed_promotion"
+    assert set(memory_policy["host_migration_requires"]) == {
+        "quiescent_snapshot",
+        "sqlite_integrity_verification",
+        "sha256_manifest",
+        "rollback_boundary",
+    }
+
+
 def test_dna_integrity_detects_tampered_genome(tmp_path: Path) -> None:
     dna_dir = _copied_dna_dir(tmp_path)
     genome = dna_dir / "Genome.md"
