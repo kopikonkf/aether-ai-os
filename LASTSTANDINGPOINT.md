@@ -2,7 +2,7 @@
 
 ## Current phase
 
-The Founder-accepted laptop baseline remains `v0.19.2-founder-alpha-frozen.2`. GitHub `main` is the canonical source authority. Windows VPS provisioning is in progress. The read-only Aether Operational MCP baseline is merged and CI-conformed; local Founder proof remains pending.
+The Founder-accepted laptop baseline remains `v0.19.2-founder-alpha-frozen.2`. GitHub `main` is the canonical source authority. Windows VPS provisioning is in progress. The read-only Aether Operational MCP baseline is merged and CI-conformed. Its package and entrypoint are installed in the separate Founder laptop development checkout; Codex registration and zero-mutation Founder proof remain pending.
 
 ## Capability truth model
 
@@ -46,11 +46,23 @@ Code existence alone never proves runtime activation or Founder acceptance.
 - Canonical branch: `main`.
 - PR #1 and PR #2 merged the effective `.gitignore`, GitHub write proof, and sanitized Aether source baseline.
 - PR #4 merged the read-only MCP capability-plane baseline.
-- Current `main` head after PR #4: `4dcf2e55df7cc03ef7d53f9a23fbac38c2d510d4`.
+- PR #4 merge commit was `4dcf2e55df7cc03ef7d53f9a23fbac38c2d510d4`.
+- PR #6 merged the Windows MCP Founder proof runbook and complete canonical roadmap.
 - GitHub Actions verifies package installation, compilation, Core, Tools, root deployment tests, isolated Gateway tests, JSON/YAML parsing, and test receipts.
 - GitHub connector write flow is proven for branches, commits, pull requests, CI diagnosis, repairs, and review state.
 - `LASTSTANDINGPOINT.md` is the canonical cross-session handoff.
 - Never commit runtime state, real `.env`, credentials, SQLite/WAL/SHM files, logs, frames, backups, wheels, release ZIPs, caches, or virtual environments.
+
+## Agent operating contracts
+
+- `SOUL.md` defines Aether's stable constitutional identity and non-negotiable invariants.
+- `AGENTS.md` defines the repository execution contract for Codex, OpenCode, ChatGPT Chief Architect sessions, and future workers.
+- `MEMORY.md` defines the memory-authority map and cross-session continuity protocol without duplicating dynamic handoff state.
+- The ChatGPT project session serves as Chief Architect for architecture, sequencing, acceptance criteria, integration review, and canonical handoff maintenance. It is not a production runtime authority.
+- Codex is the repository-native engineering and verification worker. It is used for bounded issue execution, tests, CI repair, host conformance, and reviewable diffs.
+- OpenCode remains an accepted aggressive task-completion worker and may be preferred for long mechanical implementations or provider-flexible coding work.
+- Codex and OpenCode are replaceable bodies behind Aether governance; neither may bypass approvals, expose secrets, mutate production state ad hoc, or claim unsupported capability.
+- On the production VPS, the default is bounded inspection and conformance from the Founder laptop or a temporary CLI session. ChatGPT desktop/Codex must not run persistently as a production daemon.
 
 ## Telegram presentation status
 
@@ -113,11 +125,19 @@ Actual Windows Server service, ACL, restart, migration, and rollback behavior re
   - service and contracts: `IMPLEMENTED`
   - package entrypoint and stdio registration: `WIRED`
   - protocol and read-only boundaries: `CONFORMED`
-  - installed on Founder laptop: `NO`
+  - installed in Founder laptop development checkout: `YES`
+  - entrypoint help proof: `YES` (`aether-mcp`, MCP SDK `1.29.0`)
+  - registered in local Codex client: `NO`
   - `ACTIVE`: `NO`
   - `FOUNDER-PROVEN`: `NO`
 - Local proof runbook:
   - `project-docs/testing/MCP_FOUNDER_LOCAL_PROOF_WINDOWS.md`
+- Founder laptop evidence:
+  - clean repository at PR #6 merge
+  - Python 3.11 virtual environment created under `C:\Github\aether-ai-os\.venv`
+  - editable Core, Tools, and Gateway packages installed
+  - `aether-mcp.exe --help` succeeded
+  - local Codex MCP registration not yet performed
 - Deferred until real patterns justify extraction:
   - external MCP client manager
   - MCP server registry and credential references
