@@ -30,8 +30,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git apply --check project-docs/testing/provider-resilience-lsp.patch
-          git apply project-docs/testing/provider-resilience-lsp.patch
+          git apply --recount --check project-docs/testing/provider-resilience-lsp.patch
+          git apply --recount project-docs/testing/provider-resilience-lsp.patch
           rm project-docs/testing/provider-resilience-lsp.patch
           rm .github/workflows/apply-provider-resilience-lsp.yml
           git config user.name "Aether CI"
