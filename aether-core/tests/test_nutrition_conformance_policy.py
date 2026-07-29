@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from aether.contracts import (
+from aether.contracts import SourceCapability
+from aether.contracts.nutrition import (
     ExternalNutritionCandidate,
     NutritionActivationState,
-    SourceCapability,
     external_nutrition_candidate_hash,
 )
 from aether.nutrition import NutritionPolicy
