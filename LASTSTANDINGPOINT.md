@@ -4,7 +4,7 @@
 
 The Founder-accepted laptop baseline remains `v0.19.2-founder-alpha-frozen.2`. GitHub `main` is the canonical source authority. Windows VPS provisioning is still waiting on provider delivery. The read-only Aether Operational MCP baseline is installed in a separate Founder laptop development checkout; local Codex registration and zero-mutation Founder proof remain pending.
 
-Source foundations merged after the frozen.2 acceptance now include DNA integrity/governance hardening, constitutional authority coherence, the generic AionUi Approval Inbox integration pack, and governed external nutrition conformance. GitHub merges do not automatically upgrade the accepted laptop runtime.
+Source foundations merged after the frozen.2 acceptance now include DNA integrity/governance hardening, constitutional authority coherence, the generic AionUi Approval Inbox integration pack, governed external nutrition conformance, and the Nutrition Growth Plane. GitHub merges do not automatically upgrade the accepted laptop runtime.
 
 ## Capability truth model
 
@@ -54,6 +54,7 @@ Code existence, a merged PR, or a green CI run never proves host activation or F
 - PR #12: non-overlapping DNA authority domains and canonical-memory continuity semantics.
 - PR #14: shared HTTP ApprovalInboxService wiring and generic AionUi Approval Inbox integration pack.
 - PR #16: governed external nutrition conformance harness.
+- PR #18: Nutrition Growth Plane and refreshed canonical source/CLI/Ralph/voice-reference decisions.
 - GitHub Actions verifies package installation, compilation, Core, Tools, root deployment tests, isolated Gateway tests, JSON/YAML parsing, and test receipts.
 - GitHub connector write flow is proven for branches, commits, pull requests, CI diagnosis/repair, and review state.
 - `LASTSTANDINGPOINT.md` is the canonical cross-session handoff.
@@ -83,6 +84,21 @@ Code existence, a merged PR, or a green CI run never proves host activation or F
 - Voice target: feminine, warm, youthful-adult, bright, articulate; avoid childish, shrill, robotic, or overly seductive delivery.
 - Founder Google voice audition reference: `https://www.youtube.com/watch?v=XjSltll-ESM`.
 - The URL is a reference only; exact voice ID/API availability/acoustic match remain pending audition. Dee retains preview, lock, veto, and fallback control.
+
+## Voice provider architecture
+
+- Current LiveKit worker authority split:
+  - LiveKit owns media transport, VAD, STT, turn handling, and TTS.
+  - Aether Gateway owns identity, cognition, memory, governance, tools, runtime routing, and exact response text.
+- Current configurable defaults are `deepgram/nova-3` STT and `cartesia/sonic-3` TTS; they are replaceable configuration, not constitutional commitments.
+- ChatGPT Voice on Free/Plus is a consumer product surface useful for Founder audition and benchmarking. It is not an embeddable Aether backend, API credential, transferable quota, or production service identity.
+- ChatGPT subscription usage and OpenAI API usage are billed and rate-limited separately.
+- Aether must not embed ChatGPT session credentials or assume any permanent free OpenAI API tier.
+- Preferred first OpenAI integration: exact-text TTS after Aether Gateway returns the response. This preserves Aether as the sole cognitive authority.
+- OpenAI STT may be evaluated independently as an input-side provider.
+- Full OpenAI Realtime speech-to-speech is deferred as an optional voice-runtime/provider body until conformance proves that identity, memory, tools, approvals, exact action receipts, and fallback continuity cannot be bypassed.
+- Common provider portfolio may include OpenAI TTS, Google Cloud TTS, Cartesia, other conformed hosted providers, local/open-weight TTS, and legacy gTTS emergency fallback.
+- Foundation: `project-docs/foundations/VOICE_PROVIDER_ARCHITECTURE.md`.
 
 ## Telegram presentation status
 
@@ -228,7 +244,8 @@ Next non-VPS engineering lanes, one issue/branch/green PR at a time:
 
 ```text
 provider resilience contracts
-→ Google TTS audition/fallback tooling
+→ common voice-provider manifest and receipts
+→ Google/OpenAI/Cartesia/fallback audition tooling
 → OpenCode runtime-body conformance
 → release/VPS evidence automation
 ```
@@ -255,6 +272,8 @@ inspect current state
 → DNA integrity/governance hardening
 → generic AionUi Approval Inbox source pack
 → external nutrition conformance harness
+→ Nutrition Growth Plane
+→ governed voice-provider architecture
 ```
 
 Active host sequence:
@@ -269,7 +288,7 @@ provision Windows VPS
 → install/verify AionUi and Senses public health
 → install/verify generic AionUi Approval Inbox
 → activate/conform selected nutrition source adapters
-→ Google TTS audition and fallback proof
+→ voice-provider audition and fallback proof
 → one conformed runtime body
 → Founder Acceptance
 → MVP v0.20 Governed Shipping
@@ -359,6 +378,7 @@ Do not run the full first pulse before service/data-path and migration preparati
 - `project-docs/foundations/CONTEXT_CONTINUITY_BASELINE.md`
 - `project-docs/foundations/SKILL_CURATION_BASELINE.md`
 - `project-docs/foundations/NUTRITION_GROWTH_PLANE.md`
+- `project-docs/foundations/VOICE_PROVIDER_ARCHITECTURE.md`
 - `project-docs/foundations/BUZZ_COLLABORATION_PLANE_BASELINE.md`
 - `project-docs/foundations/MCP_CAPABILITY_PLANE_BASELINE.md`
 - `project-docs/testing/MCP_FOUNDER_LOCAL_PROOF_WINDOWS.md`
@@ -373,5 +393,6 @@ Do not run the full first pulse before service/data-path and migration preparati
 - Buzz is a collaboration plane only.
 - MCP and ACP are protocols/connectors, not authorities.
 - External repositories are nutrition/candidates until conformed and explicitly promoted.
+- Voice providers are expression capabilities, not identity or action authorities.
 - Reading the world never automatically grants permission to change it.
 - Every mutation must pass the same governed action path, approval policy, exact action binding, and authoritative receipt requirements.
