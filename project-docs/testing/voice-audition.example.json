@@ -1,0 +1,38 @@
+{
+  "timeout_seconds": 60,
+  "providers": [
+    {
+      "adapter": "google-cloud-tts",
+      "provider_id": "google-cloud-tts",
+      "model_id": "cloud-tts",
+      "voice_id": "REPLACE_WITH_AUDITION_VOICE_ID",
+      "language": "id-ID",
+      "output_format": "mp3",
+      "credential_ref": "env://GOOGLE_TTS_ACCESS_TOKEN",
+      "priority": 10,
+      "data_policy_tags": ["hosted"]
+    },
+    {
+      "adapter": "openai-exact-tts",
+      "provider_id": "openai-exact-tts",
+      "model_id": "REPLACE_WITH_SUPPORTED_TTS_MODEL",
+      "voice_id": "REPLACE_WITH_AUDITION_VOICE_ID",
+      "language": "id-ID",
+      "output_format": "mp3",
+      "credential_ref": "env://OPENAI_API_KEY",
+      "priority": 20,
+      "data_policy_tags": ["hosted"]
+    },
+    {
+      "adapter": "cartesia-tts",
+      "provider_id": "cartesia",
+      "model_id": "REPLACE_WITH_SUPPORTED_TTS_MODEL",
+      "voice_id": "REPLACE_WITH_AUDITION_VOICE_ID",
+      "language": "id",
+      "output_format": "mp3",
+      "credential_ref": "env://CARTESIA_API_KEY",
+      "priority": 30,
+      "data_policy_tags": ["hosted"]
+    }
+  ]
+}
