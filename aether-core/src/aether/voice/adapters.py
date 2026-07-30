@@ -67,12 +67,49 @@ class RequestsTransport:
         return HttpResponse(response.status_code, response.content, dict(response.headers))
 
 
+def _header_value(headers: Mapping[str, str], name: str) -> str | None:
+    for key, value in headers.items():
+        if key.casefold() == name.casefold():
+            return value
+    return None
+
+
+def _retry_after_seconds(headers: Mapping[str, str]) -> float | None:
+    raw = _header_value(headers, "Retry-After")
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _provider_error_fields(response: HttpResponse) -> tuple[str, str]:
+    try:
+        payload = response.json()
+    except Exception:
+        return "", response.body[:512].decode("utf-8", errors="replace")
+    error = payload.get("error", payload)
+    if isinstance(error, Mapping):
+        code = error.get("code") or error.get("type") or error.get("status") or ""
+        message = error.get("message") or error.get("detail") or ""
+        return str(code), str(message)
+    if error:
+        return "", str(error)
+    return "", ""
+
+
 class ProviderHttpError(RuntimeError):
     def __init__(self, provider_id: str, response: HttpResponse) -> None:
         self.provider_id = provider_id
         self.status_code = response.status_code
         self.response_body = response.body[:4096]
-        super().__init__(f"{provider_id} returned HTTP {response.status_code}")
+        self.error_code, self.error_message = _provider_error_fields(response)
+        self.retry_after_seconds = _retry_after_seconds(response.headers)
+        detail = f": {self.error_code}" if self.error_code else ""
+        if self.error_message:
+            detail = f"{detail}: {self.error_message}" if detail else f": {self.error_message}"
+        super().__init__(f"{provider_id} returned HTTP {response.status_code}{detail}")
 
 
 class _JsonTTSAdapter:
