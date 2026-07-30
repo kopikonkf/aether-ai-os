@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from aether.contracts import ActionScope, ActionTarget, ModelRequest
+from aether.resilience.runtime import ProviderRuntimeStateStore
 from aether_gateway.providers import ConfiguredModelProvider
 
 
@@ -148,3 +149,76 @@ routing:
     assert proposal.target == ActionTarget.TOOL
     assert proposal.arguments["path"] == "note.txt"
     assert proposal.required_scopes == (ActionScope.READ,)
+
+
+def test_cognition_router_uses_persistent_budget_and_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = tmp_path / "models.yaml"
+    config.write_text(
+        """
+providers:
+  primary:
+    base_url: https://primary.invalid/chat
+    api_key_env: PRIMARY_KEY
+  fallback:
+    base_url: https://fallback.invalid/chat
+    api_key_env: FALLBACK_KEY
+routing:
+  default_fuel: primary/model-a
+  fallback_chain: [fallback/model-b]
+  resilience:
+    enabled: true
+    defaults:
+      daily_request_limit: 1
+      concurrency_limit: 1
+      failure_threshold: 1
+      cooldown_seconds: 60
+      data_policy_tags: [cloud]
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PRIMARY_KEY", "secret")
+    monkeypatch.setenv("FALLBACK_KEY", "secret")
+
+    class Response:
+        headers = {}
+
+        def __init__(self, status_code, content="ok"):
+            self.status_code = status_code
+            self._content = content
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                error = RuntimeError("quota exhausted")
+                error.response = self
+                error.error_code = "insufficient_quota"
+                raise error
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    calls = []
+
+    def fake_post(url, headers, json, timeout):
+        calls.append(url)
+        return Response(429) if "primary" in url else Response(200, "fallback")
+
+    monkeypatch.setattr("aether_gateway.providers.configured.requests.post", fake_post)
+    store_path = tmp_path / "runtime" / "provider-resilience.sqlite3"
+    provider = ConfiguredModelProvider(
+        config,
+        resilience_store=ProviderRuntimeStateStore(store_path),
+        clock=lambda: 100.0,
+    )
+    response = provider.invoke_sync(
+        ModelRequest(capability="reason", messages=[{"role": "user", "content": "hi"}])
+    )
+
+    assert response.content == "fallback"
+    assert calls == [
+        "https://primary.invalid/chat",
+        "https://fallback.invalid/chat",
+    ]
+    reopened = ProviderRuntimeStateStore(store_path)
+    assert reopened.path.is_file()

@@ -28,6 +28,7 @@ aether-hub = "aether.hub.server:main"
 aether-boot = "aether.executive.boot:main"
 aether-check = "aether.consciousness.integration_audit:main"
 aether-daemon = "aether.adapters.daemon:main"
+aether-voice-audition = "aether.voice.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -37,7 +38,6 @@ where = ["src"]
 "aether.bootstrap" = ["*.yaml"]
 "aether.governance" = ["*.yaml"]
 "aether.memory" = ["*.yaml"]
-"aether.nutrition" = ["*.yaml"]
 "aether.knowledge" = ["*.yaml"]
 "aether.evolution" = ["*.yaml"]
 "aether.skills" = ["*.yaml"]

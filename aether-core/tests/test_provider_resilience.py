@@ -26,6 +26,9 @@ def test_429_rate_limit_and_quota_exhaustion_are_distinct() -> None:
         ProviderErrorSignal(status_code=429, error_code="insufficient_quota")
     ) is ProviderErrorKind.QUOTA_EXHAUSTED
     assert classify_provider_error(
+        ProviderErrorSignal(status_code=429, error_code="RESOURCE_EXHAUSTED")
+    ) is ProviderErrorKind.QUOTA_EXHAUSTED
+    assert classify_provider_error(
         ProviderErrorSignal(status_code=429, message="billing limit reached")
     ) is ProviderErrorKind.QUOTA_EXHAUSTED
 

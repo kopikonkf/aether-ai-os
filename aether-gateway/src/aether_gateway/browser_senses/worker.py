@@ -24,6 +24,9 @@ class LiveKitWorkerConfig:
     stt_language: str
     tts_model: str
     tts_voice: str
+    stt_fallback_models: tuple[str, ...]
+    tts_fallback_models: tuple[str, ...]
+    tts_fallback_voices: tuple[str, ...]
     greeting: str
     turn_detector: str
 
@@ -37,6 +40,9 @@ class LiveKitWorkerConfig:
             stt_language=str(os.environ.get("AETHER_STT_LANGUAGE") or "multi"),
             tts_model=str(os.environ.get("AETHER_TTS_MODEL") or "cartesia/sonic-3"),
             tts_voice=str(os.environ.get("AETHER_TTS_VOICE") or "794f9389-aac1-45b6-b726-9d9369183238"),
+            stt_fallback_models=_csv_env("AETHER_STT_FALLBACK_MODELS"),
+            tts_fallback_models=_csv_env("AETHER_TTS_FALLBACK_MODELS"),
+            tts_fallback_voices=_csv_env("AETHER_TTS_FALLBACK_VOICES"),
             greeting=str(os.environ.get("AETHER_SENSE_GREETING") or "Saya Aether. Saya mendengarkan."),
             turn_detector=str(os.environ.get("AETHER_TURN_DETECTOR") or "multilingual"),
         )
@@ -54,7 +60,37 @@ class LiveKitWorkerConfig:
             "livekit_environment": livekit_env,
             "livekit_sdk_ready": sdk_ready,
             "ready": bool(all(livekit_env.values()) and sdk_ready and self.worker_token),
+            "fallback": {
+                "stt_models": list(self.stt_fallback_models),
+                "tts_models": list(self.tts_fallback_models),
+                "tts_voice_count": len(self.tts_fallback_voices),
+                "configured": bool(self.stt_fallback_models or self.tts_fallback_models),
+            },
         }
+
+    def stt_fallback(self) -> list[dict[str, str]]:
+        return [{"model": model} for model in self.stt_fallback_models]
+
+    def tts_fallback(self) -> list[dict[str, str]]:
+        if self.tts_fallback_voices and len(self.tts_fallback_voices) != len(
+            self.tts_fallback_models
+        ):
+            raise ValueError(
+                "AETHER_TTS_FALLBACK_VOICES must align with AETHER_TTS_FALLBACK_MODELS"
+            )
+        voices = self.tts_fallback_voices or tuple("" for _ in self.tts_fallback_models)
+        return [
+            {"model": model, "voice": voice}
+            for model, voice in zip(self.tts_fallback_models, voices)
+        ]
+
+
+def _csv_env(name: str) -> tuple[str, ...]:
+    return tuple(
+        value.strip()
+        for value in str(os.environ.get(name) or "").split(",")
+        if value.strip()
+    )
 
 
 class AetherGatewayVoiceClient:
@@ -165,8 +201,16 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             pass
         session_kwargs: dict[str, Any] = {
             "vad": silero.VAD.load(),
-            "stt": inference.STT(config.stt_model, language=config.stt_language),
-            "tts": inference.TTS(config.tts_model, voice=config.tts_voice),
+            "stt": inference.STT(
+                config.stt_model,
+                language=config.stt_language,
+                fallback=config.stt_fallback() or None,
+            ),
+            "tts": inference.TTS(
+                config.tts_model,
+                voice=config.tts_voice,
+                fallback=config.tts_fallback() or None,
+            ),
         }
         if config.turn_detector == "multilingual" and MultilingualModel is not None:
             session_kwargs["turn_detection"] = MultilingualModel()

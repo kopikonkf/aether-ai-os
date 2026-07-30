@@ -36,6 +36,8 @@ class ProviderErrorSignal:
 _QUOTA_MARKERS = (
     "insufficient_quota",
     "quota_exceeded",
+    "quotaexceeded",
+    "resource_exhausted",
     "billing_hard_limit",
     "billing limit",
     "credit balance",

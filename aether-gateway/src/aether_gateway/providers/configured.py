@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -13,19 +14,41 @@ import yaml
 
 from aether.contracts.actions import ActionProposal, ActionRisk, ActionScope, ActionTarget
 from aether.contracts.llm import ModelProvider, ModelRequest, ModelResponse
+from aether.resilience import ProviderErrorSignal
+from aether.resilience.runtime import (
+    ProviderProfile,
+    ProviderRuntimeStateStore,
+    ResilientProviderRouter,
+)
 
 
 class ModelInvocationError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, failures: tuple[str, ...] = ()) -> None:
+        self.failures = failures
+        super().__init__(message)
 
 
 class ConfiguredModelProvider(ModelProvider):
-    def __init__(self, config_path: Path | None = None, *, timeout_seconds: int = 120) -> None:
+    def __init__(
+        self,
+        config_path: Path | None = None,
+        *,
+        timeout_seconds: int = 120,
+        resilience_store: ProviderRuntimeStateStore | None = None,
+        clock=time.time,
+    ) -> None:
         self.config_path = config_path or Path(__file__).with_name("llm_providers.yaml")
         self.timeout_seconds = timeout_seconds
         self.config = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
         self.providers = self.config.get("providers", {})
         self.routing = self.config.get("routing", {})
+        self.clock = clock
+        self.resilience_store = resilience_store
+        if self.resilience_store is None and self._resilience_enabled():
+            home = Path(os.environ.get("AETHER_HOME") or Path.home() / ".aether")
+            self.resilience_store = ProviderRuntimeStateStore(
+                home / "runtime" / "provider-resilience.sqlite3"
+            )
 
     @property
     def provider_id(self) -> str:
@@ -46,13 +69,125 @@ class ConfiguredModelProvider(ModelProvider):
         for route in [primary, *[str(item) for item in self.routing.get("fallback_chain", [])]]:
             if route and route not in routes:
                 routes.append(route)
+        if self.resilience_store is not None:
+            return self._invoke_resilient(routes, request)
         failures = []
         for route in routes:
             try:
                 return self._invoke_route(route, request)
             except Exception as exc:
                 failures.append(f"{route}: {type(exc).__name__}: {exc}")
-        raise ModelInvocationError("All model routes failed: " + " | ".join(failures))
+        raise ModelInvocationError(
+            "All model routes failed: " + " | ".join(failures),
+            failures=tuple(failures),
+        )
+
+    def _resilience_enabled(self) -> bool:
+        configured = (self.routing.get("resilience") or {}).get("enabled")
+        raw = os.environ.get("AETHER_PROVIDER_RESILIENCE_ENABLED")
+        if raw is not None:
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(configured)
+
+    def _invoke_resilient(
+        self, routes: list[str], request: ModelRequest
+    ) -> ModelResponse:
+        route_by_provider: dict[str, str] = {}
+        profiles: list[ProviderProfile] = []
+        resilience = self.routing.get("resilience") or {}
+        defaults = resilience.get("defaults") or {}
+        provider_overrides = resilience.get("providers") or {}
+        for priority, route in enumerate(routes, start=1):
+            if "/" not in route:
+                raise ValueError("model route must use provider/model format")
+            provider_id = route.split("/", 1)[0]
+            route_by_provider.setdefault(provider_id, route)
+        for priority, provider_id in enumerate(route_by_provider, start=1):
+            override = provider_overrides.get(provider_id) or {}
+            profiles.append(
+                ProviderProfile(
+                    provider_id=provider_id,
+                    priority=priority,
+                    capabilities=frozenset(
+                        override.get("capabilities")
+                        or defaults.get("capabilities")
+                        or {"reason", "plan", "critic", "coding", "vision"}
+                    ),
+                    daily_limit=int(
+                        override.get("daily_request_limit")
+                        or defaults.get("daily_request_limit")
+                        or 100
+                    ),
+                    concurrency_limit=int(
+                        override.get("concurrency_limit")
+                        or defaults.get("concurrency_limit")
+                        or 2
+                    ),
+                    failure_threshold=int(
+                        override.get("failure_threshold")
+                        or defaults.get("failure_threshold")
+                        or 3
+                    ),
+                    cooldown_seconds=float(
+                        override.get("cooldown_seconds")
+                        or defaults.get("cooldown_seconds")
+                        or 60
+                    ),
+                    data_policy_tags=frozenset(
+                        override.get("data_policy_tags")
+                        or defaults.get("data_policy_tags")
+                        or {"cloud"}
+                    ),
+                    enabled=bool(override.get("enabled", True)),
+                )
+            )
+        assert self.resilience_store is not None
+        router = ResilientProviderRouter(
+            profiles, self.resilience_store, clock=self.clock
+        )
+        failures: list[str] = []
+
+        def operation(provider_id: str) -> ModelResponse:
+            route = route_by_provider[provider_id]
+            try:
+                return self._invoke_route(route, request)
+            except Exception as error:
+                failures.append(f"{route}: {type(error).__name__}: {error}")
+                raise
+
+        try:
+            return router.invoke(
+                capability=request.capability,
+                allowed_data_policy_tags=set(
+                    request.constraints.get("allowed_data_policy_tags") or {"cloud"}
+                ),
+                operation=operation,
+                error_signal=self._error_signal,
+            )
+        except Exception as error:
+            raise ModelInvocationError(
+                "All eligible model routes failed: " + " | ".join(failures),
+                failures=tuple(failures),
+            ) from error
+
+    @staticmethod
+    def _error_signal(error: Exception) -> ProviderErrorSignal:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+        retry_after = None
+        if response is not None:
+            raw = getattr(response, "headers", {}).get("Retry-After")
+            try:
+                retry_after = float(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                retry_after = None
+        return ProviderErrorSignal(
+            status_code=status_code,
+            error_code=str(getattr(error, "error_code", "")),
+            message=str(error),
+            retry_after_seconds=retry_after,
+            exception_name=type(error).__name__,
+        )
 
     def _invoke_route(self, route: str, request: ModelRequest) -> ModelResponse:
         if "/" not in route:
