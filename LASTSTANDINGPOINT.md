@@ -2,9 +2,9 @@
 
 ## Current phase
 
-The Founder-accepted laptop baseline remains `v0.19.2-founder-alpha-frozen.2`. GitHub `main` is the canonical source authority. Windows VPS provisioning is still waiting on provider delivery. The read-only Aether Operational MCP baseline is installed in a separate Founder laptop development checkout; local Codex registration and zero-mutation Founder proof remain pending.
+The Founder-accepted laptop baseline remains `v0.19.2-founder-alpha-frozen.2`. GitHub `main` remains the canonical source authority. Branch `agent/voice-audition-tooling` is now the active source candidate for the post-PR #22 runtime activation slice. Windows VPS provisioning is still waiting on provider delivery. The read-only Aether Operational MCP baseline is installed in a separate Founder laptop development checkout; local Codex registration and zero-mutation Founder proof remain pending.
 
-Source foundations merged after the frozen.2 acceptance now include DNA integrity/governance hardening, constitutional authority coherence, the generic AionUi Approval Inbox integration pack, governed external nutrition conformance, and the Nutrition Growth Plane. GitHub merges do not automatically upgrade the accepted laptop runtime.
+Source foundations merged after the frozen.2 acceptance now include DNA integrity/governance hardening, constitutional authority coherence, the generic AionUi Approval Inbox integration pack, governed external nutrition conformance, the Nutrition Growth Plane, governed voice-provider architecture, and provider resilience contracts. GitHub merges do not automatically upgrade the accepted laptop runtime.
 
 ## Capability truth model
 
@@ -46,6 +46,7 @@ Code existence, a merged PR, or a green CI run never proves host activation or F
 
 - Repository: `kopikonkf/aether-ai-os` (private).
 - Canonical branch: `main`.
+- Active candidate branch: `agent/voice-audition-tooling`, based on merge commit `4565994ce54942a112b6920330377307adb7f29d` from PR #22.
 - PR #1/#2: effective `.gitignore`, write proof, and sanitized source baseline.
 - PR #4: read-only MCP capability-plane baseline.
 - PR #6: MCP Founder proof runbook and complete operational/Buzz roadmap.
@@ -56,7 +57,8 @@ Code existence, a merged PR, or a green CI run never proves host activation or F
 - PR #16: governed external nutrition conformance harness.
 - PR #18: Nutrition Growth Plane and refreshed canonical source/CLI/Ralph/voice-reference decisions.
 - PR #20: governed voice-provider architecture and ChatGPT-plan/OpenAI-API authority separation.
-- Issue #21 / branch `agent/provider-resilience-contracts`: provider-neutral resilience contracts and tests.
+- PR #22: provider-neutral resilience contracts and tests.
+- Candidate branch `agent/voice-audition-tooling`: persistent provider runtime state, Gateway cognition resilience wiring, LiveKit ordered STT/TTS fallback configuration, voice-provider contracts/adapters, explicit live audition CLI, hashes, latency receipts, fallback detection, and comparison sheets.
 - GitHub Actions verifies package installation, compilation, Core, Tools, root deployment tests, isolated Gateway tests, JSON/YAML parsing, and test receipts.
 - GitHub connector write flow is proven for branches, commits, pull requests, CI diagnosis/repair, and review state.
 - `LASTSTANDINGPOINT.md` is the canonical cross-session handoff.
@@ -120,7 +122,7 @@ Code existence, a merged PR, or a green CI run never proves host activation or F
   - provider cooldown and circuit-breaker state;
   - capability/health/budget/data-policy fallback eligibility;
   - SHA-256 circuit and fallback receipts.
-- Current classification:
+- Current classification on GitHub `main` after PR #22:
   - contracts and unit tests: `IMPLEMENTED` / `CONFORMED`;
   - current cognition-provider wiring: `NOT WIRED`;
   - LiveKit STT/TTS wiring: `NOT WIRED`;
@@ -128,7 +130,63 @@ Code existence, a merged PR, or a green CI run never proves host activation or F
   - live fallback: `NO`;
   - `ACTIVE`: `NO`;
   - `FOUNDER-PROVEN`: `NO`.
+- Candidate classification on branch `agent/voice-audition-tooling`:
+  - persistent `AETHER_HOME/runtime/provider-resilience.sqlite3` state: `IMPLEMENTED` / source `WIRED`;
+  - Gateway cognition provider resilience routing: source `WIRED`;
+  - LiveKit ordered STT/TTS fallback configuration: source `WIRED`;
+  - deterministic provider runtime, cognition fallback, and LiveKit fallback tests: `CONFORMED` candidate pending PR CI;
+  - live fallback: `NO` until real credential/network evidence exists;
+  - `ACTIVE`: `NO`;
+  - `FOUNDER-PROVEN`: `NO`.
 - Foundation: `project-docs/foundations/PROVIDER_RESILIENCE_BASELINE.md`.
+
+## Voice audition and runtime resilience branch status
+
+Branch `agent/voice-audition-tooling` implements the requested post-PR #22 slice as a source candidate:
+
+```text
+common voice contracts
+→ Google Cloud sample generator
+→ OpenAI exact-text TTS adapter
+→ OpenAI STT optional adapter
+→ Cartesia TTS adapter contract
+→ output hashes
+→ latency receipts
+→ fallback detection
+→ JSON/CSV/Markdown comparison sheets
+→ deterministic CI tests
+```
+
+Additional branch hardening completed in this handoff:
+
+- `ProviderHttpError` now extracts provider `error.code`, message, and `Retry-After` from JSON body/header.
+- Google-style `RESOURCE_EXHAUSTED` 429 signals now classify as `quota_exhausted` instead of generic `rate_limit`.
+- Provider resilience tests now cover this Google quota marker explicitly.
+
+The audition CLI remains safe by default:
+
+```text
+aether-voice-audition --config project-docs/testing/voice-audition.example.json --output <dir>
+```
+
+No provider call is made unless `--execute-live` is passed. Live execution accepts only `env://NAME` credential references. Audio samples, SHA-256 hashes, latency receipts, fallback path, error classifications, and three comparison sheets are written together.
+
+Capability gates for this branch:
+
+```text
+voice contracts                         IMPLEMENTED
+Google/OpenAI/Cartesia adapters          IMPLEMENTED
+OpenAI STT optional adapter              IMPLEMENTED
+audition hashes/latency/sheets           CONFORMED candidate
+persistent provider state                WIRED candidate
+Gateway cognition resilience             WIRED candidate
+LiveKit fallback configuration           WIRED candidate
+live provider fallback                   NO
+ACTIVE                                   NO
+FOUNDER-PROVEN                           NO
+```
+
+Foundation: `project-docs/foundations/VOICE_AUDITION_AND_RUNTIME_RESILIENCE.md`.
 
 ## Telegram presentation status
 
@@ -183,11 +241,12 @@ Actual Windows Server service, ACL, restart, migration, and rollback behavior re
 
 - Broad cross-platform developer/Founder entrypoint exists: `python aether_cli.py ...`.
 - It exercises cognition, Senses, approvals, memory, skills, evolution, source/opportunity paths, runtime bodies, driver conformance, and operations demos.
-- Package commands include `aether-gateway`, `aether-sense-worker`, `aether-mcp`, `aether-boot`, `aether-check`, and `aether-daemon`.
+- Package commands include `aether-gateway`, `aether-sense-worker`, `aether-mcp`, `aether-boot`, `aether-check`, `aether-daemon`, and branch candidate `aether-voice-audition`.
 - One stable installed umbrella command named `aether` does not yet exist.
 - Current classification:
   - root developer harness: `IMPLEMENTED` and CI-tested;
   - stable installed control-plane CLI: `NOT IMPLEMENTED`;
+  - voice audition CLI on candidate branch: `IMPLEMENTED` / deterministic dry-run safe;
   - VPS-ready/Founder-proven CLI: `NO`.
 - Accepted CLI design remains `project-docs/foundations/AETHER_CLI_DECISION.md`.
 - Stable CLI must remain a thin control surface and reuse Telegram/API/AionUi governance rather than duplicating Mind logic.
@@ -273,9 +332,7 @@ Completion must derive from authoritative task state and verification receipts, 
 Next non-VPS engineering lanes, one issue/branch/green PR at a time:
 
 ```text
-provider resilience Gateway/LiveKit wiring
-→ common voice-provider manifest and receipts
-→ Google/OpenAI/Cartesia/fallback audition tooling
+merge/conform voice-audition runtime-resilience candidate
 → OpenCode runtime-body conformance
 → release/VPS evidence automation
 ```
@@ -304,6 +361,7 @@ inspect current state
 → external nutrition conformance harness
 → Nutrition Growth Plane
 → governed voice-provider architecture
+→ provider resilience contracts
 ```
 
 Active host sequence:
@@ -410,9 +468,11 @@ Do not run the full first pulse before service/data-path and migration preparati
 - `project-docs/foundations/NUTRITION_GROWTH_PLANE.md`
 - `project-docs/foundations/VOICE_PROVIDER_ARCHITECTURE.md`
 - `project-docs/foundations/PROVIDER_RESILIENCE_BASELINE.md`
+- `project-docs/foundations/VOICE_AUDITION_AND_RUNTIME_RESILIENCE.md`
 - `project-docs/foundations/BUZZ_COLLABORATION_PLANE_BASELINE.md`
 - `project-docs/foundations/MCP_CAPABILITY_PLANE_BASELINE.md`
 - `project-docs/testing/MCP_FOUNDER_LOCAL_PROOF_WINDOWS.md`
+- `project-docs/testing/voice-audition.example.json`
 - JSON schemas for context checkpoints, external nutrition candidates, Buzz task envelopes, and Buzz result receipts.
 
 ## Non-negotiable authority rules
