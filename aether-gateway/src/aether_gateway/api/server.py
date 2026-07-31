@@ -487,6 +487,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+GATEWAY_STARTED_AT = datetime.datetime.now(datetime.UTC)
+
+
+def _health_timestamp(value: datetime.datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -991,6 +997,20 @@ class MissionOutcomeRequest(BaseModel):
     achieved: bool
     summary: str
     lessons: list[str] = Field(default_factory=list)
+
+
+@app.get("/health")
+def get_health():
+    checked_at = datetime.datetime.now(datetime.UTC)
+    return {
+        "status": "ok",
+        "service": "aether-gateway",
+        "version": app.version,
+        "started_at": _health_timestamp(GATEWAY_STARTED_AT),
+        "checked_at": _health_timestamp(checked_at),
+        "uptime_seconds": round((checked_at - GATEWAY_STARTED_AT).total_seconds(), 3),
+        "aether_home": str(root_dir),
+    }
 
 
 @app.get("/api/status")
