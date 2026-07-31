@@ -46,6 +46,20 @@ checks_completed: 13
 checks_planned: 13
 ```
 
+## Windows service mode
+
+For a Windows VPS or long-running Windows host, install Aether as OS-owned services instead of leaving terminals open:
+
+    .\deploy\windows\install-aether-services.ps1 -Start
+
+The installer creates:
+
+- AetherGateway for the Gateway API;
+- optional AetherSenseWorker when -InstallSenseWorker is supplied;
+- AetherWatchdog for local heartbeat receipts and bounded restart attempts.
+
+The service path explicitly sets AETHER_HOME=C:\ProgramData\Aether. Heartbeat receipts are append-only JSONL at C:\ProgramData\Aether\services\heartbeats.jsonl. This is source-level installation support; host conformance still requires a Windows receipt showing services, ACLs, startup type, restart behavior, and http://127.0.0.1:8000/health.
+
 ## Browser text/camera without LiveKit
 
 Start Gateway:
