@@ -1,0 +1,7 @@
+# Keep docs and DNA byte-stable across Windows and Unix checkouts.
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+aether-core/src/aether/dna/* text eol=lf
+project-docs/adr/* text eol=lf
