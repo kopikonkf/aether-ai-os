@@ -72,7 +72,25 @@ Required Windows checks before classifying the service slice beyond source-level
     Invoke-RestMethod http://127.0.0.1:8000/health
     Get-Content C:\ProgramData\Aether\services\heartbeats.jsonl -Tail 3
 
-Do not expose port 8000 publicly. Public ingress remains a separate Cloudflare/Caddy step.
+Do not expose port 8000 publicly. Cloudflare public ingress is source-present under deploy/cloudflare/ and should be proven separately from the service install.
+
+## Cloudflare Tunnel path
+
+Use Cloudflare Tunnel when the Founder host should keep public ports closed and let Cloudflare own the public edge.
+
+Required source assets:
+
+    deploy/cloudflare/cloudflared-aether.yml
+    deploy/cloudflare/install-cloudflare-ingress.ps1
+    deploy/cloudflare/probe-cloudflare-ingress.ps1
+
+Windows host proof:
+
+    .\deploy\cloudflare\install-cloudflare-ingress.ps1 -PublicHostname "aether.example.com" -TunnelId "<tunnel-id>" -CredentialsFile "C:\ProgramData\Aether\cloudflare\<tunnel-id>.json" -Start
+    .\deploy\cloudflare\probe-cloudflare-ingress.ps1 -BaseUrl "https://aether.example.com"
+    Get-Content C:\ProgramData\Aether\runtime\ingress\latest_cloudflare_probe.json
+
+The default tunnel origin is http://127.0.0.1:80 so local Caddy remains the one-domain router and keeps /aether path rewriting intact.
 
 ## systemd path
 
