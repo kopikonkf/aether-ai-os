@@ -104,23 +104,14 @@ if ($PythonPath) {
 
 $gatewayArgs = $commonRunnerArgs + @("-Role", "gateway", "-ServiceName", "AetherGateway")
 $gatewayBin = Join-ServiceCommand $powerShellExe $gatewayArgs
-Install-OrUpdate-Service
-    -Name "AetherGateway"
-    -DisplayName "Aether Gateway"
-    -Description "Aether Gateway API service. Runtime state is owned by AETHER_HOME."
-    -BinaryPathName $gatewayBin
+Install-OrUpdate-Service -Name "AetherGateway" -DisplayName "Aether Gateway" -Description "Aether Gateway API service. Runtime state is owned by AETHER_HOME." -BinaryPathName $gatewayBin
 
 $installed = @("AetherGateway")
 
 if ($InstallSenseWorker) {
     $senseArgs = $commonRunnerArgs + @("-Role", "sense-worker", "-ServiceName", "AetherSenseWorker")
     $senseBin = Join-ServiceCommand $powerShellExe $senseArgs
-    Install-OrUpdate-Service
-        -Name "AetherSenseWorker"
-        -DisplayName "Aether Sense Worker"
-        -Description "Optional Aether LiveKit Sense Worker service."
-        -BinaryPathName $senseBin
-        -DependsOn @("AetherGateway")
+    Install-OrUpdate-Service -Name "AetherSenseWorker" -DisplayName "Aether Sense Worker" -Description "Optional Aether LiveKit Sense Worker service." -BinaryPathName $senseBin -DependsOn @("AetherGateway")
     $installed += "AetherSenseWorker"
 }
 
@@ -133,12 +124,7 @@ $watchdogArgs = @(
     "-ServiceNames"
 ) + $installed
 $watchdogBin = Join-ServiceCommand $powerShellExe $watchdogArgs
-Install-OrUpdate-Service
-    -Name "AetherWatchdog"
-    -DisplayName "Aether Watchdog"
-    -Description "Aether heartbeat and bounded service restart watchdog."
-    -BinaryPathName $watchdogBin
-    -DependsOn @("AetherGateway")
+Install-OrUpdate-Service -Name "AetherWatchdog" -DisplayName "Aether Watchdog" -Description "Aether heartbeat and bounded service restart watchdog." -BinaryPathName $watchdogBin -DependsOn @("AetherGateway")
 
 $manifest = [ordered]@{
     installed_at = (Get-Date).ToUniversalTime().ToString("o")
