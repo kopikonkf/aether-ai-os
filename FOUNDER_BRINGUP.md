@@ -60,6 +60,18 @@ The installer creates:
 
 The service path explicitly sets AETHER_HOME=C:\ProgramData\Aether. Heartbeat receipts are append-only JSONL at C:\ProgramData\Aether\services\heartbeats.jsonl. This is source-level installation support; host conformance still requires a Windows receipt showing services, ACLs, startup type, restart behavior, and http://127.0.0.1:8000/health.
 
+## Cloudflare ingress mode
+
+Cloudflare Tunnel source assets live under deploy/cloudflare/. After the Windows services and local Caddy one-domain router are healthy, install the tunnel service:
+
+    .\deploy\cloudflare\install-cloudflare-ingress.ps1 -PublicHostname "aether.example.com" -TunnelId "<tunnel-id>" -CredentialsFile "C:\ProgramData\Aether\cloudflare\<tunnel-id>.json" -Start
+
+Then write the public ingress receipt:
+
+    .\deploy\cloudflare\probe-cloudflare-ingress.ps1 -BaseUrl "https://aether.example.com"
+
+The probe writes secret-safe evidence under C:\ProgramData\Aether\runtime\ingress\. Founder acceptance and the MVP v0.20 packet can read the latest Cloudflare receipt automatically.
+
 ## Browser text/camera without LiveKit
 
 Start Gateway:
