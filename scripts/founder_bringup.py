@@ -96,8 +96,11 @@ def init_environment(args: argparse.Namespace) -> int:
         return 0
 
     text = ENV_EXAMPLE.read_text(encoding="utf-8")
-    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
-        aether_home = Path(os.environ["LOCALAPPDATA"]) / "Aether"
+    configured_home = os.environ.get("AETHER_HOME") or os.environ.get("HERMES_HOME")
+    if configured_home:
+        aether_home = Path(configured_home).expanduser()
+    elif os.name == "nt":
+        aether_home = Path(r"C:\aether\home")
     else:
         aether_home = Path.home() / ".aether"
     text = _replace_env_value(text, "AETHER_HOME", str(aether_home.resolve()))
