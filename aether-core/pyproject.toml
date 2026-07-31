@@ -20,8 +20,9 @@ dependencies = [
 [project.optional-dependencies]
 telegram = ["telethon>=1.30.0"]
 hub = ["aiosqlite>=0.19.0", "bcrypt>=4.0.0", "python-multipart>=0.0.6"]
+voice = ["google-cloud-texttospeech>=2.16.0"]
 dev = ["pytest>=7.0", "ruff>=0.1.0"]
-all = ["aether-core[telegram,hub,dev]"]
+all = ["aether-core[telegram,hub,voice,dev]"]
 
 [project.scripts]
 aether-hub = "aether.hub.server:main"
@@ -29,6 +30,10 @@ aether-boot = "aether.executive.boot:main"
 aether-check = "aether.consciousness.integration_audit:main"
 aether-daemon = "aether.adapters.daemon:main"
 aether-voice-audition = "aether.voice.cli:main"
+aether-body = "aether.runtime.body:main"
+aether-founder-acceptance = "aether.runtime.founder_acceptance_cli:main"
+aether-mcp = "aether.runtime.mcp:main"
+aether-mvp20 = "aether.runtime.mvp20:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
