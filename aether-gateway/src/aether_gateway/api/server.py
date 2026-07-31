@@ -30,7 +30,8 @@ AIONUI_MISSION_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_missi
 AIONUI_OPPORTUNITY_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_opportunity_console"
 AIONUI_EXPERIMENT_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_experiment_console"
 AIONUI_SENSES_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_senses_console"
-load_dotenv(AETHER_CORE_DIR / ".env", override=True)
+# Preserve caller-provided AETHER_HOME so VPS shell values win.
+load_dotenv(AETHER_CORE_DIR / ".env", override=False)
 
 from aether.actions import (
     ApprovalNotFound, ApprovalStateError, FailureFingerprintStore, GovernedActionPath,
