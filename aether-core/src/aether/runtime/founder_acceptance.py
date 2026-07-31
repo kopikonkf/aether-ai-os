@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from aether.runtime.ingress import AetherCloudflareIngress
 from aether.runtime.mcp import REQUIRED_AETHER_MCP_TOOLS
 from aether.runtime.paths import AetherHome
 
@@ -277,6 +278,8 @@ class FounderAcceptance:
 
     def _host_public_probe_criterion(self, evidence: Mapping[str, Any]) -> dict[str, Any]:
         probe = evidence.get("public_host_probe") or evidence.get("cloudflare_ingress")
+        if not isinstance(probe, Mapping):
+            probe = AetherCloudflareIngress(self.home).latest_probe()
         if isinstance(probe, Mapping) and probe.get("status") == "ok":
             return _criterion("public_host_probe", "Cloudflare/one-domain public health", "pass", "Public host probe succeeded.", required=False)
         return _criterion("public_host_probe", "Cloudflare/one-domain public health", "pending", "Host HTTPS proof is still pending.", required=False)
@@ -305,5 +308,6 @@ class FounderAcceptance:
             "body_receipts_path": str(self.home.receipts),
             "tts_auditions_dir": str(self.home.tts_auditions),
             "mcp_activation_path": str(self.home.mcp_latest_activation),
+            "cloudflare_ingress_probe_path": str(self.home.cloudflare_ingress_latest_probe),
             "evidence_keys": sorted(str(key) for key in evidence.keys()),
         }
