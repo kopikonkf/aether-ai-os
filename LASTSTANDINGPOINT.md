@@ -58,6 +58,7 @@ Code existence, a merged PR, or a green CI run never proves host activation or F
 - PR #18: Nutrition Growth Plane and refreshed canonical source/CLI/Ralph/voice-reference decisions.
 - PR #20: governed voice-provider architecture and ChatGPT-plan/OpenAI-API authority separation.
 - PR #22: provider-neutral resilience contracts and tests.
+- Candidate branch `agent/windows-service-heartbeat-watchdog`: Windows Service Control Manager installer, Gateway service runner, optional Sense Worker service, watchdog heartbeat receipts, and read-only Gateway /health route for the persistent-service slice.
 - Candidate branch `agent/voice-audition-tooling`: persistent provider runtime state, Gateway cognition resilience wiring, LiveKit ordered STT/TTS fallback configuration, voice-provider contracts/adapters, explicit live audition CLI, hashes, latency receipts, fallback detection, and comparison sheets.
 - GitHub Actions verifies package installation, compilation, Core, Tools, root deployment tests, isolated Gateway tests, JSON/YAML parsing, and test receipts.
 - GitHub connector write flow is proven for branches, commits, pull requests, CI diagnosis/repair, and review state.
@@ -442,6 +443,24 @@ service metadata: C:\ProgramData\Aether\services
 Provisioning evidence must include only Windows product/version/build/architecture, CPU/RAM/disk summary, Firewall profile summary, Python 3.11.x path/version, and `AETHER_WINDOWS_READINESS.ps1` output. Never include passwords, tokens, public IP addresses, `.env`, provider credentials, or API keys.
 
 Do not run the full first pulse before service/data-path and migration preparation because demo commands can write synthetic state.
+
+## Persistent Windows service heartbeat candidate
+
+Status on agent/windows-service-heartbeat-watchdog: IMPLEMENTED as source, not yet CONFORMED, ACTIVE, or FOUNDER-PROVEN.
+
+Scope:
+
+- AetherGateway Windows service runs the Gateway API through the release Python environment.
+- optional AetherSenseWorker service starts only when explicitly installed for LiveKit.
+- AetherWatchdog polls http://127.0.0.1:8000/health, appends secret-safe JSONL heartbeat receipts, and restarts AetherGateway after bounded consecutive failures.
+- service runtime state is explicit: AETHER_HOME=C:\ProgramData\Aether.
+- ChatGPT desktop and Codex are not installed or treated as persistent production daemons.
+
+Required host proof before state advancement:
+
+    Get-Service AetherGateway,AetherWatchdog
+    Invoke-RestMethod http://127.0.0.1:8000/health
+    Get-Content C:\ProgramData\Aether\services\heartbeats.jsonl -Tail 3
 
 ## Migration caveat
 
