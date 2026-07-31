@@ -25,7 +25,7 @@ def test_windows_service_assets_are_present():
 
 def test_windows_service_assets_bind_runtime_state_and_heartbeat_receipts():
     combined = "\n".join(_read(path) for path in WINDOWS_DIR.glob("*"))
-    assert "C:\ProgramData\Aether" in combined
+    assert r"C:\ProgramData\Aether" in combined
     assert "AetherGateway" in combined
     assert "AetherWatchdog" in combined
     assert "heartbeats.jsonl" in combined
@@ -48,7 +48,7 @@ def test_windows_service_assets_do_not_embed_secrets_or_legacy_state_paths():
         "TELEGRAM_BOT_TOKEN=",
         "LIVEKIT_API_SECRET=",
         "AUTH_SECRET_KEY=",
-        "C:\aether\aether-home",
+        r"C:\aether\aether-home",
         "HERMES_HOME",
     ]
     offenders = [item for item in prohibited if item in combined]
