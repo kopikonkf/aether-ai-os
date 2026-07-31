@@ -24,7 +24,7 @@ def test_windows_service_assets_are_present():
 
 
 def test_windows_service_assets_bind_runtime_state_and_heartbeat_receipts():
-    combined = "\n".join(_read(path) for path in WINDOWS_DIR.glob("*"))
+    combined = "\n".join(_read(path) for path in WINDOWS_DIR.iterdir() if path.is_file())
     assert r"C:\ProgramData\Aether" in combined
     assert "AetherGateway" in combined
     assert "AetherWatchdog" in combined
@@ -43,7 +43,7 @@ def test_gateway_exposes_cheap_health_endpoint_for_watchdog():
 
 
 def test_windows_service_assets_do_not_embed_secrets_or_legacy_state_paths():
-    combined = "\n".join(_read(path) for path in WINDOWS_DIR.glob("*"))
+    combined = "\n".join(_read(path) for path in WINDOWS_DIR.iterdir() if path.is_file())
     prohibited = [
         "TELEGRAM_BOT_TOKEN=",
         "LIVEKIT_API_SECRET=",
