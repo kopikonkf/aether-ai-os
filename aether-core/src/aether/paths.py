@@ -2,8 +2,7 @@
 Platform-Agnostic Path Management for Aether Core
 ==================================================
 Centralized path resolution via AETHER_HOME environment variable.
-Uses AETHER_HOME when provided, preserves the legacy HERMES_HOME alias,
-and defaults Windows service-owned state to C:\aether\home.
+Defaults Windows service-owned state to C:\aether\home.
 """
 
 import os
@@ -13,10 +12,9 @@ from pathlib import Path
 
 def get_aether_home() -> Path:
     """Resolve the canonical Aether home directory across platforms."""
-    for env_name in ("AETHER_HOME", "HERMES_HOME"):
-        env = os.environ.get(env_name)
-        if env:
-            return Path(env).expanduser()
+    env = os.environ.get("AETHER_HOME")
+    if env:
+        return Path(env).expanduser()
 
     if platform.system() == "Windows":
         return Path(r"C:\aether\home")
