@@ -1,7 +1,11 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "aether-core"
-version = "2.0.0"
-description = "Aether Cognitive Orchestrator - Primitive Architecture"
+version = "0.19.2"
+description = "Aether Cognitive Core — provider-neutral cognition, governance, and event contracts"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.100.0",
@@ -21,19 +25,31 @@ dev = ["pytest>=7.0", "ruff>=0.1.0"]
 all = ["aether-core[telegram,hub,voice,dev]"]
 
 [project.scripts]
-aether-hub = "hermes.hub.server:main"
-aether-boot = "hermes.executive.boot:main"
-aether-check = "hermes.consciousness.integration_audit:main"
-aether-daemon = "hermes.adapters.daemon:main"
+aether-hub = "aether.hub.server:main"
+aether-boot = "aether.executive.boot:main"
+aether-check = "aether.consciousness.integration_audit:main"
+aether-daemon = "aether.adapters.daemon:main"
+aether-voice-audition = "aether.voice.cli:main"
 aether-body = "aether.runtime.body:main"
 aether-founder-acceptance = "aether.runtime.founder_acceptance_cli:main"
 aether-mcp = "aether.runtime.mcp:main"
 aether-mvp20 = "aether.runtime.mvp20:main"
 
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [tool.setuptools.packages.find]
 where = ["src"]
-exclude = ["*.egg-info"]
+
+[tool.setuptools.package-data]
+"aether.dna" = ["*.md", "*.yaml", "*.json"]
+"aether.bootstrap" = ["*.yaml"]
+"aether.governance" = ["*.yaml"]
+"aether.memory" = ["*.yaml"]
+"aether.knowledge" = ["*.yaml"]
+"aether.evolution" = ["*.yaml"]
+"aether.skills" = ["*.yaml"]
+"aether.capabilities" = ["*.yaml"]
+"aether.runtimes" = ["*.yaml"]
+"aether.missions" = ["*.yaml"]
+"aether.opportunities" = ["*.yaml"]
+"aether.web_intelligence" = ["*.yaml"]
+"aether.experiments" = ["*.yaml"]
+"aether.browser_senses" = ["*.yaml"]
