@@ -56,9 +56,27 @@ cp deploy/.env.example deploy/.env
 
 The AionUi image is built from the selected upstream ref, then the Aether integration installer adds the `/senses` route. This build requires internet access and has not been executed in the offline release container.
 
+## Windows service path
+
+Windows VPS service source lives under deploy/windows/.
+
+Run from an elevated PowerShell in the immutable release root:
+
+    .\deploy\windows\install-aether-services.ps1 -Start
+
+The installer uses Windows Service Control Manager recovery plus an AetherWatchdog service. It sets the service-owned runtime state explicitly to C:\ProgramData\Aether, keeps release files immutable under C:\Aether\releases\..., and writes secret-safe heartbeat receipts to C:\ProgramData\Aether\services\heartbeats.jsonl.
+
+Required Windows checks before classifying the service slice beyond source-level:
+
+    Get-Service AetherGateway,AetherWatchdog
+    Invoke-RestMethod http://127.0.0.1:8000/health
+    Get-Content C:\ProgramData\Aether\services\heartbeats.jsonl -Tail 3
+
+Do not expose port 8000 publicly. Public ingress remains a separate Cloudflare/Caddy step.
+
 ## systemd path
 
-Use `deploy/scripts/install_vps.sh` for the Aether virtual environment and base units. Review `/etc/aether/aether.env` before starting services.
+Use deploy/scripts/install_vps.sh for the Aether virtual environment and base units. Review /etc/aether/aether.env before starting services.
 
 ```bash
 sudo deploy/scripts/install_vps.sh "$PWD"
