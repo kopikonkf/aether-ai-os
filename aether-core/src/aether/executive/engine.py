@@ -19,8 +19,9 @@ from aether.paths import AetherPaths
 
 # Cooldown before the same existential trigger may fire again. Without it, an
 # unchanged sensor input (previously a hardcoded mock) re-writes a near-identical
-# reflection every cycle, flooding 04_Reflections with duplicates.
-REFLECTION_COOLDOWN_DAYS = 14
+# reflection every cycle, flooding 04_Reflections with duplicates. Daily is the
+# intended reflection cadence: broad day-a-1 series without a fixed loop anchor.
+REFLECTION_COOLDOWN_DAYS = 1
 REFLECTION_STATE_REL = Path("runtime_state") / "reflection_state.json"
 
 class CircadianExecutiveEngine:
