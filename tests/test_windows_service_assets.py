@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import runpy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ def test_windows_service_assets_are_present():
         "uninstall-aether-services.ps1",
         "aether-service-runner.ps1",
         "aether-watchdog.ps1",
+        "aether-windows-service.py",
     ]
     missing = [name for name in required if not (WINDOWS_DIR / name).is_file()]
     assert missing == []
@@ -53,3 +55,56 @@ def test_windows_service_assets_do_not_embed_secrets_or_legacy_state_paths():
     ]
     offenders = [item for item in prohibited if item in combined]
     assert offenders == []
+
+
+def test_service_binary_uses_an_scm_dispatcher_host():
+    installer = _read(WINDOWS_DIR / "install-aether-services.ps1")
+    host = _read(WINDOWS_DIR / "aether-windows-service.py")
+
+    assert "$serviceHost = Join-Path" in installer
+    assert "New-ServiceHostCommand" in installer
+    assert "StartServiceCtrlDispatcherW" in host
+    assert "RegisterServiceCtrlHandlerExW" in host
+    assert "SetServiceStatus" in host
+    assert "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in host
+
+
+def test_watchdog_is_independent_and_existing_dependencies_are_normalized():
+    installer = _read(WINDOWS_DIR / "install-aether-services.ps1")
+    watchdog_install = next(
+        line
+        for line in installer.splitlines()
+        if line.startswith('Install-OrUpdate-Service -Name "AetherWatchdog"')
+    )
+
+    assert "-DependsOn" not in watchdog_install
+    assert '"depend=", $dependencyValue' in installer
+    assert 'Invoke-ServiceControl -Arguments @("failureflag", $Name, "1")' in installer
+
+
+def test_service_host_argument_boundary_preserves_child_argv():
+    namespace = runpy.run_path(str(WINDOWS_DIR / "aether-windows-service.py"))
+    parse_args = namespace["_parse_args"]
+    args = parse_args(
+        [
+            "--service-name",
+            "AetherGateway",
+            "--working-directory",
+            r"C:\Aether\releases\abc",
+            "--event-log-path",
+            r"C:\ProgramData\Aether\services\service-events.jsonl",
+            "--",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "-NoProfile",
+            "-File",
+            r"C:\Aether\releases\abc\deploy\windows\aether-service-runner.ps1",
+        ]
+    )
+
+    assert args.service_name == "AetherGateway"
+    assert args.command[0].lower().endswith("powershell.exe")
+    assert args.command[1:] == [
+        "-NoProfile",
+        "-File",
+        r"C:\Aether\releases\abc\deploy\windows\aether-service-runner.ps1",
+    ]
