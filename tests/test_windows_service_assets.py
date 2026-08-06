@@ -40,7 +40,7 @@ def test_windows_service_installer_delimits_last_exit_code_before_colon():
 
 def test_powershell_variables_before_literal_colons_are_delimited():
     ambiguous_literal_colon = re.compile(
-        r"\\$(?!\\{)([A-Za-z_][A-Za-z0-9_]*):(?=$|[^A-Za-z0-9_])"
+        r"\$(?!\{)([A-Za-z_][A-Za-z0-9_]*):(?=$|[^A-Za-z0-9_])"
     )
     offenders: list[str] = []
 
