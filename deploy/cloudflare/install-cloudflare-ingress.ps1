@@ -5,7 +5,7 @@ param(
     [string]$TunnelId = "",
     [string]$CredentialsFile = "",
     [string]$CloudflaredPath = "",
-    [string]$LocalOrigin = "http://127.0.0.1:80",
+    [string]$LocalOrigin = "http://127.0.0.1:8080",
     [switch]$Start
 )
 
@@ -60,7 +60,9 @@ $cloudflareDir = Join-Path $AetherHome "cloudflare"
 $runtimeDir = Join-Path $AetherHome "runtime"
 $ingressDir = Join-Path $runtimeDir "ingress"
 New-Item -ItemType Directory -Force -Path $AetherHome, $cloudflareDir, $runtimeDir, $ingressDir | Out-Null
-icacls $AetherHome /inheritance:e /grant "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
+if (-not (Test-Path -LiteralPath $AetherHome -PathType Container)) {
+    icacls $AetherHome /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
+}
 
 $configPath = Join-Path $cloudflareDir "config.yml"
 $manifestPath = Join-Path $cloudflareDir "cloudflare-ingress-manifest.json"

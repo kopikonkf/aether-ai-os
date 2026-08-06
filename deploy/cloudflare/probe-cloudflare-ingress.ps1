@@ -24,21 +24,28 @@ foreach ($route in $requiredRoutes) {
     $ok = $false
     $err = $null
     try {
-        $response = Invoke-WebRequest -Uri "$base$route" -TimeoutSec $TimeoutSeconds -UseBasicParsing
+        $response = Invoke-WebRequest -Uri "$base$route" -TimeoutSec $TimeoutSeconds -UseBasicParsing -MaximumRedirection 0
         $statusCode = [int]$response.StatusCode
-        $ok = ($statusCode -ge 200 -and $statusCode -lt 400)
+        $ok = ($statusCode -ge 200 -and $statusCode -lt 300)
     }
     catch {
+        $statusCode = $null
         if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
             $statusCode = [int]$_.Exception.Response.StatusCode
         }
         $err = $_.Exception.GetType().Name
+    }
+    $redirected = @(302, 303, 307, 308) -contains $statusCode
+    if ($redirected) {
+        $ok = $false
+        $err = "Access-redirect-or-auth-required"
     }
     $latencyMs = [math]::Round(((Get-Date) - $started).TotalMilliseconds, 1)
     $routes += [ordered]@{
         path = $route
         status_code = $statusCode
         ok = $ok
+        redirected = $redirected
         latency_ms = $latencyMs
         error = $err
     }

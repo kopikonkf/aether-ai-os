@@ -3,7 +3,7 @@ credentials-file: ${CLOUDFLARE_CREDENTIALS_FILE}
 
 ingress:
   - hostname: ${AETHER_PUBLIC_HOSTNAME}
-    service: http://127.0.0.1:80
+    service: http://127.0.0.1:8080
     originRequest:
       connectTimeout: 10s
       noTLSVerify: true
