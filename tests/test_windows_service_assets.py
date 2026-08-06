@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import runpy
+import shutil
+import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +28,78 @@ def test_windows_service_assets_are_present():
     ]
     missing = [name for name in required if not (WINDOWS_DIR / name).is_file()]
     assert missing == []
+
+
+def test_windows_service_installer_delimits_last_exit_code_before_colon():
+    installer = _read(WINDOWS_DIR / "install-aether-services.ps1")
+
+    assert "$LASTEXITCODE:" not in installer
+    assert "${LASTEXITCODE}:" in installer
+
+
+def test_powershell_assets_parse(tmp_path: Path):
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        if os.environ.get("CI"):
+            pytest.fail("PowerShell is required to parse-check repository .ps1 assets in CI")
+        pytest.skip("PowerShell is unavailable in this local environment")
+
+    validator = tmp_path / "parse-powershell-assets.ps1"
+    validator.write_text(
+        """[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$RepositoryRoot
+)
+
+$parseFailures = @()
+$scripts = Get-ChildItem -LiteralPath $RepositoryRoot -Filter "*.ps1" -File -Recurse
+foreach ($script in $scripts) {
+    $tokens = $null
+    $errors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+        $script.FullName,
+        [ref]$tokens,
+        [ref]$errors
+    ) | Out-Null
+
+    foreach ($parseError in $errors) {
+        $parseFailures += "{0}:{1}:{2}: {3}" -f @(
+            $script.FullName,
+            $parseError.Extent.StartLineNumber,
+            $parseError.Extent.StartColumnNumber,
+            $parseError.Message
+        )
+    }
+}
+
+if ($parseFailures.Count -gt 0) {
+    $parseFailures | Write-Error
+    exit 1
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            powershell,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(validator),
+            "-RepositoryRoot",
+            str(ROOT),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=60,
+    )
+
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    assert result.returncode == 0, output
 
 
 def test_windows_service_assets_bind_runtime_state_and_heartbeat_receipts():
