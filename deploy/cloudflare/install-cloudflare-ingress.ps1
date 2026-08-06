@@ -5,6 +5,8 @@ param(
     [string]$TunnelId = "",
     [string]$CredentialsFile = "",
     [string]$CloudflaredPath = "",
+    [string]$CaddyPath = "C:\Program Files\Caddy\caddy.exe",
+    [string]$CaddyfileSource = "",
     [string]$LocalOrigin = "http://127.0.0.1:8080",
     [switch]$Start
 )
@@ -57,12 +59,47 @@ if (-not $CloudflaredPath) {
 }
 
 $cloudflareDir = Join-Path $AetherHome "cloudflare"
+$caddyDir = Join-Path $AetherHome "caddy"
 $runtimeDir = Join-Path $AetherHome "runtime"
 $ingressDir = Join-Path $runtimeDir "ingress"
-New-Item -ItemType Directory -Force -Path $AetherHome, $cloudflareDir, $runtimeDir, $ingressDir | Out-Null
-if (-not (Test-Path -LiteralPath $AetherHome -PathType Container)) {
+
+$homeExistedBefore = Test-Path -LiteralPath $AetherHome -PathType Container
+
+New-Item -ItemType Directory -Force -Path $AetherHome, $cloudflareDir, $caddyDir, $runtimeDir, $ingressDir | Out-Null
+
+if (-not $homeExistedBefore) {
     icacls $AetherHome /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 }
+
+if (-not (Test-Path -LiteralPath $CaddyPath -PathType Leaf)) {
+    throw "Caddy binary not found: $CaddyPath (download v2.11.3 Windows AMD64 or pass -CaddyPath)"
+}
+
+$caddyfilePath = Join-Path $caddyDir "Caddyfile"
+if (-not $CaddyfileSource) {
+    $CaddyfileSource = Join-Path $PSScriptRoot "..\windows\Caddyfile"
+}
+if (-not (Test-Path -LiteralPath $CaddyfileSource -PathType Leaf)) {
+    throw "Caddyfile source not found: $CaddyfileSource"
+}
+Copy-Item -LiteralPath $CaddyfileSource -Destination $caddyfilePath -Force
+
+& $CaddyPath validate --config $caddyfilePath --adapter caddyfile | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "Caddy configuration validation failed for $caddyfilePath"
+}
+
+$caddyServiceName = "AetherCaddy"
+$caddyBinaryPath = '"' + $CaddyPath + '" run --config "' + $caddyfilePath + '" --adapter caddyfile'
+$existingCaddy = Get-Service -Name $caddyServiceName -ErrorAction SilentlyContinue
+if ($null -eq $existingCaddy) {
+    New-Service -Name $caddyServiceName -DisplayName "Aether Caddy Router" -Description "Aether Caddy one-domain router (:8080) for Cloudflare ingress." -BinaryPathName $caddyBinaryPath -StartupType Automatic | Out-Null
+}
+else {
+    sc.exe config $caddyServiceName binPath= "$caddyBinaryPath" start= auto | Out-Null
+    Set-Service -Name $caddyServiceName -StartupType Automatic
+}
+sc.exe failure $caddyServiceName reset= 86400 actions= restart/5000/restart/15000/restart/30000 | Out-Null
 
 $configPath = Join-Path $cloudflareDir "config.yml"
 $manifestPath = Join-Path $cloudflareDir "cloudflare-ingress-manifest.json"
@@ -98,6 +135,9 @@ $manifest = [ordered]@{
     installed_at = (Get-Date).ToUniversalTime().ToString("o")
     public_hostname = $PublicHostname
     tunnel_id_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($TunnelId))).ToLowerInvariant()
+    caddy_service = $caddyServiceName
+    caddy_path = $CaddyPath
+    caddyfile_path = $caddyfilePath
     service_name = $serviceName
     local_origin = $LocalOrigin
     config_path = $configPath
@@ -110,6 +150,7 @@ $manifest = [ordered]@{
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
 if ($Start) {
+    Start-Service -Name $caddyServiceName
     Start-Service -Name $serviceName
 }
 
