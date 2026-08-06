@@ -38,6 +38,64 @@ function Join-ServiceCommand {
     return ($items -join ' ')
 }
 
+function Invoke-ServiceControl {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+
+    & sc.exe @Arguments | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "sc.exe failed with exit code $LASTEXITCODE: $($Arguments -join ' ')"
+    }
+}
+
+function Resolve-ServiceHostPython {
+    param(
+        [string]$RequestedPath,
+        [Parameter(Mandatory = $true)][string]$ResolvedReleasePath
+    )
+
+    if ($RequestedPath) {
+        if (-not (Test-Path -LiteralPath $RequestedPath -PathType Leaf)) {
+            throw "Python executable not found: $RequestedPath"
+        }
+        return (Resolve-Path -LiteralPath $RequestedPath).Path
+    }
+
+    $releasePython = Join-Path $ResolvedReleasePath ".venv\Scripts\python.exe"
+    if (Test-Path -LiteralPath $releasePython -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $releasePython).Path
+    }
+
+    $python = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($null -ne $python) {
+        return $python.Source
+    }
+
+    throw "No python.exe found. Provide -PythonPath or create the release virtual environment."
+}
+
+function New-ServiceHostCommand {
+    param(
+        [Parameter(Mandatory = $true)][string]$ServiceName,
+        [Parameter(Mandatory = $true)][string]$HostPython,
+        [Parameter(Mandatory = $true)][string]$HostScript,
+        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$EventLogPath,
+        [Parameter(Mandatory = $true)][string]$ChildExecutable,
+        [Parameter(Mandatory = $true)][string[]]$ChildArguments
+    )
+
+    $hostArgs = @(
+        $HostScript,
+        "--service-name", $ServiceName,
+        "--working-directory", $WorkingDirectory,
+        "--event-log-path", $EventLogPath,
+        "--",
+        $ChildExecutable
+    ) + $ChildArguments
+
+    return Join-ServiceCommand -Executable $HostPython -Arguments $hostArgs
+}
+
 function Install-OrUpdate-Service {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
@@ -56,12 +114,28 @@ function Install-OrUpdate-Service {
             New-Service -Name $Name -DisplayName $DisplayName -Description $Description -BinaryPathName $BinaryPathName -StartupType Automatic | Out-Null
         }
     }
-    else {
-        sc.exe config $Name binPath= "$BinaryPathName" start= auto | Out-Null
-        Set-Service -Name $Name -StartupType Automatic
-    }
 
-    sc.exe failure $Name reset= 86400 actions= restart/5000/restart/5000/restart/30000 | Out-Null
+    $dependencyValue = if ($DependsOn.Count -gt 0) {
+        $DependsOn -join "/"
+    }
+    else {
+        "/"
+    }
+    Invoke-ServiceControl -Arguments @(
+        "config", $Name,
+        "binPath=", $BinaryPathName,
+        "start=", "auto",
+        "depend=", $dependencyValue
+    )
+    Invoke-ServiceControl -Arguments @("description", $Name, $Description)
+    Invoke-ServiceControl -Arguments @(
+        "failure", $Name,
+        "reset=", "86400",
+        "actions=", "restart/5000/restart/5000/restart/30000"
+    )
+    # Treat a clean service-host exit with a service-specific error as a failure,
+    # so SCM recovery applies when the supervised child exits unexpectedly.
+    Invoke-ServiceControl -Arguments @("failureflag", $Name, "1")
 }
 
 Assert-Administrator
@@ -75,16 +149,18 @@ else {
 
 $runner = Join-Path $ReleasePath "deploy\windows\aether-service-runner.ps1"
 $watchdog = Join-Path $ReleasePath "deploy\windows\aether-watchdog.ps1"
-if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
-    throw "Missing service runner: $runner"
-}
-if (-not (Test-Path -LiteralPath $watchdog -PathType Leaf)) {
-    throw "Missing watchdog: $watchdog"
+$serviceHost = Join-Path $ReleasePath "deploy\windows\aether-windows-service.py"
+foreach ($asset in @($runner, $watchdog, $serviceHost)) {
+    if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+        throw "Missing Windows service asset: $asset"
+    }
 }
 
+$serviceHostPython = Resolve-ServiceHostPython -RequestedPath $PythonPath -ResolvedReleasePath $ReleasePath
 $powerShellExe = (Get-Command powershell.exe -ErrorAction Stop).Source
 $servicesDir = Join-Path $AetherHome "services"
 $logsDir = Join-Path $AetherHome "logs"
+$serviceEventsPath = Join-Path $servicesDir "service-events.jsonl"
 New-Item -ItemType Directory -Force -Path $AetherHome, $servicesDir, $logsDir | Out-Null
 
 icacls $AetherHome /inheritance:e /grant "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
@@ -96,21 +172,33 @@ $commonRunnerArgs = @(
     "-ReleasePath", $ReleasePath,
     "-AetherHome", $AetherHome,
     "-HostAddress", $HostAddress,
-    "-Port", [string]$Port
+    "-Port", [string]$Port,
+    "-PythonPath", $serviceHostPython
 )
-if ($PythonPath) {
-    $commonRunnerArgs += @("-PythonPath", $PythonPath)
-}
 
 $gatewayArgs = $commonRunnerArgs + @("-Role", "gateway", "-ServiceName", "AetherGateway")
-$gatewayBin = Join-ServiceCommand $powerShellExe $gatewayArgs
+$gatewayBin = New-ServiceHostCommand `
+    -ServiceName "AetherGateway" `
+    -HostPython $serviceHostPython `
+    -HostScript $serviceHost `
+    -WorkingDirectory $ReleasePath `
+    -EventLogPath $serviceEventsPath `
+    -ChildExecutable $powerShellExe `
+    -ChildArguments $gatewayArgs
 Install-OrUpdate-Service -Name "AetherGateway" -DisplayName "Aether Gateway" -Description "Aether Gateway API service. Runtime state is owned by AETHER_HOME." -BinaryPathName $gatewayBin
 
 $installed = @("AetherGateway")
 
 if ($InstallSenseWorker) {
     $senseArgs = $commonRunnerArgs + @("-Role", "sense-worker", "-ServiceName", "AetherSenseWorker")
-    $senseBin = Join-ServiceCommand $powerShellExe $senseArgs
+    $senseBin = New-ServiceHostCommand `
+        -ServiceName "AetherSenseWorker" `
+        -HostPython $serviceHostPython `
+        -HostScript $serviceHost `
+        -WorkingDirectory $ReleasePath `
+        -EventLogPath $serviceEventsPath `
+        -ChildExecutable $powerShellExe `
+        -ChildArguments $senseArgs
     Install-OrUpdate-Service -Name "AetherSenseWorker" -DisplayName "Aether Sense Worker" -Description "Optional Aether LiveKit Sense Worker service." -BinaryPathName $senseBin -DependsOn @("AetherGateway")
     $installed += "AetherSenseWorker"
 }
@@ -123,8 +211,17 @@ $watchdogArgs = @(
     "-HealthUrl", "http://$($HostAddress):$Port/health",
     "-ServiceNames"
 ) + $installed
-$watchdogBin = Join-ServiceCommand $powerShellExe $watchdogArgs
-Install-OrUpdate-Service -Name "AetherWatchdog" -DisplayName "Aether Watchdog" -Description "Aether heartbeat and bounded service restart watchdog." -BinaryPathName $watchdogBin -DependsOn @("AetherGateway")
+$watchdogBin = New-ServiceHostCommand `
+    -ServiceName "AetherWatchdog" `
+    -HostPython $serviceHostPython `
+    -HostScript $serviceHost `
+    -WorkingDirectory $ReleasePath `
+    -EventLogPath $serviceEventsPath `
+    -ChildExecutable $powerShellExe `
+    -ChildArguments $watchdogArgs
+# Watchdog deliberately has no Gateway dependency. It must remain startable
+# while Gateway is fully stopped so it can perform bounded recovery.
+Install-OrUpdate-Service -Name "AetherWatchdog" -DisplayName "Aether Watchdog" -Description "Aether heartbeat and bounded service restart watchdog." -BinaryPathName $watchdogBin
 
 $manifest = [ordered]@{
     installed_at = (Get-Date).ToUniversalTime().ToString("o")
@@ -132,6 +229,7 @@ $manifest = [ordered]@{
     aether_home = $AetherHome
     host = $HostAddress
     port = $Port
+    service_host = $serviceHost
     services = $installed + @("AetherWatchdog")
     heartbeat_path = (Join-Path $servicesDir "heartbeats.jsonl")
 }

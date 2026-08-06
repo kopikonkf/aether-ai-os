@@ -12,7 +12,17 @@ model-provider credential as a persistent daemon.
 |---|---|---|
 | AetherGateway | Runs the Gateway API with AETHER_HOME=C:\ProgramData\Aether | Automatic |
 | AetherSenseWorker | Optional LiveKit Sense Worker | Automatic when installed |
-| AetherWatchdog | Writes heartbeat receipts and performs bounded Gateway restarts | Automatic |
+| AetherWatchdog | Writes heartbeat receipts and performs bounded Gateway recovery | Automatic; independent of Gateway |
+
+`aether-windows-service.py` is the SCM-facing service process. It connects to
+Windows Service Control Manager, reports service lifecycle state, and supervises
+the existing PowerShell runner or watchdog inside a kill-on-close Job Object.
+PowerShell is a supervised child process; it is not registered directly as the
+service binary.
+
+The watchdog deliberately has no service dependency on `AetherGateway`. This
+allows it to start and recover the Gateway when the Gateway service is fully
+stopped.
 
 ## Install
 
@@ -28,15 +38,22 @@ Optional explicit Python path:
 
     .\deploy\windows\install-aether-services.ps1 -PythonPath C:\Aether\releases\Aether_OS_v0.19.2-founder-alpha-frozen.2\.venv\Scripts\python.exe -Start
 
+The installer is idempotent for existing service registrations. It rewrites the
+binary path, startup mode, recovery actions, and dependency configuration. In
+particular, reinstalling clears any historical Gateway dependency from the
+watchdog.
+
 ## Receipts
 
 The watchdog writes secret-safe JSONL receipts:
 
     C:\ProgramData\Aether\services\heartbeats.jsonl
 
-The service runner writes child process events:
+The service host and child runner write lifecycle events:
 
     C:\ProgramData\Aether\services\service-events.jsonl
+
+The service host never records the child command or its arguments.
 
 ## Verification
 
@@ -51,6 +68,9 @@ Expected health payload shape:
       "service": "aether-gateway",
       "aether_home": "C:\ProgramData\Aether"
     }
+
+SCM conformance and watchdog recovery still require a live Windows host proof.
+Linux CI validates source contracts and argument boundaries only.
 
 ## Uninstall
 
