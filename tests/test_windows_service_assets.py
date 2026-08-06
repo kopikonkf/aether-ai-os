@@ -63,6 +63,9 @@ def test_service_binary_uses_an_scm_dispatcher_host():
 
     assert "$serviceHost = Join-Path" in installer
     assert "New-ServiceHostCommand" in installer
+    assert "$gatewayBin = New-ServiceHostCommand" in installer
+    assert "$watchdogBin = New-ServiceHostCommand" in installer
+    assert "Join-ServiceCommand $powerShellExe" not in installer
     assert "StartServiceCtrlDispatcherW" in host
     assert "RegisterServiceCtrlHandlerExW" in host
     assert "SetServiceStatus" in host
