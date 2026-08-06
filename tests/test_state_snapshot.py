@@ -174,6 +174,7 @@ class SnapshotWindowsPortabilityTests(unittest.TestCase):
 
             self.assertEqual(attempts, 3)
             self.assertEqual(result["publish_method"], "replace")
+            self.assertEqual(result["publish_attempts"], 3)
             self.assertEqual(module.verify_snapshot(output)["status"], "ok")
 
     def test_export_falls_back_to_verified_copy_after_windows_denials(self) -> None:
@@ -182,6 +183,11 @@ class SnapshotWindowsPortabilityTests(unittest.TestCase):
             source = root / "source"
             source.mkdir()
             (source / "proof.txt").write_text("proof", encoding="utf-8")
+            database = source / "memory" / "canonical.sqlite3"
+            database.parent.mkdir()
+            with sqlite3.connect(database) as connection:
+                connection.execute("create table proof(value text)")
+                connection.execute("insert into proof values ('aether')")
             output = root / "snapshot"
 
             with (
@@ -196,7 +202,18 @@ class SnapshotWindowsPortabilityTests(unittest.TestCase):
                 result = module.export_snapshot(source, output)
 
             self.assertEqual(result["publish_method"], "verified-copy")
+            self.assertEqual(
+                result["publish_attempts"],
+                module.WINDOWS_PUBLISH_RETRY_ATTEMPTS,
+            )
             self.assertEqual(module.verify_snapshot(output)["status"], "ok")
+            with sqlite3.connect(
+                output / "memory" / "canonical.sqlite3"
+            ) as connection:
+                self.assertEqual(
+                    connection.execute("select value from proof").fetchone(),
+                    ("aether",),
+                )
             self.assertEqual(list(root.glob(".snapshot.*")), [])
 
     def test_export_rejects_corrupt_windows_fallback_copy(self) -> None:
