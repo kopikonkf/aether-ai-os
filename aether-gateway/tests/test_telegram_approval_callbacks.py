@@ -24,8 +24,9 @@ class FakeInbox:
 
 
 class FakeCoordinator:
-    def __init__(self, pending) -> None:
+    def __init__(self, pending, *, replayed: bool = False) -> None:
         self.inbox = FakeInbox(pending)
+        self.replayed = replayed
         self.calls: list[dict] = []
 
     async def decide(self, approval_id, *, approved, principal, reason, channel):
@@ -44,16 +45,17 @@ class FakeCoordinator:
         )
         approval = SimpleNamespace(
             pending=self.inbox.pending,
-            replayed=False,
+            replayed=self.replayed,
             result=result,
         )
         expression = (
             SimpleNamespace(
                 content="authoritative completed receipt",
+                modality="text",
                 metadata={"chat_id": 99},
                 target="telegram:99",
             )
-            if approved
+            if approved and not self.replayed
             else None
         )
         return SimpleNamespace(approval=approval, expression=expression)
@@ -143,8 +145,11 @@ def test_inline_approve_is_bound_to_founder_and_chat_and_edits_original_card() -
         "channel": "telegram-inline",
     }]
     # Fresh approval with a follow-up Expression: the card collapses to a short
-    # final status (the Expression itself is delivered as a NEW message).
-    assert query.edits == ["✅ Approved — balasan lanjutan dikirim di atas."]
+    # final status. This adapter has no transport, so follow-up delivery fails
+    # and the card must say the action finished but delivery failed.
+    assert query.edits == [
+        "✅ Action selesai, tapi balasan lanjutan gagal terkirim: RuntimeError"
+    ]
 
 
 def test_inline_callback_rejects_wrong_chat_without_consuming_approval() -> None:
@@ -171,3 +176,79 @@ def test_details_callback_does_not_consume_approval() -> None:
     assert coordinator.calls == []
     assert query.message.replies
     assert pending.approval_id in query.message.replies[-1]
+
+
+def _adapter_with_sender(pending, codec, sender, *, replayed=False):
+    coordinator = FakeCoordinator(pending, replayed=replayed)
+    adapter = TelegramSenseAdapter(
+        SimpleNamespace(),
+        approval_coordinator=coordinator,
+        approval_callback_codec=codec,
+        text_sender=sender,
+        enabled=False,
+    )
+    adapter.allowed_user_ids = {7}
+    return adapter, coordinator
+
+
+def test_fresh_approval_sends_exactly_one_followup_message() -> None:
+    codec = TelegramApprovalCallbackCodec("x" * 32)
+    pending = _pending()
+    sent: list[tuple[int, str]] = []
+    async def sender(chat_id: int, text: str) -> None:
+        sent.append((chat_id, text))
+    adapter, _ = _adapter_with_sender(pending, codec, sender)
+    query = FakeQuery(codec.encode("approve", pending.approval_id))
+
+    asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
+
+    assert sent == [(99, "authoritative completed receipt")]
+    assert query.edits == ["✅ Approved — balasan lanjutan dikirim."]
+
+
+def test_delivery_failure_does_not_claim_sent() -> None:
+    codec = TelegramApprovalCallbackCodec("x" * 32)
+    pending = _pending()
+    sent: list[tuple[int, str]] = []
+    async def failing_sender(chat_id: int, text: str) -> None:
+        raise RuntimeError("telegram transport down")
+    adapter, _ = _adapter_with_sender(pending, codec, failing_sender)
+    query = FakeQuery(codec.encode("approve", pending.approval_id))
+
+    asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
+
+    assert sent == []
+    assert query.edits == [
+        "✅ Action selesai, tapi balasan lanjutan gagal terkirim: RuntimeError"
+    ]
+    assert "lanjutan dikirim" not in query.edits[0]
+
+
+def test_replay_sends_no_followup_message() -> None:
+    codec = TelegramApprovalCallbackCodec("x" * 32)
+    pending = _pending()
+    sent: list[tuple[int, str]] = []
+    async def sender(chat_id: int, text: str) -> None:
+        sent.append((chat_id, text))
+    adapter, _ = _adapter_with_sender(pending, codec, sender, replayed=True)
+    query = FakeQuery(codec.encode("approve", pending.approval_id))
+
+    asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
+
+    assert sent == []
+    assert query.edits[0].startswith("Approval approval.1234567890abcdef")
+
+
+def test_rejection_sends_no_followup_message() -> None:
+    codec = TelegramApprovalCallbackCodec("x" * 32)
+    pending = _pending()
+    sent: list[tuple[int, str]] = []
+    async def sender(chat_id: int, text: str) -> None:
+        sent.append((chat_id, text))
+    adapter, _ = _adapter_with_sender(pending, codec, sender)
+    query = FakeQuery(codec.encode("reject", pending.approval_id))
+
+    asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
+
+    assert sent == []
+    assert query.edits[0].startswith("Rejected approval.1234567890abcdef")

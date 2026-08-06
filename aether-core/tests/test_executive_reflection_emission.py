@@ -1,16 +1,19 @@
-"""Reflection emission state-machine tests.
+"""Reflection emission state-machine tests (deterministic clock).
 
-Regression: the executive used a hardcoded ``days_in_primary_domain=15`` mock,
-so CrossDomainCuriositySensor fired and re-wrote a near-identical reflection
-every 4h cycle. The emission state machine caps output to at most one per 24h,
-de-duplicates unchanged trigger fingerprints, derives stagnation from real
-activity time, and never treats a failed synthesis as a reflection.
+Covers: emission window (<24h / exactly 24h / >24h), new-trigger and
+severity-increase emission rules, non-triggering unavailable activity signal,
+atomic persistence failure propagation, and full-state preservation when the
+reasoner fails.
 """
 
 import json
 import time
 
-from aether.executive.engine import CircadianExecutiveEngine
+import pytest
+
+from aether.executive.engine import CircadianExecutiveEngine, REFLECTION_EMIT_WINDOW_SECONDS
+
+T = 1_800_000_000.0  # fixed "now" for the deterministic clock
 
 
 def _write_state(root, **kv):
@@ -41,73 +44,127 @@ def _failing_reasoner(prompt: str) -> str:
     raise RuntimeError("reasoning backend down")
 
 
-def _active_fingerprint(engine):
+def _engine(root, reasoner=_reasoner):
+    return CircadianExecutiveEngine(root, reasoner=reasoner, clock=lambda: T)
+
+
+def _active(engine):
     triggers = engine.consciousness.evaluate_all(engine._gather_cognitive_state())
-    return engine._trigger_fingerprint(triggers) if triggers else None
+    return triggers, engine._trigger_fingerprint(triggers), engine._max_severity(triggers)
+
+
+def test_missing_activity_signal_is_non_triggering(tmp_path):
+    engine = _engine(tmp_path)  # no state at all -> signal unavailable
+    engine.run_daily_cycle()
+    assert _count(tmp_path) == 0
+    assert not (tmp_path / "runtime_state" / "reflection_state.json").exists()
 
 
 def test_within_24h_window_blocks_emission(tmp_path):
-    _write_state(tmp_path, last_reflection_at=str(time.time()))
-    engine = CircadianExecutiveEngine(tmp_path, reasoner=_reasoner)
-    engine.run_daily_cycle()
-    assert _count(tmp_path) == 0
-
-
-def test_unchanged_fingerprint_blocks_dedup_after_window(tmp_path):
-    engine = CircadianExecutiveEngine(tmp_path, reasoner=_reasoner)
-    fp = _active_fingerprint(engine)
     _write_state(
         tmp_path,
-        last_reflection_at=str(time.time() - 25 * 3600),
-        last_trigger_fingerprint=fp,
+        last_reflection_at=str(T - 3600),
+        last_non_primary_activity_at=str(T - 20 * 86400),
     )
+    engine = _engine(tmp_path)
     engine.run_daily_cycle()
     assert _count(tmp_path) == 0
 
 
-def test_changed_fingerprint_allows_after_window(tmp_path):
-    engine = CircadianExecutiveEngine(tmp_path, reasoner=_reasoner)
-    fp = _active_fingerprint(engine)
-    # fresh run emits once and records the current fingerprint
-    engine.run_daily_cycle()
-    assert _count(tmp_path) == 1
-    prev = _load_state(tmp_path).get("last_reflection_at")
-    # 25h later the trigger changed -> allowed to emit again. We assert on the
-    # durable state (the emission advances cooldown + fingerprint), because the
-    # obsidian note filename collides within the same second.
+def test_exact_24h_allows_emission(tmp_path):
     _write_state(
         tmp_path,
-        last_reflection_at=str(time.time() - 25 * 3600),
-        last_trigger_fingerprint="different-old-fingerprint",
-    )
-    CircadianExecutiveEngine(tmp_path, reasoner=_reasoner).run_daily_cycle()
-    state = _load_state(tmp_path)
-    assert state.get("last_trigger_fingerprint") == fp
-    assert state.get("last_reflection_at") != prev
-
-
-def test_stagnation_13_days_does_not_emit(tmp_path):
-    _write_state(tmp_path, last_non_primary_activity_at=str(time.time() - 13 * 86400))
-    engine = CircadianExecutiveEngine(tmp_path, reasoner=_reasoner)
-    engine.run_daily_cycle()
-    assert _count(tmp_path) == 0
-
-
-def test_stagnation_15_days_emits_once(tmp_path):
-    _write_state(tmp_path, last_non_primary_activity_at=str(time.time() - 15 * 86400))
-    engine = CircadianExecutiveEngine(tmp_path, reasoner=_reasoner)
-    engine.run_daily_cycle()
-    assert _count(tmp_path) == 1
-
-
-def test_failed_reasoner_does_not_advance_state(tmp_path):
-    _write_state(
-        tmp_path,
-        last_reflection_at=str(time.time() - 25 * 3600),
+        last_reflection_at=str(T - REFLECTION_EMIT_WINDOW_SECONDS),
         last_trigger_fingerprint="old-fp",
+        last_non_primary_activity_at=str(T - 20 * 86400),
     )
-    engine = CircadianExecutiveEngine(tmp_path, reasoner=_failing_reasoner)
+    engine = _engine(tmp_path)
+    engine.run_daily_cycle()
+    assert _count(tmp_path) == 1
+
+
+def test_after_24h_allows_emission(tmp_path):
+    _write_state(
+        tmp_path,
+        last_reflection_at=str(T - 25 * 3600),
+        last_trigger_fingerprint="old-fp",
+        last_non_primary_activity_at=str(T - 20 * 86400),
+    )
+    engine = _engine(tmp_path)
+    engine.run_daily_cycle()
+    assert _count(tmp_path) == 1
+
+
+def test_unchanged_fingerprint_and_severity_blocks(tmp_path):
+    _write_state(tmp_path, last_non_primary_activity_at=str(T - 20 * 86400))
+    engine = _engine(tmp_path)
+    triggers, fp, sev = _active(engine)
+    assert triggers, "cross-domain sensor should fire at 20 days"
+    _write_state(
+        tmp_path,
+        last_reflection_at=str(T - 25 * 3600),
+        last_trigger_fingerprint=fp,
+        last_trigger_severity=str(sev),
+        last_non_primary_activity_at=str(T - 20 * 86400),
+    )
+    _engine(tmp_path).run_daily_cycle()
+    assert _count(tmp_path) == 0
+
+
+def test_severity_increase_emits(tmp_path):
+    _write_state(tmp_path, last_non_primary_activity_at=str(T - 20 * 86400))
+    engine = _engine(tmp_path)
+    triggers, fp, sev = _active(engine)
+    _write_state(
+        tmp_path,
+        last_reflection_at=str(T - 25 * 3600),
+        last_trigger_fingerprint=fp,
+        last_trigger_severity=str(sev - 0.3),  # lower severity before -> increase
+        last_non_primary_activity_at=str(T - 20 * 86400),
+    )
+    _engine(tmp_path).run_daily_cycle()
+    assert _count(tmp_path) == 1
+
+
+def test_severity_decrease_does_not_emit(tmp_path):
+    _write_state(tmp_path, last_non_primary_activity_at=str(T - 20 * 86400))
+    engine = _engine(tmp_path)
+    triggers, fp, sev = _active(engine)
+    _write_state(
+        tmp_path,
+        last_reflection_at=str(T - 25 * 3600),
+        last_trigger_fingerprint=fp,
+        last_trigger_severity=str(sev + 0.3),  # higher severity before -> decrease
+        last_non_primary_activity_at=str(T - 20 * 86400),
+    )
+    _engine(tmp_path).run_daily_cycle()
+    assert _count(tmp_path) == 0
+
+
+def test_failed_reasoner_leaves_state_fully_unchanged(tmp_path):
+    before = {
+        "last_reflection_at": str(T - 25 * 3600),
+        "last_trigger_fingerprint": "fp-before",
+        "last_trigger_severity": "0.5",
+        "last_non_primary_activity_at": str(T - 20 * 86400),
+    }
+    _write_state(tmp_path, **before)
+    engine = CircadianExecutiveEngine(tmp_path, reasoner=_failing_reasoner, clock=lambda: T)
     engine.run_daily_cycle()
     assert _count(tmp_path) == 0
+    assert _load_state(tmp_path) == before
+
+
+def test_state_persistence_failure_propagates_and_no_note(tmp_path):
+    # State is readable (so the sensor can fire) but the atomic save target is
+    # blocked: a directory occupies the .tmp path -> open() raises, which must
+    # propagate instead of being swallowed as a successful emission.
+    _write_state(tmp_path, last_non_primary_activity_at=str(T - 20 * 86400))
+    (tmp_path / "runtime_state" / "reflection_state.json.tmp").mkdir()
+
+    engine = _engine(tmp_path)
+    with pytest.raises(Exception):
+        engine.run_daily_cycle()
+    assert _count(tmp_path) == 0
     state = _load_state(tmp_path)
-    assert state.get("last_reflection_at") is not None  # unchanged, not advanced
+    assert "last_reflection_at" not in state

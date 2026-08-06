@@ -19,20 +19,26 @@ from aether.paths import AetherPaths
 
 # Emission is capped at one reflection per 24h regardless of how often the
 # existential sensors evaluate (they may run every 4h). Stagnation is measured
-# from the last non-primary-domain activity, NOT from the last reflection, so a
-# reflection never resets the very signal that drives it.
+# from the last non-primary-domain activity; when that signal is unavailable the
+# sensor is treated as non-triggering (never assumed to be 15 days stuck).
 REFLECTION_STATE_REL = Path("runtime_state") / "reflection_state.json"
 REFLECTION_EMIT_WINDOW_SECONDS = 24 * 3600
-DEFAULT_STAGNATION_DAYS = 15
+STAGNATION_THRESHOLD_DAYS = 14
 
 
 class CircadianExecutiveEngine:
-    def __init__(self, workspace_root: Path, reasoner: Callable[[str], str] | None = None):
+    def __init__(
+        self,
+        workspace_root: Path,
+        reasoner: Callable[[str], str] | None = None,
+        clock: Callable[[], float] = time.time,
+    ):
         self.root = workspace_root
         ensure_executive_workspace(self.root)
         self.consciousness = ConsciousnessDaemon()
         self.canonical_memory = SQLiteCanonicalMemoryStore(AetherPaths(self.root).canonical_memory_db)
         self.reasoner = reasoner
+        self._clock = clock
 
     def _state_path(self) -> Path:
         return AetherPaths(self.root).home / REFLECTION_STATE_REL
@@ -49,44 +55,46 @@ class CircadianExecutiveEngine:
         return {}
 
     def _save_reflection_state(self, state: Dict[str, Any]) -> None:
-        try:
-            path = self._state_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        except Exception as exc:
-            print(f"Failed to save reflection state: {exc}")
+        """Persist reflection state atomically. Write failures propagate; a
+        failed persistence is never treated as a successful emission."""
+        path = self._state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        with open(temporary, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+            f.flush()
+        temporary.replace(path)
 
-    @staticmethod
-    def _days_since(timestamp: str | None) -> int:
+    def _days_since(self, timestamp: str | None) -> int:
         if not timestamp:
             return 0
         try:
-            return max(0, int((time.time() - float(timestamp)) / 86400))
+            return max(0, int((self._clock() - float(timestamp)) / 86400))
         except (TypeError, ValueError):
             return 0
 
     @staticmethod
-    def _trigger_fingerprint(triggers: list) -> str:
-        """Deterministic fingerprint of the active existential triggers.
+    def _max_severity(triggers: list) -> float:
+        values = [float(item.get("severity", 0.0)) or 0.0 for item in triggers]
+        return max(values) if values else 0.0
 
-        Includes the rounded severity so a severity increase is treated as a
-        state transition and therefore emits a fresh reflection.
-        """
-        parts = []
-        for item in sorted(triggers, key=lambda t: (t.get("sensor_name", ""), t.get("context", ""))):
-            parts.append(f"{item.get('sensor_name')}|{item.get('context')}|{round(float(item.get('severity', 0.0)) or 0.0, 3)}")
-        return ";;".join(parts)
+    @staticmethod
+    def _trigger_fingerprint(triggers: list) -> str:
+        """Stable fingerprint of the ACTIVE SENSORS (not their formatted context
+        text), so a pure formatting change never re-triggers an emission."""
+        names = sorted({str(item.get("sensor_name") or "?") for item in triggers})
+        return ";".join(names)
 
     def _gather_cognitive_state(self) -> Dict[str, Any]:
         """Gathers metrics for the existential sensors.
 
-        Domain stagnation derives from real state (time since last non-primary
-        activity) instead of a hardcoded mock. First run without any state uses
-        the threshold default so the sensor can still fire once.
+        Domain stagnation derives from real activity time. When no
+        non-primary-activity timestamp is recorded the signal is unavailable and
+        therefore non-triggering (0 days) instead of being assumed stuck.
         """
         state = self._load_reflection_state()
         last = state.get("last_non_primary_activity_at")
-        days_in_primary_domain = DEFAULT_STAGNATION_DAYS if not last else self._days_since(str(last))
+        days_in_primary_domain = self._days_since(str(last)) if last else 0
         return {
             "identity_drift_score": 0.1,
             "source_diversity_index": 0.5,
@@ -112,25 +120,33 @@ class CircadianExecutiveEngine:
 
         Emission rules:
         - At most one reflection per REFLECTION_EMIT_WINDOW_SECONDS.
-        - Only when the trigger fingerprint changed (state transition /
-          severity increase). Unchanged signals do not re-emit.
-        - A failed reasoning pass neither writes a reflection nor advances the
-          cooldown.
+        - Emits only on a NEW trigger (different sensor set) or a severity
+          INCREASE; a severity decrease or an unchanged signal does not emit.
+        - A failed reasoning pass neither writes a reflection nor advances any
+          state. State persistence is atomic and a write failure propagates.
         """
         fingerprint = self._trigger_fingerprint(triggers)
+        severity = self._max_severity(triggers)
         state = self._load_reflection_state()
 
+        now = self._clock()
         last_at = state.get("last_reflection_at")
         if last_at:
             try:
-                within_window = (time.time() - float(last_at)) < REFLECTION_EMIT_WINDOW_SECONDS
+                within_window = (now - float(last_at)) < REFLECTION_EMIT_WINDOW_SECONDS
             except (TypeError, ValueError):
                 within_window = False
             if within_window:
                 print("Skipping reflection: within 24h emission window.")
                 return
-        if fingerprint and fingerprint == state.get("last_trigger_fingerprint"):
-            print("Skipping reflection: trigger fingerprint unchanged.")
+        last_fp = state.get("last_trigger_fingerprint")
+        last_sev = 0.0
+        try:
+            last_sev = float(state.get("last_trigger_severity") or 0.0)
+        except (TypeError, ValueError):
+            pass
+        if fingerprint == last_fp and severity <= last_sev:
+            print("Skipping reflection: no new trigger and no severity increase.")
             return
 
         print(f"Entering REFLECTING state. Triggers: {[t['sensor_name'] for t in triggers]}")
@@ -180,10 +196,16 @@ class CircadianExecutiveEngine:
             ))
             print(f"Reflection recorded for governed curation: {record.record_id}")
         except Exception as exc:
-            # A failed synthesis is NOT a reflection: do not write a note and do
-            # not advance the emission cooldown/fingerprint.
+            # A failed synthesis is NOT a reflection: no note, no state change.
             print(f"Reflection synthesis failed; no emission: {exc}")
             return
+
+        # Persist emission state atomically BEFORE writing the note; a write
+        # failure aborts the emission instead of being swallowed as success.
+        state["last_reflection_at"] = str(now)
+        state["last_trigger_fingerprint"] = fingerprint
+        state["last_trigger_severity"] = str(severity)
+        self._save_reflection_state(state)
 
         # Write to Obsidian (Life Reflection Note)
         body = f"""# Life Reflection Note
@@ -204,11 +226,6 @@ class CircadianExecutiveEngine:
             folder="04_Reflections",
             overwrite=True,
         )
-
-        # Only a successful emission advances the cooldown and the fingerprint.
-        state["last_reflection_at"] = str(time.time())
-        state["last_trigger_fingerprint"] = fingerprint
-        self._save_reflection_state(state)
 
     def run_daily_cycle(self) -> None:
         """

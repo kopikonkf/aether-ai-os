@@ -488,20 +488,28 @@ class TelegramSenseAdapter(SenseAdapter):
             return
         # Deliver a proactive follow-up expression as a NEW message only for a
         # fresh (non-replayed) approval; collapse the button card to a short
-        # final status instead of echoing the raw action output.
+        # final status. Never claim delivery when it failed.
         if outcome is not None and _should_send_followup(
             approved=approved,
             replayed=bool(outcome.approval.replayed),
             has_expression=outcome.expression is not None,
         ):
+            delivery_error: Exception | None = None
             try:
                 await self.express(outcome.expression)
-            except Exception:
-                pass  # follow-up delivery failure is non-fatal; card still shows status
+            except Exception as exc:
+                delivery_error = exc
+                log.exception("Telegram approval follow-up delivery failed after approval")
             if query.message is not None:
-                await query.edit_message_text(
-                    text="✅ Approved — balasan lanjutan dikirim di atas."
-                )
+                if delivery_error is not None:
+                    await query.edit_message_text(
+                        text=(
+                            "✅ Action selesai, tapi balasan lanjutan gagal terkirim: "
+                            f"{type(delivery_error).__name__}"
+                        )
+                    )
+                else:
+                    await query.edit_message_text(text="✅ Approved — balasan lanjutan dikirim.")
             return
         rendered = await self._outcome_text(
             outcome, approved=approved, approval_id=callback.approval_id
