@@ -43,7 +43,7 @@ function Invoke-ServiceControl {
 
     & sc.exe @Arguments | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        throw "sc.exe failed with exit code $LASTEXITCODE: $($Arguments -join ' ')"
+        throw "sc.exe failed with exit code ${LASTEXITCODE}: $($Arguments -join ' ')"
     }
 }
 
