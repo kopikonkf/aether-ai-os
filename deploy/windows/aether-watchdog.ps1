@@ -55,7 +55,7 @@ while ($true) {
                 $serviceStates[$name] = (Get-Service -Name $name).Status.ToString()
             }
             catch {
-                $errors += "start failed for $name: $($_.Exception.Message)"
+                $errors += "start failed for ${name}: $($_.Exception.Message)"
             }
         }
     }

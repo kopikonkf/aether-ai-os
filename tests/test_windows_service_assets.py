@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import runpy
 import shutil
 import subprocess
@@ -35,6 +36,31 @@ def test_windows_service_installer_delimits_last_exit_code_before_colon():
 
     assert "$LASTEXITCODE:" not in installer
     assert "${LASTEXITCODE}:" in installer
+
+
+def test_powershell_variables_before_literal_colons_are_delimited():
+    ambiguous_literal_colon = re.compile(
+        r"\$(?!\{)([A-Za-z_][A-Za-z0-9_]*):(?=$|[^A-Za-z0-9_])"
+    )
+    assert ambiguous_literal_colon.search("$name: failure") is not None
+    assert ambiguous_literal_colon.search("${name}: failure") is None
+    assert ambiguous_literal_colon.search("$env:PATH") is None
+    assert ambiguous_literal_colon.search("$script:Value") is None
+
+    offenders: list[str] = []
+
+    for path in WINDOWS_DIR.rglob("*.ps1"):
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            for match in ambiguous_literal_colon.finditer(line):
+                offenders.append(
+                    f"{path.relative_to(ROOT).as_posix()}:{line_number}: "
+                    f"{match.group(0)}"
+                )
+
+    assert offenders == [], offenders
 
 
 def test_powershell_assets_parse(tmp_path: Path):
