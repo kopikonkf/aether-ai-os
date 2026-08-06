@@ -142,7 +142,9 @@ def test_inline_approve_is_bound_to_founder_and_chat_and_edits_original_card() -
         "reason": "Founder approved once via Telegram inline control",
         "channel": "telegram-inline",
     }]
-    assert query.edits == ["authoritative completed receipt"]
+    # Fresh approval with a follow-up Expression: the card collapses to a short
+    # final status (the Expression itself is delivered as a NEW message).
+    assert query.edits == ["✅ Approved — balasan lanjutan dikirim di atas."]
 
 
 def test_inline_callback_rejects_wrong_chat_without_consuming_approval() -> None:
