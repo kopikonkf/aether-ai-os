@@ -42,6 +42,11 @@ def test_powershell_variables_before_literal_colons_are_delimited():
     ambiguous_literal_colon = re.compile(
         r"\$(?!\{)([A-Za-z_][A-Za-z0-9_]*):(?=$|[^A-Za-z0-9_])"
     )
+    assert ambiguous_literal_colon.search("$name: failure") is not None
+    assert ambiguous_literal_colon.search("${name}: failure") is None
+    assert ambiguous_literal_colon.search("$env:PATH") is None
+    assert ambiguous_literal_colon.search("$script:Value") is None
+
     offenders: list[str] = []
 
     for path in WINDOWS_DIR.rglob("*.ps1"):
