@@ -30,6 +30,7 @@ and can persist a signed Founder record under `AETHER_HOME`. The body reports
 | `$AETHER_HOME/runtime/body/receipts.jsonl` | Includes `founder.acceptance.recorded` |
 | `$AETHER_HOME/runtime/mcp/latest_activation.json` | Latest MCP activation record |
 | `$AETHER_HOME/runtime/mcp/manifest.json` | MCP manifest snapshot |
+| `$AETHER_HOME/runtime/ingress/latest_cloudflare_probe.json` | Latest Cloudflare public HTTPS probe |
 
 ## Acceptance Criteria
 
@@ -44,7 +45,7 @@ Required:
 
 Optional host/live proof included in the packet:
 
-- Cloudflare/one-domain public HTTPS probe;
+- Cloudflare/one-domain public HTTPS probe, supplied as JSON or read from the latest ingress receipt;
 - credentialed Google Cloud TTS live audition.
 
 ## CLI
@@ -53,6 +54,7 @@ Optional host/live proof included in the packet:
 export AETHER_HOME=/opt/aether/home
 export AETHER_MIND_URL=http://127.0.0.1:8765
 
+aether-cloudflare-ingress status
 aether-founder-acceptance status
 ```
 

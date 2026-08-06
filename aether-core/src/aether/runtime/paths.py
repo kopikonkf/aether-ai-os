@@ -98,9 +98,22 @@ class AetherHome:
     def mvp20_log(self) -> Path:
         return self.mvp20_release / "release_packets.jsonl"
 
+    @property
+    def cloudflare_ingress(self) -> Path:
+        return self.runtime / "ingress"
+
+    @property
+    def cloudflare_ingress_latest_probe(self) -> Path:
+        return self.cloudflare_ingress / "latest_cloudflare_probe.json"
+
+    @property
+    def cloudflare_ingress_probes(self) -> Path:
+        return self.cloudflare_ingress / "cloudflare-probes.jsonl"
+
     def ensure(self) -> None:
         self.body.mkdir(parents=True, exist_ok=True)
         self.tts_auditions.mkdir(parents=True, exist_ok=True)
         self.founder_acceptance.mkdir(parents=True, exist_ok=True)
         self.mcp.mkdir(parents=True, exist_ok=True)
         self.mvp20_release.mkdir(parents=True, exist_ok=True)
+        self.cloudflare_ingress.mkdir(parents=True, exist_ok=True)

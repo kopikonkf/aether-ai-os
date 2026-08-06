@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from pydantic import BaseModel, Field
 
+from aether.runtime.ingress import AetherCloudflareIngress
 from aether.runtime.paths import AetherHome
 
 
@@ -281,6 +282,8 @@ class AetherMvp20Release:
             "5. Aether MCP activation.",
             "6. Founder acceptance gate.",
             "7. Canonical release packet and LASTSTANDINGPOINT renderer.",
+            "8. Persistent Windows service source harness with heartbeat/watchdog receipts.",
+            "9. Cloudflare Tunnel ingress source harness with public probe receipts.",
             "",
             "## Packet",
             "",
@@ -708,6 +711,8 @@ class AetherMvp20Release:
     def _public_host_probe_criterion(self, evidence: Mapping[str, Any]) -> dict[str, Any]:
         probe = evidence.get("public_host_probe") or evidence.get("cloudflare_ingress")
         if not isinstance(probe, Mapping):
+            probe = AetherCloudflareIngress(self.home).latest_probe()
+        if not isinstance(probe, Mapping):
             return _criterion(
                 "public_host_probe",
                 "Cloudflare/one-domain public health",
@@ -799,6 +804,7 @@ class AetherMvp20Release:
             "evidence_keys": sorted(str(key) for key in evidence.keys()),
             "release_dir": str(self.release_dir),
             "packet_path": str(self.packet_path),
+            "cloudflare_ingress_probe_path": str(self.home.cloudflare_ingress_latest_probe),
         }
 
 

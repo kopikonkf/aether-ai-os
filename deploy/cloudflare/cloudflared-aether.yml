@@ -1,0 +1,10 @@
+tunnel: ${CLOUDFLARE_TUNNEL_ID}
+credentials-file: ${CLOUDFLARE_CREDENTIALS_FILE}
+
+ingress:
+  - hostname: ${AETHER_PUBLIC_HOSTNAME}
+    service: http://127.0.0.1:80
+    originRequest:
+      connectTimeout: 10s
+      noTLSVerify: true
+  - service: http_status:404
