@@ -46,6 +46,12 @@ SpeechRenderer = Callable[[str, str], Awaitable[bytes]]
 SessionReset = Callable[[str], Awaitable[None]]
 
 
+def _should_send_followup(*, approved: bool, replayed: bool, has_expression: bool) -> bool:
+    """A proactive follow-up is sent only for a fresh approval that produced a
+    cognition Expression. Replays must not duplicate the follow-up message."""
+    return approved and not replayed and has_expression
+
+
 class TelegramSenseAdapter(SenseAdapter):
     """Telegram is a sense/communication surface, never a cognitive runtime."""
 
@@ -461,6 +467,7 @@ class TelegramSenseAdapter(SenseAdapter):
 
         approved = callback.decision == "approve"
         await query.answer("Executing…" if approved else "Rejected")
+        outcome = None
         try:
             outcome = await self._approval_coordinator.decide(
                 callback.approval_id,
@@ -473,11 +480,40 @@ class TelegramSenseAdapter(SenseAdapter):
                 ),
                 channel="telegram-inline",
             )
-            rendered = await self._outcome_text(
-                outcome, approved=approved, approval_id=callback.approval_id
-            )
         except Exception as exc:
-            rendered = f"Approval failed: {type(exc).__name__}: {exc}"
+            if query.message is not None:
+                await query.edit_message_text(
+                    text=f"Approval failed: {type(exc).__name__}: {exc}"
+                )
+            return
+        # Deliver a proactive follow-up expression as a NEW message only for a
+        # fresh (non-replayed) approval; collapse the button card to a short
+        # final status. Never claim delivery when it failed.
+        if outcome is not None and _should_send_followup(
+            approved=approved,
+            replayed=bool(outcome.approval.replayed),
+            has_expression=outcome.expression is not None,
+        ):
+            delivery_error: Exception | None = None
+            try:
+                await self.express(outcome.expression)
+            except Exception as exc:
+                delivery_error = exc
+                log.exception("Telegram approval follow-up delivery failed after approval")
+            if query.message is not None:
+                if delivery_error is not None:
+                    await query.edit_message_text(
+                        text=(
+                            "✅ Action selesai, tapi balasan lanjutan gagal terkirim: "
+                            f"{type(delivery_error).__name__}"
+                        )
+                    )
+                else:
+                    await query.edit_message_text(text="✅ Approved — balasan lanjutan dikirim.")
+            return
+        rendered = await self._outcome_text(
+            outcome, approved=approved, approval_id=callback.approval_id
+        )
         if query.message is not None:
             await query.edit_message_text(text=rendered)
 
