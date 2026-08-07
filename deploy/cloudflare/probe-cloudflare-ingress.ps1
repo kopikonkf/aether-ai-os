@@ -278,8 +278,22 @@ function Invoke-AetherProbeRoute {
     }
 }
 
-$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-$serviceStatus = if ($null -eq $service) { "missing" } else { $service.Status.ToString() }
+$service = $null
+$serviceStatus = "unsupported"
+if ($PSVersionTable.PSVersion.Major -ge 6 -and [OperatingSystem]::IsLinux()) {
+    # Linux / pwsh has no Get-Service (no Windows SCM). The tunnel service is
+    # Windows-specific; on this platform we report 'unsupported' rather than fail.
+    $serviceStatus = "n/a"
+}
+else {
+    try {
+        $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+        $serviceStatus = if ($null -eq $service) { "missing" } else { $service.Status.ToString() }
+    }
+    catch {
+        $serviceStatus = "unavailable"
+    }
+}
 $publicHttps = $base.StartsWith("https://")
 
 $unauthenticatedRoutes = @(
