@@ -5,6 +5,7 @@ param(
     [string]$AetherHome = "C:\ProgramData\Aether",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
+    [string]$TargetSha = "",
     [switch]$InstallSenseWorker,
     [switch]$Start
 )
@@ -347,6 +348,7 @@ Install-OrUpdate-Service -Name "AetherWatchdog" -DisplayName "Aether Watchdog" -
 $manifest = [ordered]@{
     installed_at = (Get-Date).ToUniversalTime().ToString("o")
     release_path = $ReleasePath
+    target_sha = $TargetSha
     aether_home = $AetherHome
     host = $HostAddress
     port = $Port

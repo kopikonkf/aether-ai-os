@@ -6,6 +6,8 @@ param(
     [string]$LocalOrigin = "http://localhost:8080",
     [string[]]$AetherHostnames = @("aethers.my.id", "www.aethers.my.id"),
     [string[]]$ProtectedHostnames = @("oc.aethers.my.id", "jarvis.aethers.my.id"),
+    [string]$ConnectorServiceName = "Cloudflared",
+    [int]$ConnectorMetricsPort = 20120,
     [int]$ProbeTimeoutSeconds = 8,
     [switch]$Apply,
     [switch]$Start
@@ -32,7 +34,6 @@ if (-not $CloudflaredPath) {
 $original = Get-Content -LiteralPath $TunnelConfig -Raw
 $lines = $original -split "`r?`n"
 
-# ---- Parse existing hostname entries and their service scalar. ----
 function Get-IngressEntries {
     param([string[]]$SourceLines)
 
@@ -43,20 +44,12 @@ function Get-IngressEntries {
         if (-not $inIngress) { continue }
         $m = [regex]::Match($line, '^\s*-\s+hostname:\s*(\S+)\s*$')
         if ($m.Success) {
-            $entries += [ordered]@{
-                type = "hostname"
-                hostname = $m.Groups[1].Value
-                line = $line
-            }
+            $entries += [ordered]@{ type = "hostname"; hostname = $m.Groups[1].Value; line = $line }
             continue
         }
         $m = [regex]::Match($line, '^\s*-\s+service:\s*(\S+)\s*$')
         if ($m.Success) {
-            $entries += [ordered]@{
-                type = "service"
-                service = $m.Groups[1].Value
-                line = $line
-            }
+            $entries += [ordered]@{ type = "service"; service = $m.Groups[1].Value; line = $line }
         }
     }
     return $entries
@@ -64,7 +57,6 @@ function Get-IngressEntries {
 
 $entries = Get-IngressEntries -SourceLines $lines
 
-# --- Preflight: protected hosts must be present; fallback must be unique. ----
 $entryHosts = @($entries | Where-Object { $_.type -eq "hostname" } | ForEach-Object { $_.hostname })
 $protectedMissing = @($ProtectedHostnames | Where-Object { $_ -notin $entryHosts })
 if ($protectedMissing.Count -gt 0) {
@@ -75,7 +67,7 @@ if ($fallbackServices.Count -ne 1) {
     throw "Expected exactly one http_status:404 fallback; found $($fallbackServices.Count)"
 }
 
-# --- Build candidate config: change ONLY the service scalar for Aether hosts. ----
+# --- Build candidate config: change ONLY the service scalar for Aether hosts. ---
 $newLines = @()
 $inIngress = $false
 $replaced = 0
@@ -90,11 +82,8 @@ foreach ($line in $lines) {
         continue
     }
 
-    # Change the service scalar that follows an Aether hostname entry.
     $svc = [regex]::Match($line, '^(\s*service:\s*)(\S+)(\s*)$')
     if ($svc.Success -and $replaced -gt 0) {
-        # Only rewrite service lines that belong to the Aether hostname we just
-        # emitted (the immediately preceding non-blank line was its hostname).
         $prevNonEmpty = $newLines | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 1
         $prevHost = [regex]::Match($prevNonEmpty, '^\s*-\s+hostname:\s*(\S+)')
         if ($prevHost.Success -and ($AetherHostnames -contains $prevHost.Groups[1].Value)) {
@@ -112,7 +101,6 @@ if ($replaced -ne 0) {
 
 $candidate = $newLines -join "`r`n"
 
-# --- Derived observations from the parsed entries. ----
 function Assert-RoutePreservation {
     param([string]$Config)
 
@@ -139,24 +127,72 @@ New-Item -ItemType Directory -Force -Path $ingressDir | Out-Null
 $receiptPath = Join-Path $ingressDir "shared-tunnel-receipt.json"
 
 $receipt = [ordered]@{
-    schema = "aether.shared-tunnel.v2"
+    schema = "aether.shared-tunnel.v3"
     event = "cloudflare.shared_tunnel.updated"
     observed_at = (Get-Date).ToUniversalTime().ToString("o")
     applied = [bool]$Apply
+    started = [bool]$Start
     aether_hostnames = $AetherHostnames
     aether_origin = $LocalOrigin
     protected_hostnames = $ProtectedHostnames
-    protected_preserved = $true
-    fallback_unique = $true
-    aether_entries_unique = $true
+    connector_service = $ConnectorServiceName
+    connector_metrics_port = $ConnectorMetricsPort
     config_path = $TunnelConfig
     config_before_sha256 = (Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256).Hash.ToLowerInvariant()
     candidate_sha256 = $null
     config_after_sha256 = $null
     validate_before_apply = $false
+    live_config_replaced = $false
     rollback_triggered = $false
+    recovery_proven = $null
+    connector_count_before = $null
     connector_count_after = $null
     connector_readiness = $null
+}
+
+# ---- Helpers for connector handoff / recovery (only meaningful with -Start). ----
+function Stop-AllCloudflaredProcesses {
+    foreach ($p in @(Get-Process cloudflared -ErrorAction SilentlyContinue)) {
+        try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { }
+    }
+    Start-Sleep -Seconds 2
+}
+
+function Restart-ScmConnector {
+    $svc = Get-Service -Name $ConnectorServiceName -ErrorAction SilentlyContinue
+    if ($null -eq $svc) {
+        throw "Connector SCM service '$ConnectorServiceName' missing."
+    }
+    # Governed handoff: stop every cloudflared process (direct PID or leftover),
+    # then start the single SCM connector.
+    Stop-AllCloudflaredProcesses
+    if ($svc.Status -eq "Stopped") {
+        Start-Service -Name $ConnectorServiceName -ErrorAction Stop
+    }
+    else {
+        Restart-Service -Name $ConnectorServiceName -Force -ErrorAction Stop
+    }
+    Start-Sleep -Seconds 3
+    return $svc
+}
+
+function Assert-SingleConnector {
+    $pids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+    $receipt.connector_count_after = $pids.Count
+    if ($pids.Count -ne 1) {
+        throw "Expected exactly one cloudflared process; found $($pids.Count) ($($pids -join ','))"
+    }
+    return $true
+}
+
+function Test-ConnectorReadiness {
+    try {
+        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$ConnectorMetricsPort/metrics" -TimeoutSec $ProbeTimeoutSeconds -UseBasicParsing
+        return ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300)
+    }
+    catch {
+        return $false
+    }
 }
 
 if (-not $Apply) {
@@ -172,13 +208,48 @@ if (-not $Apply) {
     return
 }
 
-# ---- Validate-before-apply: write candidate to a same-directory file, then
-#      atomically replace the live config after validation passes. ----
+# ---- Validate-before-apply + atomic replace. ----
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 $candidatePath = "$TunnelConfig.candidate-$stamp"
 $backupPath = "$TunnelConfig.bak-$stamp"
 Set-Content -LiteralPath $candidatePath -Value $candidate -Encoding UTF8
 $receipt.candidate_sha256 = (Get-FileHash -LiteralPath $candidatePath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+$connectorService = $null
+$restoreFailed = $false
+
+function Restore-SharedTunnelState {
+    # Restore the live config to its backup and reconcile the connector back to
+    # the previous state. Never claims recovery unless it is observed.
+    if (Test-Path -LiteralPath $backupPath) {
+        Copy-Item -LiteralPath $backupPath -Destination $TunnelConfig -Force
+    }
+    $receipt.config_after_sha256 = (Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    $recovered = $false
+    if ($Start -and $null -ne $connectorService) {
+        try {
+            Stop-AllCloudflaredProcesses
+            if ((Get-Service -Name $ConnectorServiceName -ErrorAction SilentlyContinue).Status -eq "Stopped") {
+                Start-Service -Name $ConnectorServiceName -ErrorAction Stop
+            }
+            else {
+                Restart-Service -Name $ConnectorServiceName -Force -ErrorAction Stop
+            }
+            Start-Sleep -Seconds 3
+            Assert-SingleConnector
+            $recovered = (Test-ConnectorReadiness)
+        }
+        catch {
+            $recovered = $false
+        }
+    }
+    else {
+        $recovered = $true  # no connector mutation was performed -> config restore is sufficient
+    }
+    $receipt.recovery_proven = $recovered
+    return $recovered
+}
 
 try {
     & $CloudflaredPath tunnel --config $candidatePath ingress validate 2>&1 | Out-Null
@@ -187,59 +258,34 @@ try {
     }
     $receipt.validate_before_apply = $true
 
-    # Atomic replacement: copy current to backup, then move candidate into place.
     Copy-Item -LiteralPath $TunnelConfig -Destination $backupPath -Force
     Move-Item -LiteralPath $candidatePath -Destination $TunnelConfig -Force
+    $receipt.live_config_replaced = $true
 
     Assert-RoutePreservation -Config (Get-Content -LiteralPath $TunnelConfig -Raw)
     $receipt.config_after_sha256 = (Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256).Hash.ToLowerInvariant()
 
     if ($Start) {
-        # ---- Reconcile exactly ONE cloudflared connector. ----
         $beforePids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-        $svc = Get-Service -Name Cloudflared -ErrorAction SilentlyContinue
-        if ($null -ne $svc) {
-            Restart-Service -Name Cloudflared -Force -ErrorAction Stop
-        }
-        else {
-            throw "Cloudflared SCM service missing; cannot reconcile a single connector."
-        }
-        Start-Sleep -Seconds 3
-
-        $afterPids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
-        $receipt.connector_count_after = $afterPids.Count
-        if ($afterPids.Count -ne 1) {
-            $receipt.rollback_triggered = $true
-            throw "Expected exactly one cloudflared process; found $($afterPids.Count). Rolling back config."
-        }
-
-        # Tunnel-owned readiness: cloudflared metrics endpoint (not generic port 2019).
-        $metricsOk = $false
-        try {
-            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:20120/metrics" -TimeoutSec $ProbeTimeoutSeconds -UseBasicParsing
-            $metricsOk = ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300)
-        }
-        catch {
-            $metricsOk = $false
-        }
+        $receipt.connector_count_before = $beforePids.Count
+        $connectorService = Restart-ScmConnector
+        Assert-SingleConnector
+        $metricsOk = Test-ConnectorReadiness
         $receipt.connector_readiness = $metricsOk
         if (-not $metricsOk) {
-            # Fail closed: restore backup, restart service, prove recovery.
-            Copy-Item -LiteralPath $backupPath -Destination $TunnelConfig -Force
-            $receipt.rollback_triggered = $true
-            if ($null -ne $svc) {
-                Restart-Service -Name Cloudflared -Force -ErrorAction SilentlyContinue
-            }
-            throw "cloudflared connector readiness (metrics) failed after apply; config restored to backup."
+            throw "cloudflared connector readiness (metrics) failed after apply."
         }
     }
 }
 catch {
+    $receipt.rollback_triggered = $true
+    $receipt.error = $_.Exception.Message
+    if ($receipt.live_config_replaced) {
+        $receipt.recovery_proven = (Restore-SharedTunnelState)
+    }
     if (Test-Path -LiteralPath $candidatePath) {
         Remove-Item -LiteralPath $candidatePath -Force -ErrorAction SilentlyContinue
     }
-    $receipt.rollback_triggered = $true
-    $receipt.error = $_.Exception.Message
     $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding UTF8
     throw
 }

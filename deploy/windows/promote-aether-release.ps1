@@ -7,7 +7,7 @@ param(
     [string]$PythonPath = "",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
-    [string]$ExpectedTargetSha = "",
+    [Parameter(Mandatory = $true)][string]$ExpectedTargetSha,
     [int]$HealthTimeoutSeconds = 8,
     [int]$HealthAttempts = 6,
     [switch]$Start,
@@ -132,7 +132,7 @@ $originMain = (git -C $RepoPath rev-parse origin/main 2>$null | Out-String).Trim
 if ($LASTEXITCODE -ne 0 -or $originMain -notmatch '^[0-9a-f]{40}$') {
     throw "Unable to resolve origin/main SHA"
 }
-if ($ExpectedTargetSha -and $ExpectedTargetSha -ne $originMain) {
+if ($ExpectedTargetSha -ne $originMain) {
     throw "Expected-target-SHA guard failed: requested $ExpectedTargetSha, origin/main = $originMain"
 }
 $dirty = @(git -C $RepoPath status --porcelain 2>$null)
@@ -143,12 +143,31 @@ if ($dirty.Count -gt 0 -and -not $SkipValidate) {
 $targetRelease = Join-Path $ReleasesRoot $originMain
 $rollbackPath = Join-Path $ReleasesRoot $RollbackRelease
 
-# Preflight rollback release before any mutation.
-if (-not (Test-Path -LiteralPath $rollbackPath -PathType Container)) {
-    throw "Rollback release path missing (preflight failed): $rollbackPath"
+# Preflight rollback release AND its installer before any mutation.
+$rollbackInstallerPath = Join-Path $rollbackPath "deploy\windows\install-aether-services.ps1"
+if (-not (Test-Path -LiteralPath $rollbackInstallerPath -PathType Leaf)) {
+    throw "Rollback installer missing (preflight failed): $rollbackInstallerPath"
 }
 if (Test-Path -LiteralPath $targetRelease -PathType Container) {
-    throw "Target release already exists (immutable): $targetRelease"
+    # Retry-safe: a prior failed promotion may have left a published-but-unproven
+    # release. Reuse it only if it carries matching release metadata; otherwise
+    # fail with a clear instruction (never silently overwrite an immutable path).
+    $metaPath = Join-Path $targetRelease "AETHER_RELEASE.json"
+    if (Test-Path -LiteralPath $metaPath -PathType Leaf) {
+        $meta = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json
+        if ($meta.target_sha -eq $originMain) {
+            $reusedExisting = $true
+        }
+        else {
+            throw "Existing release metadata target_sha mismatch: $($meta.target_sha)"
+        }
+    }
+    else {
+        throw "Target release already exists without release metadata (partial publish); remove it before retry: $targetRelease"
+    }
+}
+else {
+    $reusedExisting = $false
 }
 
 # DACL precondition of AETHER_HOME before reconcile.
@@ -164,6 +183,8 @@ $receipt = [ordered]@{
     aether_home = $AetherHome
     rollback_release = $RollbackRelease
     rollback_path = $rollbackPath
+    reused_existing = $reusedExisting
+    published_this_run = $false
     reconciled = @()
     running_paths_proven = $false
     rollback_triggered = $false
@@ -173,36 +194,38 @@ $receipt = [ordered]@{
 
 try {
     # ---- Stage into a temporary directory + durable metadata, then publish. ----
-    $staging = Join-Path $ReleasesRoot ".staging-$originMain-$(Get-Random)"
-    New-Item -ItemType Directory -Force -Path $staging | Out-Null
-    $archive = Join-Path $ReleasesRoot ".archive-$originMain-$(Get-Random).tar"
-    git -C $RepoPath archive --format=tar --output=$archive $originMain 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "git archive failed (exit $LASTEXITCODE)"
-    }
-    tar -xf $archive -C $staging
-    if ($LASTEXITCODE -ne 0) {
-        throw "tar extraction failed (exit $LASTEXITCODE)"
-    }
-    Remove-Item -LiteralPath $archive -Force
+    if (-not $reusedExisting) {
+        $staging = Join-Path $ReleasesRoot ".staging-$originMain-$(Get-Random)"
+        New-Item -ItemType Directory -Force -Path $staging | Out-Null
+        $archive = Join-Path $ReleasesRoot ".archive-$originMain-$(Get-Random).tar"
+        git -C $RepoPath archive --format=tar --output=$archive $originMain 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "git archive failed (exit $LASTEXITCODE)"
+        }
+        tar -xf $archive -C $staging
+        if ($LASTEXITCODE -ne 0) {
+            throw "tar extraction failed (exit $LASTEXITCODE)"
+        }
+        Remove-Item -LiteralPath $archive -Force
 
-    # Durable release metadata (the extraction has no .git; do NOT rev-parse it).
-    $tree = git -C $RepoPath rev-parse "$originMain^{tree}" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "unable to resolve target tree hash"
-    }
-    $releaseMeta = [ordered]@{
-        schema = "aether.release.v1"
-        target_sha = $originMain
-        target_tree = ($tree | Out-String).Trim()
-        staged_at = (Get-Date).ToUniversalTime().ToString("o")
-        aether_home = $AetherHome
-    }
-    $releaseMeta | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $staging "AETHER_RELEASE.json") -Encoding UTF8
+        # Durable release metadata (the extraction has no .git; do NOT rev-parse it).
+        $tree = git -C $RepoPath rev-parse "$originMain^{tree}" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "unable to resolve target tree hash"
+        }
+        $releaseMeta = [ordered]@{
+            schema = "aether.release.v1"
+            target_sha = $originMain
+            target_tree = ($tree | Out-String).Trim()
+            staged_at = (Get-Date).ToUniversalTime().ToString("o")
+            aether_home = $AetherHome
+        }
+        $releaseMeta | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $staging "AETHER_RELEASE.json") -Encoding UTF8
 
-    # Atomic publish: rename staging -> final. Failed attempt must not occupy final.
-    # (No Match-Space: destination guaranteed absent by preflight above.)
-    Move-Item -LiteralPath $staging -Destination $targetRelease -ErrorAction Stop
+        # Atomic publish: rename staging -> final.
+        Move-Item -LiteralPath $staging -Destination $targetRelease -ErrorAction Stop
+        $receipt.published_this_run = $true
+    }
 
     # --- Reconcile services to the new release. ---
     $installer = Join-Path $targetRelease "deploy\windows\install-aether-services.ps1"
@@ -210,6 +233,7 @@ try {
         "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", $installer,
         "-ReleasePath", $targetRelease,
+        "-TargetSha", $originMain,
         "-AetherHome", $AetherHome,
         "-HostAddress", $HostAddress,
         "-Port", [string]$Port
@@ -252,13 +276,14 @@ try {
         }
 
         if (-not $healthy) {
-            # --- Fail-closed rollback: require rollback installer, restart, prove. ---
+            # --- Fail-closed rollback: use the CURRENT (safe) installer against
+            #      the rollback release so the old /inheritance:e cannot run. ---
             $receipt.rollback_triggered = $true
-            $rollbackInstaller = Join-Path $rollbackPath "deploy\windows\install-aether-services.ps1"
-            if (-not (Test-Path -LiteralPath $rollbackInstaller -PathType Leaf)) {
-                throw "Rollback installer missing; cannot fail closed: $rollbackInstaller"
+            $safeInstaller = Join-Path $targetRelease "deploy\windows\install-aether-services.ps1"
+            if (-not (Test-Path -LiteralPath $safeInstaller -PathType Leaf)) {
+                throw "Safe installer missing for fail-closed rollback: $safeInstaller"
             }
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rollbackInstaller -ReleasePath $rollbackPath -AetherHome $AetherHome -HostAddress $HostAddress -Port $Port | Out-Null
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $safeInstaller -ReleasePath $rollbackPath -AetherHome $AetherHome -HostAddress $HostAddress -Port $Port | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 throw "Rollback reconcile failed (exit $LASTEXITCODE)"
             }
@@ -284,17 +309,20 @@ try {
                 }
             }
             $receipt.rollback_proven = $ok
+            Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME(post-rollback)"
             throw "Gateway health failed after promotion; fail-closed rollback to $rollbackPath proven=$ok"
         }
     }
 
     # Re-assert the protected AETHER_HOME DACL AFTER reconciliation.
     Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME(post)"
-    $receipt.success = "true"
+    $receipt.success = $true
 }
 catch {
-    if (Test-Path -LiteralPath $staging) {
-        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    if ($receipt.published_this_run -and (Test-Path -LiteralPath $targetRelease -PathType Container)) {
+        # A failed promotion that we published ourselves must not leave a partial
+        # immutable release that blocks retry; remove it so the run is retry-safe.
+        Remove-Item -LiteralPath $targetRelease -Recurse -Force -ErrorAction SilentlyContinue
     }
     $receipt.failure_phase = "promote"
     $receipt.error = $_.Exception.Message

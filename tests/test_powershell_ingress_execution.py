@@ -155,9 +155,9 @@ def test_shared_tunnel_dry_run_emits_candidate_observations(tmp_path: Path):
 
     receipt = json.loads(result.stdout)
     assert receipt["applied"] is False
-    assert receipt["aether_entries_unique"] is True
-    assert receipt["protected_preserved"] is True
-    assert receipt["fallback_unique"] is True
+    assert receipt["schema"] == "aether.shared-tunnel.v3"
+    assert receipt["protected_hostnames"] == ["oc.aethers.my.id", "jarvis.aethers.my.id"]
+    assert receipt["connector_count_after"] is None
     # Config file not mutated on dry run.
     assert cfg.read_text(encoding="utf-8-sig") == SAMPLE
     # Receipt candidate SHA was observed (dry-run path writes it).
@@ -169,17 +169,19 @@ def test_shared_tunnel_dry_run_emits_candidate_observations(tmp_path: Path):
 def test_release_promotion_script_executes_and_requires_admin(tmp_path: Path):
     repo = tmp_path / "not-a-repo"
     repo.mkdir()
+    sha = "a" * 40
     cmd = [
         POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", str(WINDOWS / "promote-aether-release.ps1"),
         "-RepoPath", str(repo),
         "-AetherHome", str(tmp_path / "aether-home"),
         "-ReleasesRoot", str(tmp_path / "releases"),
+        "-ExpectedTargetSha", sha,
     ]
     # The script must run and throw early. On Windows it fails the admin guard
-    # ("Run this promotion from an elevated..."), on Linux/pwsh it fails the
-    # WindowsPrincipal check ("Microsoft"); both prove the guard is real and
-    # executable (not just static text).
+    # ("Run this promotion from an elevated..." or "Windows Principal"); on
+    # Linux it fails the WindowsPrincipal check. Both prove the guard is real
+    # and executable (not just static text).
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert result.returncode != 0
     combined = (result.stderr or "") + (result.stdout or "")
@@ -203,5 +205,99 @@ def _write_binary_stub(stub_dir: Path) -> Path:
         encoding="utf-8",
     )
     return stub
+
+
+# ---- Failure-injection: -Start handoff & fail-closed recovery (Windows) -------
+# These exercise the real script's connector reconciliation path against a
+# deliberately missing SCM service, proving the fail-closed restore of the live
+# config after a post-replace failure. They run only on Windows hosts (where
+# Get-Service/SCM exists); on Linux/pwsh they are skipped.
+_IS_WINDOWS = os.name == "nt"
+
+
+@pytest.mark.skipif(
+    POWERSHELL is None or not _IS_WINDOWS,
+    reason="connector -Start recovery needs Windows SCM",
+)
+def test_shared_tunnel_start_missing_service_rolls_back_config(tmp_path: Path):
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(SAMPLE, encoding="utf-8")
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    stub = _write_binary_stub(stub_dir)
+
+    env = dict(os.environ)
+    env["CLOUDFLARED_STUB_EXIT"] = "0"  # validate would succeed
+
+    cmd = [
+        POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(CLOUDFLARE / "update-shared-tunnel.ps1"),
+        "-TunnelConfig", str(cfg),
+        "-CloudflaredPath", str(stub),
+        "-AetherHome", str(tmp_path / "aether-home"),
+        "-ConnectorServiceName", "AetherTestMissingSvc",
+        "-Apply", "-Start",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    # The connector service is missing -> fail after live replace -> the script
+    # must restore the backup config and exit non-zero (fail closed).
+    assert result.returncode != 0
+    assert cfg.read_text(encoding="utf-8-sig") == SAMPLE
+
+
+@pytest.mark.skipif(
+    POWERSHELL is None or not _IS_WINDOWS,
+    reason="connector -Start recovery needs Windows SCM",
+)
+def test_shared_tunnel_start_asserts_single_connector_receipt(tmp_path: Path):
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(SAMPLE, encoding="utf-8")
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    stub = _write_binary_stub(stub_dir)
+    aether_home = tmp_path / "aether-home"
+
+    cmd = [
+        POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(CLOUDFLARE / "update-shared-tunnel.ps1"),
+        "-TunnelConfig", str(cfg),
+        "-CloudflaredPath", str(stub),
+        "-AetherHome", str(aether_home),
+        "-ConnectorServiceName", "AetherTestMissingSvc",
+        "-Apply", "-Start",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    assert result.returncode != 0
+    # Fail-closed: live config must be restored even though -Start failed.
+    assert cfg.read_text(encoding="utf-8-sig") == SAMPLE
+    # The observation-derived failure receipt is written to AETHER_HOME.
+    receipt_file = aether_home / "runtime" / "ingress" / "shared-tunnel-receipt.json"
+    assert receipt_file.is_file(), "failure receipt not written"
+    import json
+
+    receipt = json.loads(receipt_file.read_text(encoding="utf-8-sig"))
+    assert receipt["schema"] == "aether.shared-tunnel.v3"
+    assert receipt["rollback_triggered"] is True
+    assert receipt.get("error")
+
+
+# ---- ExpectedTargetSha is mandatory (provenance guard) -----------------------
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_release_promotion_requires_expected_target_sha(tmp_path: Path):
+    repo = tmp_path / "not-a-repo"
+    repo.mkdir()
+    cmd = [
+        POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(WINDOWS / "promote-aether-release.ps1"),
+        "-RepoPath", str(repo),
+        "-AetherHome", str(tmp_path / "aether-home"),
+        "-ReleasesRoot", str(tmp_path / "releases"),
+    ]
+    # -ExpectedTargetSha is mandatory; omitting it must be rejected by the
+    # parameter binder before any logic runs (on every platform).
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    assert result.returncode != 0
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "expectedtargetsha" in combined.lower() or "mandatory" in combined.lower()
 
 
