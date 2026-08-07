@@ -29,15 +29,31 @@ upgrade.
 - Hash: bcrypt cost 14
 - Plaintext is never stored on the VPS and never appears in receipts/logs
 
-The bcrypt hash is generated interactively (never via command-line argument):
+The bcrypt hash is generated interactively (never via command-line argument) and
+staged in a **temporary, inheritance-protected file** that the installer consumes
+and then deletes. Only the ACL-protected canonical fragment
+`C:\ProgramData\Aether\caddy\founder-auth.caddy` persists — no `.env` file is
+used, and no second hash-bearing file is left behind:
 
 ```powershell
-$hash = & "C:\Program Files\Caddy\caddy.exe" hash-password --algorithm bcrypt --bcrypt-cost 14
+# Stage the transient hash input under a protected temp path (never .env).
+$tmpHash = "$env:TEMP\aether-founder-bcrypt.txt"
+# Generate the hash interactively (no --plaintext on the command line):
+#   C:\Program Files\Caddy\caddy.exe hash-password --algorithm bcrypt --bcrypt-cost 14
+#   (typed at the prompt) then save the printed hash to $tmpHash.
+$hash = (Read-Host "Paste the bcrypt hash" ) | ForEach-Object { $_ -replace '[\r\n]', '' }
+$hash | Set-Content -LiteralPath $tmpHash -Encoding utf8 -NoNewline
+# Lock the input down (SYSTEM + Administrators only) so the installer may read it
+# exactly once and then remove it:
+icacls $tmpHash /inheritance:r /grant:r "SYSTEM:F" "Administrators:F"
 ```
 
 The installer writes the ACL-protected fragment
-`C:\ProgramData\Aether\caddy\founder-auth.caddy` and strips the `Authorization`
-header before forwarding to any upstream.
+`C:\ProgramData\Aether\caddy\founder-auth.caddy`, strips the `Authorization`
+header before forwarding to any upstream, verifies the temporary hash input's
+DACL before reading it, and removes that temporary input after the fragment is
+safely written — so only the protected canonical fragment remains as hash
+storage.
 
 ## Windows Host Install
 
@@ -51,7 +67,8 @@ PowerShell:
   -TunnelId "<cloudflare-tunnel-id>" `
   -CredentialsFile "C:\ProgramData\Aether\cloudflare\<cloudflare-tunnel-id>.json" `
   -CaddyPath "C:\Program Files\Caddy\caddy.exe" `
-  -FounderAuthFile "C:\ProgramData\Aether\caddy\founder-bcrypt.env" `
+  -FounderUsername "founder" `
+  -FounderAuthFile "$env:TEMP\aether-founder-bcrypt.txt" `
   -Start
 ```
 
@@ -72,24 +89,41 @@ headers, the founder username, or the bcrypt hash to receipts.
 Passwords are never accepted on the command line. Supply credentials either as
 an in-memory `PSCredential` object or by reading the password from stdin.
 
+One complete CaddyBasic invocation proves the whole receipt: unauthenticated
+denial, correct-credential 2xx, wrong-credential denial, and the echo-derived
+`authorization_forwarded_to_upstream=false` (header strip observed at the
+upstream). When `-EchoRoute` is given, the probe sends one authenticated request
+through Caddy to that route; the production Caddyfile forwards it to the real
+upstream, so on a proof host the route must point at a temporary echo upstream
+that echoes the headers it actually received. The echo route is proof-only and
+is removed (the production Caddyfile keeps no public echo endpoint).
+
 ```powershell
-# unauthenticated: expect 401 on every route
-.\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
-  -BaseUrl "https://aether.example.com" -AuthMode "CaddyBasic" `
-  -EchoRoute "/__echo" -Credential $cred
-
-# authenticated (password from a PSCredential object; nothing on the CLI):
-$secure = Read-Host -AsSecureString "Founder password"
-$cred = [pscredential]::new("founder", $secure)
+# Complete proof, passwords from PSCredential objects (nothing on the CLI):
+$secure   = Read-Host -AsSecureString "Founder password"
+$cred     = [pscredential]::new("founder", $secure)
+$wrongSec = Read-Host -AsSecureString "Deliberately wrong password"
+$wrong    = [pscredential]::new("founder", $wrongSec)
 .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
   -BaseUrl "https://aether.example.com" `
-  -AuthMode "CaddyBasic" -Credential $cred -EchoRoute "/__echo"
+  -AuthMode "CaddyBasic" `
+  -Credential $cred -WrongCredential $wrong `
+  -EchoRoute "/__echo"
 
-# authenticated (password from stdin, e.g. "s3cr3t" | script.ps1 ...)
-"s3cr3t" | .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
+# Equivalent proof with passwords read from stdin (two lines: correct, wrong):
+"s3cr3t-founder`nwrong-pass" | .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
   -BaseUrl "https://aether.example.com" `
-  -AuthMode "CaddyBasic" -CredentialUsername "founder" -CredentialPasswordStdin -EchoRoute "/__echo"
+  -AuthMode "CaddyBasic" `
+  -CredentialUsername "founder" -CredentialPasswordStdin `
+  -WrongCredentialUsername "founder" -WrongCredentialPasswordStdin `
+  -EchoRoute "/__echo"
 ```
+
+On a live public host (HTTPS + tunnel service running + proof echo route present)
+the return receipt is `status: ok` with `unauthenticated_all_denied=true`,
+`authenticated_all_ok=true`, `invalid_credentials_all_denied=true`,
+`header_strip_observed=true`, `authorization_forwarded_to_upstream=false`, and
+`secret_values_exposed=false`.
 
 Credential surfaces are rejected unless complete: a username without a password
 source, or a password source without a username, is refused before any request.

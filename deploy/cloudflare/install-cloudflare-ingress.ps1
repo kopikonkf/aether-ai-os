@@ -156,6 +156,14 @@ if ($FounderAuthFile) {
     if (-not (Test-Path -LiteralPath $FounderAuthFile -PathType Leaf)) {
         throw "Founder auth hash file not found: $FounderAuthFile"
     }
+    if (-not $FounderUsername) {
+        throw "FounderUsername is required when an auth hash file is used."
+    }
+    # The hash input is secret-bearing. Require it to be inheritance-protected
+    # with exactly SYSTEM + Administrators before reading (same DACL contract as
+    # the canonical fragment). This is the ONLY place a bcrypt hash input may be
+    # consumed; it is removed after the canonical fragment is safely written.
+    Assert-ProtectedAcl -Path $FounderAuthFile -IsContainer $false -Label "founder hash input"
     $authHashValue = (Get-Content -LiteralPath $FounderAuthFile -Raw).Trim()
     if ($authHashValue -match " " -or $authHashValue -match "`t") {
         throw "Founder auth file must contain only a single bcrypt hash"
@@ -180,6 +188,18 @@ if ($LASTEXITCODE -ne 0) {
     throw "ACL hardening failed for $authFragmentPath"
 }
 Assert-ProtectedAcl -Path $authFragmentPath -IsContainer $false -Label $authFragmentPath
+
+# The canonical fragment is now written and ACL-protected. Remove the transient
+# hash input so no second file holds the bcrypt hash; only founder-auth.caddy
+# remains as hash storage (per ADR-0053).
+if ($FounderAuthFile) {
+    if (Test-Path -LiteralPath $FounderAuthFile -PathType Leaf) {
+        Remove-Item -LiteralPath $FounderAuthFile -Force
+        if (Test-Path -LiteralPath $FounderAuthFile -PathType Leaf) {
+            throw "Failed to remove transient founder hash input: $FounderAuthFile"
+        }
+    }
+}
 
 # The auth fragment is secret-bearing. Fail closed unless the (possibly
 # pre-existing) AETHER_HOME root is itself protected SYSTEM/Administrators

@@ -44,6 +44,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 PROBE = ROOT / "deploy" / "cloudflare" / "probe-cloudflare-ingress.ps1"
+PRODUCTION_CADDYFILE = ROOT / "deploy" / "windows" / "Caddyfile"
 
 REQUIRED = ["/health", "/aether/api/status", "/api/browser-senses/status", "/senses"]
 ECHO_ROUTE = "/__aether_echo"
@@ -226,7 +227,23 @@ def test_real_mode_access_valid_and_unauthenticated_denial(tmp_path: Path):
 
 
 @REAL_TOOLCHAIN
-def test_real_mode_caddybasic_auth_and_echo_derived_strip(tmp_path: Path):
+def test_real_mode_caddybasic_complete_receipt_with_production_caddyfile(tmp_path: Path):
+    """Prove the complete CaddyBasic receipt in ONE real-probe invocation against
+    the ACTUAL production Caddyfile template (deploy/windows/Caddyfile), not a
+    bespoke test Caddyfile.
+
+    The production template is rendered by re-pointing both upstream targets
+    (:8000 gateway, :25808 AionUi) at the echo upstream so every production
+    handler (senses, /aether/*, /health, default) exercises the template's own
+    `header_up -Authorization` directives. The single probe run supplies correct
+    AND wrong credentials plus the echo route, and its receipt must satisfy:
+      unauthenticated_all_denied = True
+      authenticated_all_ok = True
+      invalid_credentials_all_denied = True
+      header_strip_observed = True
+      authorization_forwarded_to_upstream = False
+      secret_values_exposed = False
+    """
     caddy = find_caddy()
     ps = find_powershell()
 
@@ -234,28 +251,24 @@ def test_real_mode_caddybasic_auth_and_echo_derived_strip(tmp_path: Path):
     HeaderRecorder.received = []
 
     caddy_port = 8093
+    admin_port = 20199
     auth_frag = tmp_path / "founder-auth.caddy"
     auth_frag.write_text(
         f'basic_auth bcrypt "Aether Founder Alpha" {{\n    founder {bcrypt_hash(caddy, "s3cr3t-founder")}\n}}\n',
         encoding="utf-8",
     )
-    caddyfile = tmp_path / "Caddyfile"
-    caddyfile.write_text(
-        f"""{{
-    auto_https off
-    admin 127.0.0.1:20199
-}}
-http://127.0.0.1:{caddy_port} {{
-    import {auth_frag.as_posix()}
-    handle {{
-        reverse_proxy 127.0.0.1:{up.port} {{
-            header_up -Authorization
-        }}
-    }}
-}}
-""",
-        encoding="utf-8",
+
+    template = PRODUCTION_CADDYFILE.read_text(encoding="utf-8")
+    rendered = (
+        template
+        .replace("C:/ProgramData/Aether/caddy/founder-auth.caddy", auth_frag.as_posix())
+        .replace("http://127.0.0.1:8080", f"http://127.0.0.1:{caddy_port}")
+        .replace("admin 127.0.0.1:2019", f"admin 127.0.0.1:{admin_port}")
+        .replace("127.0.0.1:8000", f"127.0.0.1:{up.port}")
+        .replace("127.0.0.1:25808", f"127.0.0.1:{up.port}")
     )
+    caddyfile = tmp_path / "Caddyfile.prod"
+    caddyfile.write_text(rendered, encoding="utf-8")
 
     proc = subprocess.Popen(
         [caddy, "run", "--config", str(caddyfile), "--adapter", "caddyfile"],
@@ -265,41 +278,34 @@ http://127.0.0.1:{caddy_port} {{
     try:
         assert wait_port("127.0.0.1", caddy_port), "caddy did not come up"
         base = f"http://127.0.0.1:{caddy_port}"
-        home = str(tmp_path / "home-caddy")
+        home = str(tmp_path / "home-caddy-complete")
 
-        # Unauthenticated -> 401 + Basic on every route.
-        unauth = run_probe(ps, base, ["-AuthMode", "CaddyBasic", "-EchoRoute", ECHO_ROUTE], home=home)
-        assert unauth["auth_mode"] == "CaddyBasic"
-        assert unauth["unauthenticated_all_denied"] is True
-        for r in unauth["unauthenticated_routes"]:
+        # Single complete invocation: correct + wrong credentials + echo route,
+        # both passwords via stdin (never in argv).
+        receipt = run_probe(
+            ps,
+            base,
+            [
+                "-AuthMode", "CaddyBasic",
+                "-CredentialUsername", "founder", "-CredentialPasswordStdin",
+                "-WrongCredentialUsername", "founder", "-WrongCredentialPasswordStdin",
+                "-EchoRoute", ECHO_ROUTE,
+            ],
+            stdin="s3cr3t-founder\nwrong-pass\n",
+            home=home,
+        )
+
+        assert receipt["auth_mode"] == "CaddyBasic"
+        assert receipt["unauthenticated_all_denied"] is True, receipt
+        for r in receipt["unauthenticated_routes"]:
             assert r["status_code"] == 401, r
             assert r["basic_challenge"] is True, r
             assert "basic" in (r.get("www_authenticate") or "").lower(), r
-        assert unauth["secret_values_exposed"] is False
-
-        # Authenticated: password from stdin (never in argv).
-        auth_out = run_probe(
-            ps,
-            base,
-            ["-AuthMode", "CaddyBasic", "-CredentialUsername", "founder", "-CredentialPasswordStdin", "-EchoRoute", ECHO_ROUTE],
-            stdin="s3cr3t-founder\n",
-            home=str(tmp_path / "home-caddy-auth"),
-        )
-        assert auth_out["authenticated_all_ok"] is True, auth_out
-        # HEADER STRIP MUST BE DERIVED FROM THE ECHO UPSTREAM, not Caddy /config/.
-        assert auth_out["header_strip_observed"] is True, auth_out
-        assert auth_out["authorization_forwarded_to_upstream"] is False, auth_out
-
-        # Wrong credentials via stdin -> rejected with a Basic challenge.
-        wrong = run_probe(
-            ps,
-            base,
-            ["-AuthMode", "CaddyBasic", "-WrongCredentialUsername", "founder", "-WrongCredentialPasswordStdin"],
-            stdin="wrong-pass\n",
-            home=str(tmp_path / "home-caddy-wrong"),
-        )
-        assert wrong["authenticated_all_ok"] is False
-        assert wrong["invalid_credentials_all_denied"] is True
+        assert receipt["authenticated_all_ok"] is True, receipt
+        assert receipt["invalid_credentials_all_denied"] is True, receipt
+        assert receipt["header_strip_observed"] is True, receipt
+        assert receipt["authorization_forwarded_to_upstream"] is False, receipt
+        assert receipt["secret_values_exposed"] is False, receipt
 
         # Cross-check against what the echo server itself received.
         assert HeaderRecorder.received, "echo upstream received no requests"

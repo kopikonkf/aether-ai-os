@@ -95,6 +95,19 @@ def test_install_writes_auth_fragment_and_never_records_hash():
     assert "FounderUsername" in install
 
 
+def test_install_consumes_and_removes_transient_hash_input():
+    # ADR-0053: no .env; the ACL-protected founder-auth.caddy fragment is the only
+    # hash storage. The installer must verify the transient input's DACL before
+    # reading it and delete it after the canonical fragment is safely written.
+    install = _read(CLOUDFLARE_DIR / "install-cloudflare-ingress.ps1")
+    assert "Assert-ProtectedAcl -Path $FounderAuthFile" in install
+    assert "Remove-Item -LiteralPath $FounderAuthFile" in install
+    assert "Failed to remove transient founder hash input" in install
+    # No .env file may be the hash storage location.
+    combined = "\n".join(_read(path) for path in CLOUDFLARE_DIR.iterdir() if path.is_file())
+    assert "founder-bcrypt.env" not in combined
+
+
 def test_caddyfile_imports_auth_fragment_and_strips_authorization():
     caddyfile = _read(ROOT / "deploy" / "windows" / "Caddyfile")
     assert "founder-auth.caddy" in caddyfile
