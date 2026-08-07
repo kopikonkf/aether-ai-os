@@ -28,6 +28,21 @@
       <p id="pairingHint">Pair this browser through Dee's trusted approval surface. No operator credential is entered here.</p>
     </section>
 
+    <section class="panel state-panel" aria-labelledby="stateAxesHeading">
+      <div class="panel-head">
+        <h2 id="stateAxesHeading">Authoritative client state</h2>
+        <span>orthogonal axes · no inferred completion</span>
+      </div>
+      <div class="state-grid">
+        <div><span>Auth / session</span><strong id="authState">BOOTSTRAP REQUIRED</strong></div>
+        <div><span>Transport mode</span><strong id="transportModeState">OFFLINE</strong></div>
+        <div><span>Turn</span><strong id="turnState">IDLE</strong></div>
+        <div><span>Sensor consent</span><strong id="consentState">CAMERA OFF · SCREEN OFF</strong></div>
+        <div><span>Capability action</span><strong id="actionState">NONE</strong></div>
+        <div><span>External speech</span><strong id="externalSpeechState">EXTERNAL CONSENT REQUIRED</strong></div>
+      </div>
+    </section>
+
     <section class="grid">
       <article class="panel media-panel">
         <div class="panel-head"><h2>Camera</h2><span id="cameraState">not started</span></div>
@@ -74,10 +89,11 @@
           <label>Voice <select id="voiceSelect" aria-label="Aether browser voice"></select></label>
           <label>Speaking rate <span id="voiceRateValue">1.02</span><input id="voiceRate" type="range" min="0.75" max="1.35" step="0.01" value="1.02" /></label>
           <label>Voice pitch <span id="voicePitchValue">1.12</span><input id="voicePitch" type="range" min="0.75" max="1.50" step="0.01" value="1.12" /></label>
+          <label class="privacy-control">External speech privacy <span class="toggle"><input id="privateTextOnly" type="checkbox" /> Private text-only</span></label>
           <label class="voice-preview">Voice preview <button id="previewVoice" type="button" class="secondary">Preview Aether voice</button></label>
           <label>Vision prompt <input id="visionPrompt" value="Describe materially relevant objects, people, text, and changes visible in this frame." /></label>
         </div>
-        <p>Microphone and camera access require HTTPS and explicit browser permission. Device and Senses credentials remain protected in HttpOnly same-origin cookies.</p>
+        <p>Microphone and camera access require HTTPS and explicit browser permission. Device and Senses credentials remain protected in HttpOnly same-origin cookies. Private text-only suppresses browser and external speech without disabling Gateway text cognition.</p>
       </details>
     </section>
 
