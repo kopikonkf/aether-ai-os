@@ -161,8 +161,11 @@ def bcrypt_hash(caddy: str, plain: str) -> str:
     return out.stdout.strip()
 
 
-def run_probe(ps: str, base: str, extra: list[str], stdin: str | None = None) -> dict:
-    cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE), "-BaseUrl", base] + extra
+def run_probe(ps: str, base: str, extra: list[str], stdin: str | None = None, home: str | None = None) -> dict:
+    cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE), "-BaseUrl", base]
+    if home:
+        cmd += ["-AetherHome", home]
+    cmd += extra
     out = subprocess.run(
         cmd,
         capture_output=True,
@@ -186,12 +189,13 @@ REAL_TOOLCHAIN = pytest.mark.skipif(
 
 
 @REAL_TOOLCHAIN
-def test_real_probe_valid_flow_none():
+def test_real_probe_valid_flow_none(tmp_path: Path):
     ps = find_powershell()
     up = _ThreadedServer(OpenUpstream)
     try:
         base = f"http://127.0.0.1:{up.port}"
-        receipt = run_probe(ps, base, ["-AuthMode", "None"])
+        home = str(tmp_path / "home-none")
+        receipt = run_probe(ps, base, ["-AuthMode", "None"], home=home)
         assert receipt["auth_mode"] == "None"
         assert receipt["unauthenticated_all_denied"] is False
         assert all(r["ok"] for r in receipt["unauthenticated_routes"]), receipt
@@ -202,19 +206,20 @@ def test_real_probe_valid_flow_none():
 
 
 @REAL_TOOLCHAIN
-def test_real_mode_access_valid_and_unauthenticated_denial():
+def test_real_mode_access_valid_and_unauthenticated_denial(tmp_path: Path):
     ps = find_powershell()
     up = _ThreadedServer(AccessShim)
     try:
         base = f"http://127.0.0.1:{up.port}"
+        home = str(tmp_path / "home-access")
 
         # Valid Access flow: matching CF_Authorization cookie -> 2xx on all routes.
-        valid = run_probe(ps, base, ["-AuthMode", "Access", "-AccessCookie", AccessShim.cookie_value])
+        valid = run_probe(ps, base, ["-AuthMode", "Access", "-AccessCookie", AccessShim.cookie_value], home=home)
         assert valid["authenticated_all_ok"] is True, valid
         assert valid["unauthenticated_all_denied"] is True, valid
 
         # Unauthenticated Access enforcement flow -> 401/403 or CF redirect.
-        enforce = run_probe(ps, base, ["-AuthMode", "Access", "-ExpectAccessEnforcement"])
+        enforce = run_probe(ps, base, ["-AuthMode", "Access", "-ExpectAccessEnforcement"], home=str(tmp_path / "home-access-enforce"))
         assert enforce["unauthenticated_all_denied"] is True, enforce
     finally:
         up.shutdown()
@@ -260,9 +265,10 @@ http://127.0.0.1:{caddy_port} {{
     try:
         assert wait_port("127.0.0.1", caddy_port), "caddy did not come up"
         base = f"http://127.0.0.1:{caddy_port}"
+        home = str(tmp_path / "home-caddy")
 
         # Unauthenticated -> 401 + Basic on every route.
-        unauth = run_probe(ps, base, ["-AuthMode", "CaddyBasic", "-EchoRoute", ECHO_ROUTE])
+        unauth = run_probe(ps, base, ["-AuthMode", "CaddyBasic", "-EchoRoute", ECHO_ROUTE], home=home)
         assert unauth["auth_mode"] == "CaddyBasic"
         assert unauth["unauthenticated_all_denied"] is True
         for r in unauth["unauthenticated_routes"]:
@@ -277,6 +283,7 @@ http://127.0.0.1:{caddy_port} {{
             base,
             ["-AuthMode", "CaddyBasic", "-CredentialUsername", "founder", "-CredentialPasswordStdin", "-EchoRoute", ECHO_ROUTE],
             stdin="s3cr3t-founder\n",
+            home=str(tmp_path / "home-caddy-auth"),
         )
         assert auth_out["authenticated_all_ok"] is True, auth_out
         # HEADER STRIP MUST BE DERIVED FROM THE ECHO UPSTREAM, not Caddy /config/.
@@ -289,6 +296,7 @@ http://127.0.0.1:{caddy_port} {{
             base,
             ["-AuthMode", "CaddyBasic", "-WrongCredentialUsername", "founder", "-WrongCredentialPasswordStdin"],
             stdin="wrong-pass\n",
+            home=str(tmp_path / "home-caddy-wrong"),
         )
         assert wrong["authenticated_all_ok"] is False
         assert wrong["invalid_credentials_all_denied"] is True
@@ -307,8 +315,9 @@ http://127.0.0.1:{caddy_port} {{
 
 
 @REAL_TOOLCHAIN
-def test_probe_flag_matrix_rejected_by_real_probe():
+def test_probe_flag_matrix_rejected_by_real_probe(tmp_path: Path):
     ps = find_powershell()
+    home = str(tmp_path / "home-matrix")
     cases = [
         ["-AuthMode", "None", "-WrongCredentialUsername", "founder", "-WrongCredentialPasswordStdin"],
         ["-AuthMode", "CaddyBasic", "-ExpectAccessEnforcement"],
@@ -322,14 +331,15 @@ def test_probe_flag_matrix_rejected_by_real_probe():
         ["-AuthMode", "CaddyBasic", "-EchoRoute", ECHO_ROUTE, "-AccessCookie", "x"],
     ]
     for extra in cases:
-        cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE), "-BaseUrl", "http://127.0.0.1:1", "-CredentialPasswordStdin"] + extra
+        cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE), "-BaseUrl", "http://127.0.0.1:1", "-AetherHome", home] + extra
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         assert out.returncode != 0, f"expected reject for {extra}: {out.stdout}"
 
 
 @REAL_TOOLCHAIN
-def test_probe_rejects_partial_credential_surfaces():
+def test_probe_rejects_partial_credential_surfaces(tmp_path: Path):
     ps = find_powershell()
+    home = str(tmp_path / "home-partial")
     partial_cases = [
         ["-AuthMode", "CaddyBasic", "-CredentialUsername", "founder"],
         ["-AuthMode", "CaddyBasic", "-CredentialPasswordStdin"],
@@ -337,7 +347,7 @@ def test_probe_rejects_partial_credential_surfaces():
         ["-AuthMode", "CaddyBasic", "-WrongCredentialPasswordStdin"],
     ]
     for extra in partial_cases:
-        cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE), "-BaseUrl", "http://127.0.0.1:1"] + extra
+        cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE), "-BaseUrl", "http://127.0.0.1:1", "-AetherHome", home] + extra
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         assert out.returncode != 0, f"expected partial reject for {extra}: {out.stdout}"
 
@@ -346,10 +356,12 @@ def test_probe_rejects_partial_credential_surfaces():
 def test_probe_secret_free_receipt(tmp_path: Path):
     """Real probe against a dead origin: receipt must not contain secrets even on failure."""
     ps = find_powershell()
+    home = str(tmp_path / "home-secretfree")
     out = subprocess.run(
         [
             ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE),
             "-BaseUrl", "http://127.0.0.1:1",
+            "-AetherHome", home,
             "-AuthMode", "CaddyBasic",
             "-CredentialUsername", "founder", "-CredentialPasswordStdin",
         ],
