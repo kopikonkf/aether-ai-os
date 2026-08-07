@@ -90,7 +90,7 @@ Windows host proof:
     .\deploy\cloudflare\probe-cloudflare-ingress.ps1 -BaseUrl "https://aether.example.com"
     Get-Content C:\ProgramData\Aether\runtime\ingress\latest_cloudflare_probe.json
 
-The default tunnel origin is http://127.0.0.1:80 so local Caddy remains the one-domain router and keeps /aether path rewriting intact.
+The default tunnel origin is http://127.0.0.1:8080 so the Aether Caddy service remains the one-domain router and keeps /aether path rewriting intact.
 
 ## systemd path
 

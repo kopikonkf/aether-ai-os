@@ -13,7 +13,8 @@ Cloudflare edge
   -> Aether Gateway on 127.0.0.1:8000
 ```
 
-The default tunnel origin is `http://127.0.0.1:80` so the existing Caddy
+The Aether Caddy one-domain router listens on `http://127.0.0.1:8080`.
+The tunnel forwards the public hostname to that local origin, so Caddy's
 one-domain path rewriting remains authoritative.
 
 ## Windows Host Install
@@ -27,12 +28,15 @@ PowerShell:
   -PublicHostname "aether.example.com" `
   -TunnelId "<cloudflare-tunnel-id>" `
   -CredentialsFile "C:\ProgramData\Aether\cloudflare\<cloudflare-tunnel-id>.json" `
+  -CaddyPath "C:\Program Files\Caddy\caddy.exe" `
   -Start
 ```
 
 The installer creates:
 
+- `AetherCaddy` Windows service (Caddy v2 one-domain router on `:8080`);
 - `AetherCloudflareTunnel` Windows service;
+- `C:\ProgramData\Aether\caddy\Caddyfile`;
 - `C:\ProgramData\Aether\cloudflare\config.yml`;
 - `C:\ProgramData\Aether\cloudflare\cloudflare-ingress-manifest.json`.
 

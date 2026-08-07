@@ -3,7 +3,9 @@ param(
     [string]$AetherHome = "C:\ProgramData\Aether",
     [Parameter(Mandatory = $true)][string]$BaseUrl,
     [int]$TimeoutSeconds = 8,
-    [string]$ServiceName = "AetherCloudflareTunnel"
+    [string]$ServiceName = "AetherCloudflareTunnel",
+    [string]$AccessCookie = "",
+    [switch]$ExpectAccessEnforcement
 )
 
 Set-StrictMode -Version Latest
@@ -17,28 +19,98 @@ $latestPath = Join-Path $ingressDir "latest_cloudflare_probe.json"
 $logPath = Join-Path $ingressDir "cloudflare-probes.jsonl"
 
 $base = $BaseUrl.TrimEnd("/")
-$routes = @()
-foreach ($route in $requiredRoutes) {
+
+# Cloudflare Access redirects unauthenticated clients to its own login host
+# (https://<team-name>.cloudflareaccess.com/cdn-cgi/access/login/...) or, in
+# some configurations, to a /.cloudflareaccess.com subdomain. A redirect is
+# only accepted as proof of Access enforcement when the Location header points
+# at that Cloudflare Access surface. Any other 3xx (an application redirect)
+# is NOT proof that Access enforced anything.
+function Test-AetherAccessProtected {
+    param(
+        [int]$StatusCode = 0,
+        [string]$Location = ""
+    )
+
+    $denial = @(401, 403) -contains $StatusCode
+    if ($denial) {
+        return $true
+    }
+
+    if (-not ($StatusCode -ge 300 -and $StatusCode -le 399)) {
+        return $false
+    }
+
+    if (-not $Location) {
+        return $false
+    }
+
+    $locationHost = $null
+    try {
+        $locationHost = [Uri]$Location
+    }
+    catch {
+        return $false
+    }
+    if ($null -eq $locationHost -or -not $locationHost.IsAbsoluteUri) {
+        return $false
+    }
+
+    $hostName = $locationHost.Host.ToLowerInvariant()
+    return (
+        $hostName.EndsWith(".cloudflareaccess.com") -or
+        $hostName -eq "cloudflareaccess.com" -or
+        $locationHost.AbsolutePath.ToLowerInvariant().Contains("/cdn-cgi/access/")
+    )
+}
+
+function Invoke-AetherProbeRoute {
+    param(
+        [Parameter(Mandatory = $true)][string]$Route,
+        [string]$Cookie = ""
+    )
+
     $started = Get-Date
     $statusCode = $null
     $ok = $false
+    $redirected = $false
     $err = $null
+    $location = $null
+
+    $headers = @{}
+    if ($Cookie) {
+        $headers["Cookie"] = "CF_Authorization=$Cookie"
+    }
+
     try {
-        $response = Invoke-WebRequest -Uri "$base$route" -TimeoutSec $TimeoutSeconds -UseBasicParsing
+        $response = Invoke-WebRequest -Uri "$base$Route" -TimeoutSec $TimeoutSeconds -UseBasicParsing -MaximumRedirection 0 -Headers $headers
         $statusCode = [int]$response.StatusCode
-        $ok = ($statusCode -ge 200 -and $statusCode -lt 400)
+        $ok = ($statusCode -ge 200 -and $statusCode -lt 300)
     }
     catch {
+        $statusCode = $null
         if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
             $statusCode = [int]$_.Exception.Response.StatusCode
         }
+        if ($_.Exception.Response -and $_.Exception.Response.Headers) {
+            $location = $_.Exception.Response.Headers["Location"]
+        }
         $err = $_.Exception.GetType().Name
     }
+
+    $redirected = @(301, 302, 303, 307, 308) -contains $statusCode
+    $denial = @(401, 403) -contains $statusCode
+    $accessProtected = Test-AetherAccessProtected -StatusCode $statusCode -Location $location
     $latencyMs = [math]::Round(((Get-Date) - $started).TotalMilliseconds, 1)
-    $routes += [ordered]@{
-        path = $route
+
+    return [ordered]@{
+        path = $Route
         status_code = $statusCode
         ok = $ok
+        redirected = $redirected
+        denied = $denial
+        access_protected = $accessProtected
+        redirect_location = $location
         latency_ms = $latencyMs
         error = $err
     }
@@ -46,9 +118,55 @@ foreach ($route in $requiredRoutes) {
 
 $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 $serviceStatus = if ($null -eq $service) { "missing" } else { $service.Status.ToString() }
-$requiredOk = (($routes | Where-Object { -not $_.ok }).Count -eq 0)
 $publicHttps = $base.StartsWith("https://")
-$status = if ($requiredOk -and $publicHttps -and $serviceStatus -eq "Running") { "ok" } else { "fail" }
+
+# Mode 1: unauthenticated probe (no cookie). With Cloudflare Access enabled,
+# every public route must be redirected/denied, never served anonymously.
+$unauthenticatedRoutes = @(
+    foreach ($route in $requiredRoutes) {
+        Invoke-AetherProbeRoute -Route $route
+    }
+)
+$unauthenticatedAllProtected = (
+    ($unauthenticatedRoutes | Where-Object { -not $_.access_protected }).Count -eq 0
+)
+
+# Mode 2: authenticated probe (Access session cookie). Routes must return the
+# real Aether application (2xx), proving they are reachable behind Access.
+$authenticatedRoutes = @()
+if ($AccessCookie) {
+    $authenticatedRoutes = @(
+        foreach ($route in $requiredRoutes) {
+            Invoke-AetherProbeRoute -Route $route -Cookie $AccessCookie
+        }
+    )
+}
+$authenticatedAllOk = (
+    $authenticatedRoutes.Count -gt 0 -and
+    ($authenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
+)
+
+$requiredOk = if ($ExpectAccessEnforcement) {
+    $unauthenticatedAllProtected
+}
+elseif ($AccessCookie) {
+    $authenticatedAllOk
+}
+else {
+    ($unauthenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
+}
+
+$status = if (
+    $requiredOk -and
+    $publicHttps -and
+    $serviceStatus -eq "Running" -and
+    -not ($ExpectAccessEnforcement -and -not $unauthenticatedAllProtected)
+) {
+    "ok"
+}
+else {
+    "fail"
+}
 
 $receipt = [ordered]@{
     schema = "aether.cloudflare-ingress.v1"
@@ -59,9 +177,14 @@ $receipt = [ordered]@{
     public_https = $publicHttps
     cloudflare_tunnel = ($serviceStatus -eq "Running")
     cloudflared_service_status = $serviceStatus
+    mode = if ($ExpectAccessEnforcement) { "access-enforcement" } elseif ($AccessCookie) { "authenticated" } else { "unauthenticated" }
     required_routes = $requiredRoutes
     required_routes_ok = $requiredOk
-    routes = $routes
+    unauthenticated_routes = $unauthenticatedRoutes
+    unauthenticated_all_protected = $unauthenticatedAllProtected
+    authenticated_routes = $authenticatedRoutes
+    authenticated_all_ok = $authenticatedAllOk
+    access_cookie_present = [bool]$AccessCookie
     receipt_source = "probe-cloudflare-ingress.ps1"
     secret_values_exposed = $false
 }
