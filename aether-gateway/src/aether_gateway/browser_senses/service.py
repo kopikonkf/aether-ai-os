@@ -6,13 +6,13 @@ the operator token and LiveKit participant token.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import os
 import re
-import sqlite3
 import secrets
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -23,6 +23,9 @@ from aether.browser_senses import BrowserSenseStore
 from aether.contracts import (
     SENSES_V1_CONTRACT_VERSION,
     BrowserSenseCapability,
+    BrowserSenseInterruptionReason,
+    BrowserSenseInterruptionReceipt,
+    BrowserSenseLateResultDisposition,
     BrowserSenseRuntimeProfile,
     BrowserSenseSession,
     BrowserSenseSessionState,
@@ -40,6 +43,8 @@ from aether.senses import SenseEventPath
 from aether.utils.ids import new_id
 from aether.utils.time import utc_now
 from aether_gateway.adapters import DirectTextSenseAdapter
+
+from .turns import BrowserSenseTurnLedger, TurnClaim, TurnClaimConflict
 
 
 class BrowserSenseAuthError(PermissionError):
@@ -172,6 +177,8 @@ class BrowserSenseService:
         self.frames_root = root / "frames"
         self.frames_root.mkdir(parents=True, exist_ok=True)
         self.store = BrowserSenseStore(root / "browser-senses.sqlite3")
+        self.turn_ledger = BrowserSenseTurnLedger(root / "browser-sense-turns.sqlite3")
+        self._active_turns: dict[tuple[str, str], tuple[int, asyncio.Task[Any]]] = {}
         self.sense_path = sense_path
         self.event_bus = event_bus
         self.token_codec = token_codec
@@ -314,39 +321,229 @@ class BrowserSenseService:
         })
         return receipt
 
-    async def handle_text(self, token: str, text: str, *, modality: str = "browser.text") -> dict[str, Any]:
+    @staticmethod
+    def _turn_request_hash(modality: str, content_hash: str) -> str:
+        payload = json.dumps(
+            {"modality": modality, "content_hash": content_hash},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _claim_turn(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        correlation_id: str,
+        generation: int,
+        request_hash: str,
+        retry_of_turn_id: str | None,
+    ) -> TurnClaim:
+        claim = self.turn_ledger.claim(
+            session_id=session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            generation=generation,
+            request_hash=request_hash,
+            retry_of_turn_id=retry_of_turn_id,
+        )
+        if claim.first_claim:
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_TURN_ACCEPTED,
+                actor="aether.browser-senses",
+                payload={
+                    "receipt_id": claim.status["receipt_id"],
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "correlation_id": correlation_id,
+                    "generation": generation,
+                    "retry_of_turn_id": retry_of_turn_id,
+                    "request_hash": request_hash,
+                },
+                correlation_id=correlation_id,
+            )
+        return claim
+
+    async def _execute_claimed_turn(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        correlation_id: str,
+        generation: int,
+        adapter: DirectTextSenseAdapter,
+        perception: Perception,
+        input_modality: str,
+        output_modality: str | None,
+        transcript_hash: str | None,
+        vision_frame_id: str | None,
+        actor: str,
+        metadata: Mapping[str, Any] | None = None,
+        extra_response: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("browser sense turn requires an asyncio task")
+        key = (session_id, turn_id)
+        self._active_turns[key] = (generation, task)
+        started = utc_now()
+        try:
+            trace = await self.sense_path.handle(adapter, perception)
+            expression = adapter.expressions[-1]
+            terminal_receipt_id = new_id("sense-turn-receipt")
+            response_hash = hashlib.sha256(expression.content.encode("utf-8")).hexdigest()
+            turn = BrowserSenseTurnReceipt(
+                turn_id=turn_id,
+                session_id=session_id,
+                input_modality=input_modality,
+                output_modality=output_modality or expression.modality,
+                transcript_hash=transcript_hash,
+                vision_frame_id=vision_frame_id,
+                correlation_id=correlation_id,
+                started_at=started,
+                completed_at=utc_now(),
+                provider_id=expression.metadata.get("provider_id"),
+                model_id=expression.metadata.get("model_id"),
+                metadata={
+                    **dict(metadata or {}),
+                    "generation": generation,
+                    "terminal_receipt_id": terminal_receipt_id,
+                    "response_hash": response_hash,
+                },
+            )
+            try:
+                turn_status = self.turn_ledger.complete(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    correlation_id=correlation_id,
+                    generation=generation,
+                    response_hash=response_hash,
+                    terminal_receipt_id=terminal_receipt_id,
+                )
+            except TurnClaimConflict:
+                latest = self.turn_ledger.status(session_id=session_id, turn_id=turn_id)
+                if latest["state"] != "interrupted":
+                    raise
+                discarded = self.turn_ledger.discard_late_result(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    correlation_id=correlation_id,
+                    original_generation=generation,
+                    response_hash=response_hash,
+                )
+                self.event_bus.emit(
+                    EventType.BROWSER_SENSE_LATE_RESULT_DISCARDED,
+                    actor=actor,
+                    payload=discarded,
+                    correlation_id=correlation_id,
+                )
+                raise
+            self.store.record_turn(turn)
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_TURN_COMPLETED,
+                actor=actor,
+                payload={
+                    "turn_id": turn.turn_id,
+                    "session_id": session_id,
+                    "input_modality": input_modality,
+                    "output_modality": turn.output_modality,
+                    "correlation_id": correlation_id,
+                    "generation": generation,
+                    "terminal_receipt_id": terminal_receipt_id,
+                    "response_hash": response_hash,
+                },
+                correlation_id=correlation_id,
+            )
+            return {
+                **dict(extra_response or {}),
+                "response": expression.content,
+                "expression": asdict(expression),
+                "trace": asdict(trace),
+                "turn": asdict(turn),
+                "turn_status": turn_status,
+                "replayed": False,
+            }
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            try:
+                status = self.turn_ledger.fail(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    correlation_id=correlation_id,
+                    generation=generation,
+                    failure_code=type(exc).__name__,
+                )
+                self.event_bus.emit(
+                    EventType.BROWSER_SENSE_TURN_FAILED,
+                    actor=actor,
+                    payload=status,
+                    severity="error",
+                    correlation_id=correlation_id,
+                )
+            except TurnClaimConflict:
+                # A concurrent interruption is already the authoritative terminal state.
+                pass
+            raise
+        finally:
+            if self._active_turns.get(key) == (generation, task):
+                self._active_turns.pop(key, None)
+
+    async def handle_text(
+        self,
+        token: str,
+        text: str,
+        *,
+        turn_id: str,
+        correlation_id: str,
+        generation: int = 0,
+        retry_of_turn_id: str | None = None,
+        modality: str = "browser.text",
+    ) -> dict[str, Any]:
         session = self.authenticate(token)
         normalized = text.strip()
         if not normalized:
             raise ValueError("text must not be empty")
-        adapter = DirectTextSenseAdapter(adapter_id="sense.browser")
-        started = utc_now()
-        trace = await self.sense_path.handle(adapter, Perception(
-            modality=modality,
-            content=normalized,
-            source=f"browser:{session.session_id}",
-            metadata={
-                "channel": "browser",
-                "session_id": f"browser:{session.session_id}",
-                "response_modality": "text",
-                "browser_sense_session_id": session.session_id,
-            },
-        ))
-        expression = adapter.expressions[-1]
-        turn = BrowserSenseTurnReceipt(
-            turn_id=new_id("sense-turn"), session_id=session.session_id,
-            input_modality=modality, output_modality=expression.modality,
-            transcript_hash=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-            vision_frame_id=None, correlation_id=trace.correlation_id,
-            started_at=started, completed_at=utc_now(),
-            provider_id=expression.metadata.get("provider_id"), model_id=expression.metadata.get("model_id"),
+        transcript_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        claim = self._claim_turn(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            generation=generation,
+            request_hash=self._turn_request_hash(modality, transcript_hash),
+            retry_of_turn_id=retry_of_turn_id,
         )
-        self.store.record_turn(turn)
-        self.event_bus.emit(EventType.BROWSER_SENSE_TURN_COMPLETED, actor="aether.browser-senses", payload={
-            "turn_id": turn.turn_id, "session_id": session.session_id, "input_modality": modality,
-            "output_modality": expression.modality, "correlation_id": trace.correlation_id,
-        })
-        return {"response": expression.content, "expression": asdict(expression), "trace": asdict(trace), "turn": asdict(turn)}
+        if not claim.first_claim:
+            return {"replayed": True, "turn_status": claim.status}
+        adapter = DirectTextSenseAdapter(adapter_id="sense.browser")
+        return await self._execute_claimed_turn(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            generation=generation,
+            adapter=adapter,
+            perception=Perception(
+                modality=modality,
+                content=normalized,
+                source=f"browser:{session.session_id}",
+                metadata={
+                    "channel": "browser",
+                    "session_id": f"browser:{session.session_id}",
+                    "response_modality": "text",
+                    "browser_sense_session_id": session.session_id,
+                    "turn_id": turn_id,
+                    "turn_generation": generation,
+                },
+                correlation_id=correlation_id,
+            ),
+            input_modality=modality,
+            output_modality=None,
+            transcript_hash=transcript_hash,
+            vision_frame_id=None,
+            actor="aether.browser-senses",
+            metadata={"retry_of_turn_id": retry_of_turn_id},
+        )
 
     async def handle_worker_transcript(
         self,
@@ -354,6 +551,10 @@ class BrowserSenseService:
         room_name: str,
         participant_identity: str,
         text: str,
+        turn_id: str,
+        correlation_id: str,
+        generation: int = 0,
+        retry_of_turn_id: str | None = None,
     ) -> dict[str, Any]:
         try:
             session = self.store.get_session_by_room(room_name)
@@ -363,40 +564,51 @@ class BrowserSenseService:
         normalized = text.strip()
         if not normalized:
             raise ValueError("transcript must not be empty")
-        adapter = DirectTextSenseAdapter(adapter_id="sense.livekit-worker")
-        started = utc_now()
-        trace = await self.sense_path.handle(adapter, Perception(
-            modality="audio.transcript",
-            content=normalized,
-            source=f"livekit:{room_name}:{participant_identity}",
-            metadata={
-                "channel": "livekit",
-                "session_id": f"browser:{browser_session_id}",
-                "response_modality": "text",
-                "browser_sense_session_id": browser_session_id,
-                "livekit_room": room_name,
-                "participant_identity": participant_identity,
-            },
-        ))
-        expression = adapter.expressions[-1]
-        turn = BrowserSenseTurnReceipt(
-            turn_id=new_id("sense-turn"), session_id=browser_session_id,
-            input_modality="audio.transcript", output_modality="audio.speech",
-            transcript_hash=hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
-            vision_frame_id=None, correlation_id=trace.correlation_id,
-            started_at=started, completed_at=utc_now(),
-            provider_id=expression.metadata.get("provider_id"), model_id=expression.metadata.get("model_id"),
-            metadata={"transport": BrowserSenseTransport.LIVEKIT.value, "participant_identity": participant_identity},
+        transcript_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        claim = self._claim_turn(
+            session_id=browser_session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            generation=generation,
+            request_hash=self._turn_request_hash("audio.transcript", transcript_hash),
+            retry_of_turn_id=retry_of_turn_id,
         )
-        try:
-            self.store.record_turn(turn)
-        except sqlite3.IntegrityError:
-            pass
-        self.event_bus.emit(EventType.BROWSER_SENSE_TURN_COMPLETED, actor="aether.livekit-worker", payload={
-            "turn_id": turn.turn_id, "session_id": browser_session_id, "input_modality": "audio.transcript",
-            "output_modality": "audio.speech", "correlation_id": trace.correlation_id,
-        })
-        return {"response": expression.content, "expression": asdict(expression), "trace": asdict(trace), "turn": asdict(turn)}
+        if not claim.first_claim:
+            return {"replayed": True, "turn_status": claim.status}
+        adapter = DirectTextSenseAdapter(adapter_id="sense.livekit-worker")
+        return await self._execute_claimed_turn(
+            session_id=browser_session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            generation=generation,
+            adapter=adapter,
+            perception=Perception(
+                modality="audio.transcript",
+                content=normalized,
+                source=f"livekit:{room_name}:{participant_identity}",
+                metadata={
+                    "channel": "livekit",
+                    "session_id": f"browser:{browser_session_id}",
+                    "response_modality": "text",
+                    "browser_sense_session_id": browser_session_id,
+                    "livekit_room": room_name,
+                    "participant_identity": participant_identity,
+                    "turn_id": turn_id,
+                    "turn_generation": generation,
+                },
+                correlation_id=correlation_id,
+            ),
+            input_modality="audio.transcript",
+            output_modality="audio.speech",
+            transcript_hash=transcript_hash,
+            vision_frame_id=None,
+            actor="aether.livekit-worker",
+            metadata={
+                "transport": BrowserSenseTransport.LIVEKIT.value,
+                "participant_identity": participant_identity,
+                "retry_of_turn_id": retry_of_turn_id,
+            },
+        )
 
     async def handle_vision(
         self,
@@ -407,6 +619,10 @@ class BrowserSenseService:
         prompt: str,
         width: int | None = None,
         height: int | None = None,
+        turn_id: str,
+        correlation_id: str,
+        generation: int = 0,
+        retry_of_turn_id: str | None = None,
     ) -> dict[str, Any]:
         session = self.authenticate(token)
         if BrowserSenseCapability.CAMERA not in session.capabilities:
@@ -420,6 +636,28 @@ class BrowserSenseService:
         if content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise ValueError("unsupported vision frame content type")
         digest = hashlib.sha256(raw).hexdigest()
+        normalized_prompt = prompt.strip() or "Describe only what is materially visible in this frame."
+        vision_input_hash = hashlib.sha256(json.dumps(
+            {
+                "content_hash": digest,
+                "content_type": content_type,
+                "width": width,
+                "height": height,
+                "prompt_hash": hashlib.sha256(normalized_prompt.encode("utf-8")).hexdigest(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        claim = self._claim_turn(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            generation=generation,
+            request_hash=self._turn_request_hash("image.frame", vision_input_hash),
+            retry_of_turn_id=retry_of_turn_id,
+        )
+        if not claim.first_claim:
+            return {"replayed": True, "turn_status": claim.status}
         suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[content_type]
         frame_id = new_id("vision-frame")
         session_dir = self.frames_root / session.session_id
@@ -430,7 +668,7 @@ class BrowserSenseService:
             frame_id=frame_id, session_id=session.session_id, content_hash=digest,
             byte_count=len(raw), content_type=content_type, width=width, height=height,
             observed_at=utc_now(), storage_reference=str(path.relative_to(self.root)),
-            prompt=prompt.strip() or "Describe only what is materially visible in this frame.",
+            prompt=normalized_prompt,
             metadata={"transport": BrowserSenseTransport.HTTP_KEYFRAME.value},
         )
         self.store.record_frame(receipt)
@@ -439,34 +677,170 @@ class BrowserSenseService:
             "byte_count": len(raw), "content_type": content_type,
         })
         adapter = DirectTextSenseAdapter(adapter_id="sense.browser-vision")
-        started = utc_now()
         data_url = f"{content_type};base64,{data_base64}"
-        trace = await self.sense_path.handle(adapter, Perception(
-            modality="image.frame",
-            content={"prompt": receipt.prompt, "image_data_url": f"data:{data_url}"},
-            source=f"browser:{session.session_id}",
-            metadata={
-                "channel": "browser",
-                "session_id": f"browser:{session.session_id}",
-                "response_modality": "text",
-                "capability": "vision",
-                "browser_sense_session_id": session.session_id,
-                "vision_frame_id": frame_id,
-                "media_content_hash": digest,
-                "media_byte_count": len(raw),
-                "media_content_type": content_type,
-            },
-        ))
-        expression = adapter.expressions[-1]
-        turn = BrowserSenseTurnReceipt(
-            turn_id=new_id("sense-turn"), session_id=session.session_id,
-            input_modality="image.frame", output_modality=expression.modality,
-            transcript_hash=None, vision_frame_id=frame_id, correlation_id=trace.correlation_id,
-            started_at=started, completed_at=utc_now(),
-            provider_id=expression.metadata.get("provider_id"), model_id=expression.metadata.get("model_id"),
+        return await self._execute_claimed_turn(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            generation=generation,
+            adapter=adapter,
+            perception=Perception(
+                modality="image.frame",
+                content={"prompt": receipt.prompt, "image_data_url": f"data:{data_url}"},
+                source=f"browser:{session.session_id}",
+                metadata={
+                    "channel": "browser",
+                    "session_id": f"browser:{session.session_id}",
+                    "response_modality": "text",
+                    "capability": "vision",
+                    "browser_sense_session_id": session.session_id,
+                    "vision_frame_id": frame_id,
+                    "media_content_hash": digest,
+                    "media_byte_count": len(raw),
+                    "media_content_type": content_type,
+                    "turn_id": turn_id,
+                    "turn_generation": generation,
+                },
+                correlation_id=correlation_id,
+            ),
+            input_modality="image.frame",
+            output_modality=None,
+            transcript_hash=None,
+            vision_frame_id=frame_id,
+            actor="aether.browser-senses",
+            metadata={"retry_of_turn_id": retry_of_turn_id},
+            extra_response={"frame": asdict(receipt)},
         )
-        self.store.record_turn(turn)
-        return {"frame": asdict(receipt), "response": expression.content, "expression": asdict(expression), "trace": asdict(trace), "turn": asdict(turn)}
+
+    def turn_status(self, token: str, turn_id: str) -> dict[str, Any]:
+        session = self.authenticate(token)
+        return self.turn_ledger.status(session_id=session.session_id, turn_id=turn_id)
+
+    def interrupt_turn(
+        self,
+        token: str,
+        *,
+        turn_id: str,
+        correlation_id: str,
+        previous_generation: int,
+        next_generation: int,
+        reason: str,
+        delivered_audio_ms: int | None,
+        browser_audio_stopped: bool = False,
+        livekit_control_sent: bool = False,
+        provider_cancel_supported: bool = False,
+        provider_cancelled: bool = False,
+    ) -> dict[str, Any]:
+        session = self.authenticate(token)
+        return self._interrupt_session_turn(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            previous_generation=previous_generation,
+            next_generation=next_generation,
+            reason=reason,
+            delivered_audio_ms=delivered_audio_ms,
+            browser_audio_stopped=browser_audio_stopped,
+            livekit_control_sent=livekit_control_sent,
+            provider_cancel_supported=provider_cancel_supported,
+            provider_cancelled=provider_cancelled,
+            actor="aether.browser-senses",
+        )
+
+    def interrupt_worker_turn(
+        self,
+        *,
+        room_name: str,
+        turn_id: str,
+        correlation_id: str,
+        previous_generation: int,
+        next_generation: int,
+        reason: str,
+        delivered_audio_ms: int | None,
+        provider_cancel_supported: bool,
+        provider_cancelled: bool,
+        livekit_control_sent: bool = False,
+    ) -> dict[str, Any]:
+        session = self.store.get_session_by_room(room_name)
+        return self._interrupt_session_turn(
+            session_id=session.session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            previous_generation=previous_generation,
+            next_generation=next_generation,
+            reason=reason,
+            delivered_audio_ms=delivered_audio_ms,
+            browser_audio_stopped=False,
+            livekit_control_sent=livekit_control_sent,
+            provider_cancel_supported=provider_cancel_supported,
+            provider_cancelled=provider_cancelled,
+            actor="aether.livekit-worker",
+        )
+
+    def _interrupt_session_turn(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        correlation_id: str,
+        previous_generation: int,
+        next_generation: int,
+        reason: str,
+        delivered_audio_ms: int | None,
+        browser_audio_stopped: bool,
+        livekit_control_sent: bool,
+        provider_cancel_supported: bool,
+        provider_cancelled: bool,
+        actor: str,
+    ) -> dict[str, Any]:
+        interruption_reason = BrowserSenseInterruptionReason(reason)
+        active = self._active_turns.get((session_id, turn_id))
+        cognition_cancelled = bool(active and active[0] == previous_generation)
+        payload = self.turn_ledger.interrupt(
+            session_id=session_id,
+            turn_id=turn_id,
+            correlation_id=correlation_id,
+            previous_generation=previous_generation,
+            next_generation=next_generation,
+            reason=interruption_reason.value,
+            provider_cancel_supported=provider_cancel_supported,
+            provider_cancelled=provider_cancelled,
+            delivered_audio_ms=delivered_audio_ms,
+            upstream_cancelled=cognition_cancelled,
+            browser_audio_stopped=browser_audio_stopped,
+            livekit_control_sent=livekit_control_sent,
+        )
+        if cognition_cancelled:
+            active[1].cancel()
+        receipt = BrowserSenseInterruptionReceipt(
+            receipt_id=payload["receipt_id"],
+            session_id=session_id,
+            turn_id=turn_id,
+            reason=interruption_reason,
+            requested_at=payload["requested_at"],
+            audio_silent_at=payload["audio_silent_at"],
+            previous_generation=previous_generation,
+            next_generation=next_generation,
+            delivered_audio_ms=delivered_audio_ms,
+            provider_cancel_supported=bool(payload["provider_cancel_supported"]),
+            provider_cancelled=bool(payload["provider_cancelled"]),
+            late_result_disposition=BrowserSenseLateResultDisposition(
+                payload["late_result_disposition"]
+            ),
+            metadata={
+                "browser_audio_stopped": bool(payload["browser_audio_stopped"]),
+                "livekit_control_sent": bool(payload["livekit_control_sent"]),
+                "cognition_cancelled": cognition_cancelled,
+            },
+        )
+        event_payload = asdict(receipt)
+        self.event_bus.emit(
+            EventType.BROWSER_SENSE_TURN_INTERRUPTED,
+            actor=actor,
+            payload=event_payload,
+            correlation_id=correlation_id,
+        )
+        return payload
 
     def status(self) -> dict[str, Any]:
         return {
@@ -477,6 +851,7 @@ class BrowserSenseService:
             "maximum_frame_bytes": self.maximum_frame_bytes,
             "default_session_ttl_seconds": self.default_ttl_seconds,
             "store": self.store.status(),
+            "turn_ledger": self.turn_ledger.counts(),
             "capabilities": [item.value for item in BrowserSenseCapability],
             "browser_requirements": {"secure_context": True, "permission_required": True},
         }

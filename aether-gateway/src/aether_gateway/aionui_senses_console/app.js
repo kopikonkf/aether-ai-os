@@ -6,6 +6,10 @@ import {
   createClientStore,
   deriveClientPresentation,
 } from './client_state.js';
+import {
+  createTurnGenerationCoordinator,
+  stopTurnAudio,
+} from './turn_generation.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -23,6 +27,10 @@ const state = {
   cameraEnabled: false,
   autoVisionTimer: null,
   fallbackRecognition: null,
+  remoteAudioElements: new Set(),
+  remoteAudioTracks: new Set(),
+  activeRequestController: null,
+  lastUnconfirmedInput: null,
   voices: [],
   voiceProfile: {
     name: '__auto__',
@@ -33,6 +41,10 @@ const state = {
   },
 };
 const API = '';
+const TURN_STATE_TOPIC = 'aether.senses.turn-state.v1';
+const TURN_REQUEST_TIMEOUT_MS = 30000;
+const RECONCILIATION_DELAYS_MS = Object.freeze([0, 1000, 3000]);
+const turnCoordinator = createTurnGenerationCoordinator();
 
 function message(role, text) {
   const node = document.createElement('div');
@@ -73,7 +85,10 @@ function renderClientState(clientState) {
   $('cameraButton').disabled = !presentation.canUseSensors && !state.cameraEnabled;
   $('visionButton').disabled = !presentation.canUseSensors || !state.cameraEnabled;
   $('chatInput').disabled = !presentation.canSend;
-  $('chatForm').querySelector('button').disabled = !presentation.canSend;
+  $('chatForm').querySelector('button[type="submit"]').disabled = !presentation.canSend;
+  $('stopAether').disabled = !presentation.canStopTurn;
+  $('retryTurn').hidden = !(presentation.canRetryTurn && state.lastUnconfirmedInput);
+  $('retryTurn').disabled = !(presentation.canRetryTurn && state.lastUnconfirmedInput);
   $('previewVoice').disabled = !presentation.canUseBrowserSpeech;
   $('privateTextOnly').checked = (
     clientState.externalSpeech.privacy === ExternalSpeechPrivacy.PRIVATE_TEXT_ONLY
@@ -88,6 +103,59 @@ function dispatch(type, values = {}) {
 
 function dispatchForEpoch(type, epoch, values = {}) {
   return clientStore.dispatch({ type, epoch, ...values });
+}
+
+function turnEvent(turn, values = {}) {
+  return {
+    turnId: turn.turnId,
+    correlationId: turn.correlationId,
+    generation: turn.generation,
+    ...values,
+  };
+}
+
+function turnRequestFields(turn) {
+  return {
+    turn_id: turn.turnId,
+    correlation_id: turn.correlationId,
+    generation: turn.generation,
+    retry_of_turn_id: turn.retryOfTurnId || null,
+  };
+}
+
+function normalizedTurnStatus(status) {
+  return {
+    ...status,
+    turnId: status.turn_id,
+    correlationId: status.correlation_id,
+  };
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function resumeRemoteAudio() {
+  if (!state.room || state.remoteAudioElements.size) return;
+  for (const track of state.remoteAudioTracks) {
+    const element = track.attach();
+    element.autoplay = true;
+    state.remoteAudioElements.add(element);
+    $('remoteAudio').appendChild(element);
+  }
+}
+
+async function lookupTurnStatus(turn) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    return await jsonFetch(
+      `${API}/api/browser-senses/turns/${encodeURIComponent(turn.turnId)}/status`,
+      { method: 'POST', headers: authHeaders(), signal: controller.signal },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function stopAutoVision() {
@@ -106,6 +174,14 @@ function stopLocalCapture() {
   if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
   }
+  for (const element of state.remoteAudioElements) {
+    element.pause?.();
+    element.srcObject = null;
+    element.remove?.();
+  }
+  state.remoteAudioElements.clear();
+  for (const track of state.remoteAudioTracks) track.detach?.();
+  state.remoteAudioTracks.clear();
 }
 
 function clearSessionRuntime() {
@@ -117,6 +193,10 @@ function clearSessionRuntime() {
   state.csrfNonce = '';
   state.session = null;
   state.livekit = null;
+  state.activeRequestController?.abort();
+  state.activeRequestController = null;
+  state.lastUnconfirmedInput = null;
+  turnCoordinator.reset();
   state.micEnabled = false;
   $('micButton').disabled = true;
   $('micButton').textContent = 'Mute microphone';
@@ -515,7 +595,23 @@ function chooseAutomaticVoice(spoken) {
   return pool[Math.min(offset, pool.length - 1)] || pool[0];
 }
 
-function speak(text, { epoch = clientStore.getEpoch(), trackTurn = true } = {}) {
+function finishPresentedTurn(turn, status, epoch) {
+  if (!turnCoordinator.accepts(turn)) return;
+  const reconciled = turnCoordinator.reconcile(normalizedTurnStatus(status));
+  dispatchForEpoch('TURN_RESULT_RECEIVED', epoch, turnEvent(reconciled, {
+    authoritativeReceiptId: status.terminal_receipt_id || status.receipt_id,
+  }));
+}
+
+function speak(
+  text,
+  {
+    epoch = clientStore.getEpoch(),
+    trackTurn = true,
+    turn = null,
+    status = null,
+  } = {},
+) {
   const presentation = deriveClientPresentation(clientStore.getState());
   if (!presentation.canUseBrowserSpeech || !('speechSynthesis' in window)) {
     return false;
@@ -539,9 +635,19 @@ function speak(text, { epoch = clientStore.getEpoch(), trackTurn = true } = {}) 
   utterance.pitch = Number(state.voiceProfile.pitch) || 1.12;
   utterance.volume = Number(state.voiceProfile.volume) || 1;
   if (trackTurn) {
-    utterance.onstart = () => dispatchForEpoch('RESPONSE_AUDIO_STARTED', epoch);
-    utterance.onend = () => dispatchForEpoch('RESPONSE_AUDIO_FINISHED', epoch);
-    utterance.onerror = () => dispatchForEpoch('TURN_RESET', epoch);
+    utterance.onstart = () => {
+      if (!turn || turnCoordinator.accepts(turn)) {
+        dispatchForEpoch('RESPONSE_AUDIO_STARTED', epoch, turn ? turnEvent(turn) : {});
+      }
+    };
+    utterance.onend = () => {
+      if (turn && status) finishPresentedTurn(turn, status, epoch);
+      else dispatchForEpoch('RESPONSE_AUDIO_FINISHED', epoch);
+    };
+    utterance.onerror = () => {
+      if (turn && status) finishPresentedTurn(turn, status, epoch);
+      else dispatchForEpoch('TURN_RESET', epoch);
+    };
   }
   speechSynthesis.cancel();
   speechSynthesis.speak(utterance);
@@ -612,9 +718,70 @@ async function connectLiveKit(epoch) {
       const element = track.attach();
       element.autoplay = true;
       $('remoteAudio').appendChild(element);
+      state.remoteAudioTracks.add(track);
+      state.remoteAudioElements.add(element);
     }
     if (track.kind === livekit.Track.Kind.Video) {
       track.attach($('localVideo'));
+    }
+  });
+  room.on(livekit.RoomEvent.TrackUnsubscribed, (track) => {
+    if (track.kind !== livekit.Track.Kind.Audio) return;
+    state.remoteAudioTracks.delete(track);
+    for (const element of track.detach() || []) {
+      state.remoteAudioElements.delete(element);
+      element.remove?.();
+    }
+  });
+  room.on(livekit.RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+    if (topic !== TURN_STATE_TOPIC || payload.byteLength > 2048 || !participant) return;
+    try {
+      const event = JSON.parse(new TextDecoder().decode(payload));
+      if (
+        event.type !== 'turn-state'
+        || !['accepted', 'response-ready', 'completed', 'interrupted', 'failed'].includes(event.state)
+        || !String(event.turn_id || '').trim()
+        || !String(event.correlation_id || '').trim()
+        || !Number.isInteger(event.generation)
+      ) return;
+      const epoch = clientStore.getEpoch();
+      const turn = {
+        turnId: event.turn_id,
+        correlationId: event.correlation_id,
+        generation: event.generation,
+        retryOfTurnId: event.retry_of_turn_id || null,
+      };
+      if (event.state === 'accepted') {
+        turnCoordinator.adopt(turn);
+        dispatchForEpoch('TURN_GENERATION_ADOPTED', epoch, turnEvent(turn, {
+          retryOfTurnId: turn.retryOfTurnId,
+        }));
+      } else if (event.state === 'response-ready' && turnCoordinator.accepts(turn)) {
+        resumeRemoteAudio();
+        dispatchForEpoch('TURN_ACCEPTED', epoch, turnEvent(turn));
+      } else if (['completed', 'interrupted', 'failed'].includes(event.state)) {
+        const status = normalizedTurnStatus(event);
+        turnCoordinator.reconcile(status);
+        if (event.state === 'interrupted') {
+          stopTurnAudio({
+            speechSynthesis: window.speechSynthesis,
+            recognition: state.fallbackRecognition,
+            remoteTracks: state.remoteAudioTracks,
+            remoteAudioElements: state.remoteAudioElements,
+            room: null,
+            control: null,
+          }).catch(() => {});
+        }
+        dispatchForEpoch('TURN_RECONCILED', epoch, turnEvent(
+          turnCoordinator.snapshot(),
+          {
+            status: event.state,
+            authoritativeReceiptId: event.receipt_id || null,
+          },
+        ));
+      }
+    } catch {
+      // Turn-state packets are bounded metadata. Malformed packets are ignored.
     }
   });
   room.on(livekit.RoomEvent.TranscriptionReceived, (segments) => {
@@ -763,30 +930,159 @@ function captureFrame() {
   };
 }
 
-function presentAssistantResponse(response, epoch) {
+function presentAssistantResponse(response, epoch, turn, status) {
+  if (!turnCoordinator.accepts(turn)) return false;
   message('assistant', response);
   $('transcript').textContent = response;
-  if (!state.room && speak(response, { epoch, trackTurn: true })) return;
-  dispatchForEpoch('TEXT_RESPONSE_PRESENTED', epoch);
+  if (!state.room && speak(response, {
+    epoch,
+    trackTurn: true,
+    turn,
+    status,
+  })) return true;
+  finishPresentedTurn(turn, status, epoch);
+  return true;
+}
+
+function terminalReceiptId(status) {
+  return status?.terminal_receipt_id || status?.receipt_id || null;
+}
+
+function dispatchReconciledStatus(status, epoch) {
+  const normalized = normalizedTurnStatus(status);
+  const reconciled = turnCoordinator.reconcile(normalized);
+  dispatchForEpoch('TURN_RECONCILED', epoch, turnEvent(reconciled, {
+    status: status.state,
+    authoritativeReceiptId: terminalReceiptId(status),
+  }));
+  if (status.state !== 'accepted') state.lastUnconfirmedInput = null;
+  return reconciled;
+}
+
+async function reconcileAmbiguousTurn(turn, epoch) {
+  let lastStatus = null;
+  for (const delay of RECONCILIATION_DELAYS_MS) {
+    if (delay) await sleep(delay);
+    if (!turnCoordinator.accepts(turn)) return;
+    try {
+      lastStatus = await lookupTurnStatus(turn);
+    } catch (error) {
+      if (error.status !== 404) continue;
+      lastStatus = null;
+    }
+    if (!lastStatus) continue;
+    if (lastStatus.state === 'accepted') continue;
+    dispatchReconciledStatus(lastStatus, epoch);
+    if (lastStatus.state === 'completed') {
+      message(
+        'system',
+        'Turn completed at Aether, but the response body was lost in transit. It was not replayed.',
+      );
+    } else if (lastStatus.state === 'failed') {
+      message('system', 'Aether confirmed that the ambiguous turn failed.');
+    }
+    return;
+  }
+  if (!turnCoordinator.accepts(turn)) return;
+  const unconfirmed = turnCoordinator.reconcile({
+    ...turn,
+    state: 'not-confirmed',
+  });
+  dispatchForEpoch('TURN_NOT_CONFIRMED', epoch, turnEvent(unconfirmed));
+  message(
+    'system',
+    'Turn outcome is not confirmed. Aether did not replay it; Retry creates a new linked turn.',
+  );
+}
+
+function isAmbiguousNetworkError(error, timedOut) {
+  return timedOut || error?.name === 'AbortError' || error instanceof TypeError;
+}
+
+async function executeBrowserTurn({ endpoint, payload, turn, epoch, inputForRetry }) {
+  const controller = new AbortController();
+  state.activeRequestController = controller;
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, TURN_REQUEST_TIMEOUT_MS);
+  try {
+    const result = await jsonFetch(`${API}${endpoint}`, {
+      method: 'POST',
+      headers: authHeaders(),
+      signal: controller.signal,
+      body: JSON.stringify({ ...payload, ...turnRequestFields(turn) }),
+    });
+    if (!turnCoordinator.accepts(turn)) return null;
+    if (result.replayed) {
+      dispatchReconciledStatus(result.turn_status, epoch);
+      return null;
+    }
+    const status = result.turn_status;
+    if (
+      status?.turn_id !== turn.turnId
+      || status?.correlation_id !== turn.correlationId
+      || status?.generation !== turn.generation
+      || status?.state !== 'completed'
+      || !terminalReceiptId(status)
+    ) {
+      throw new Error('Aether returned an unbound turn result');
+    }
+    dispatchForEpoch('TURN_ACCEPTED', epoch, turnEvent(turn));
+    state.lastUnconfirmedInput = null;
+    presentAssistantResponse(result.response, epoch, turn, status);
+    return result;
+  } catch (error) {
+    if (!turnCoordinator.accepts(turn)) return null;
+    if (isAmbiguousNetworkError(error, timedOut)) {
+      turnCoordinator.markAmbiguous(turn);
+      state.lastUnconfirmedInput = inputForRetry;
+      dispatchForEpoch('TURN_NETWORK_AMBIGUOUS', epoch, turnEvent(turn));
+      await reconcileAmbiguousTurn(turn, epoch);
+      return null;
+    }
+    turnCoordinator.reconcile({ ...turn, state: 'failed' });
+    dispatchForEpoch('TURN_REJECTED', epoch, turnEvent(turn));
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    if (state.activeRequestController === controller) {
+      state.activeRequestController = null;
+    }
+  }
+}
+
+async function beginBrowserTurn({ retry = false } = {}) {
+  const active = turnCoordinator.snapshot();
+  if (
+    active
+    && !['completed', 'interrupted', 'failed', 'not-confirmed'].includes(active.delivery)
+  ) {
+    await interruptActiveTurn('competing_input');
+  }
+  return retry ? turnCoordinator.startExplicitRetry() : turnCoordinator.start();
 }
 
 async function askVision(silent = false) {
   if (!state.session) throw new Error('Connect a browser session first.');
   const epoch = clientStore.getEpoch();
-  dispatchForEpoch('TEXT_COMMIT_STARTED', epoch);
+  const turn = await beginBrowserTurn();
+  dispatchForEpoch('TURN_GENERATION_STARTED', epoch, turnEvent(turn, {
+    retryOfTurnId: turn.retryOfTurnId,
+  }));
   $('visionBadge').textContent = 'VISION COMMITTING';
   try {
-    const result = await jsonFetch(`${API}/api/browser-senses/vision`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(captureFrame()),
-    });
-    dispatchForEpoch('TURN_ACCEPTED', epoch);
-    $('visionBadge').textContent = 'VISION READY';
     if (!silent) message('user', '[camera frame]');
-    presentAssistantResponse(result.response, epoch);
+    const result = await executeBrowserTurn({
+      endpoint: '/api/browser-senses/vision',
+      payload: captureFrame(),
+      turn,
+      epoch,
+      inputForRetry: null,
+    });
+    $('visionBadge').textContent = result ? 'VISION READY' : 'VISION UNCONFIRMED';
   } catch (error) {
-    dispatchForEpoch('TURN_REJECTED', epoch);
     $('visionBadge').textContent = 'VISION ERROR';
     message('system', `Vision failed: ${error.message}`);
   }
@@ -812,28 +1108,22 @@ function toggleAutoVision() {
   );
 }
 
-async function sendText(text) {
+async function sendText(text, { retry = false } = {}) {
   if (!state.session) throw new Error('Connect a browser session first.');
-  const currentTurn = clientStore.getState().turn;
-  if (![TurnState.IDLE, TurnState.LISTENING].includes(currentTurn)) {
-    throw new Error('A turn is already active. Wait for its terminal state.');
-  }
   const epoch = clientStore.getEpoch();
-  dispatchForEpoch('TEXT_COMMIT_STARTED', epoch);
+  const turn = await beginBrowserTurn({ retry });
+  dispatchForEpoch('TURN_GENERATION_STARTED', epoch, turnEvent(turn, {
+    retryOfTurnId: turn.retryOfTurnId,
+  }));
   message('user', text);
   $('transcript').textContent = text;
-  try {
-    const result = await jsonFetch(`${API}/api/browser-senses/text`, {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ text }),
-    });
-    dispatchForEpoch('TURN_ACCEPTED', epoch);
-    presentAssistantResponse(result.response, epoch);
-  } catch (error) {
-    dispatchForEpoch('TURN_REJECTED', epoch);
-    throw error;
-  }
+  return executeBrowserTurn({
+    endpoint: '/api/browser-senses/text',
+    payload: { text },
+    turn,
+    epoch,
+    inputForRetry: { kind: 'text', text },
+  });
 }
 
 function fallbackSTT() {
@@ -868,6 +1158,86 @@ function fallbackSTT() {
   state.fallbackRecognition = recognition;
 }
 
+async function interruptActiveTurn(reason = 'explicit_stop') {
+  const active = turnCoordinator.snapshot();
+  if (
+    !active
+    || ['completed', 'interrupted', 'failed', 'not-confirmed'].includes(active.delivery)
+  ) return null;
+  const epoch = clientStore.getEpoch();
+  const interruption = turnCoordinator.interrupt(reason);
+  dispatchForEpoch('INTERRUPT_REQUESTED', epoch, {
+    turnId: interruption.turnId,
+    correlationId: interruption.correlationId,
+    previousGeneration: interruption.previousGeneration,
+    nextGeneration: interruption.nextGeneration,
+  });
+  state.activeRequestController?.abort();
+  const audio = await stopTurnAudio({
+    speechSynthesis: window.speechSynthesis,
+    recognition: state.fallbackRecognition,
+    remoteTracks: state.remoteAudioTracks,
+    remoteAudioElements: state.remoteAudioElements,
+    room: state.room,
+    control: {
+      type: 'interrupt',
+      turn_id: interruption.turnId,
+      correlation_id: interruption.correlationId,
+      previous_generation: interruption.previousGeneration,
+      next_generation: interruption.nextGeneration,
+      reason,
+    },
+  });
+  state.fallbackRecognition = null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  let receipt;
+  try {
+    receipt = await jsonFetch(
+      `${API}/api/browser-senses/turns/${encodeURIComponent(interruption.turnId)}/interrupt`,
+      {
+        method: 'POST',
+        headers: authHeaders(),
+        signal: controller.signal,
+        body: JSON.stringify({
+          correlation_id: interruption.correlationId,
+          previous_generation: interruption.previousGeneration,
+          next_generation: interruption.nextGeneration,
+          reason,
+          delivered_audio_ms: null,
+          livekit_control_sent: audio.livekitControlSent,
+          browser_audio_stopped: audio.browserAudioStopped,
+        }),
+      },
+    );
+  } catch (error) {
+    const status = await lookupTurnStatus(interruption).catch(() => null);
+    if (
+      status?.state !== 'interrupted'
+      || status.turn_id !== interruption.turnId
+      || status.correlation_id !== interruption.correlationId
+      || status.generation !== interruption.nextGeneration
+      || !status.receipt_id
+    ) throw error;
+    receipt = status;
+  } finally {
+    clearTimeout(timeout);
+  }
+  const acknowledged = turnCoordinator.acknowledgeInterruption(receipt.receipt_id);
+  dispatchForEpoch('INTERRUPT_ACKNOWLEDGED', epoch, turnEvent(acknowledged, {
+    authoritativeReceiptId: receipt.receipt_id,
+    listening: state.micEnabled,
+  }));
+  return receipt;
+}
+
+async function retryUnconfirmedTurn() {
+  const input = state.lastUnconfirmedInput;
+  if (!input || input.kind !== 'text') return;
+  state.lastUnconfirmedInput = null;
+  await sendText(input.text, { retry: true });
+}
+
 async function toggleMic() {
   if (!state.room) return;
   const epoch = clientStore.getEpoch();
@@ -888,6 +1258,11 @@ async function toggleMic() {
 
 async function disconnect() {
   const epoch = clientStore.getEpoch();
+  try {
+    await interruptActiveTurn('disconnect');
+  } catch (error) {
+    message('system', `Turn interruption could not be confirmed: ${error.message}`);
+  }
   clearInterval(state.heartbeatTimer);
   state.heartbeatTimer = null;
   stopLocalCapture();
@@ -920,10 +1295,10 @@ function setPrivateTextOnly(enabled) {
       : ExternalSpeechPrivacy.EXTERNAL_ALLOWED,
   });
   if (enabled) {
-    if ('speechSynthesis' in window) speechSynthesis.cancel();
-    if (clientStore.getState().turn === TurnState.SPEAKING) {
-      dispatch('TURN_RESET');
-    }
+    interruptActiveTurn('explicit_stop').catch((error) => {
+      if ('speechSynthesis' in window) speechSynthesis.cancel();
+      message('system', `Speech stopped locally; receipt is unconfirmed: ${error.message}`);
+    });
     message(
       'system',
       'Private text-only enabled. Gateway text remains available; speech output is suppressed.',
@@ -962,6 +1337,14 @@ $('pairButton').addEventListener('click', () => {
 });
 $('connectButton').addEventListener('click', connect);
 $('disconnectButton').addEventListener('click', disconnect);
+$('stopAether').addEventListener('click', () => {
+  interruptActiveTurn('explicit_stop').catch((error) => {
+    message('system', `Stop could not be confirmed: ${error.message}`);
+  });
+});
+$('retryTurn').addEventListener('click', () => {
+  retryUnconfirmedTurn().catch((error) => message('system', error.message));
+});
 $('micButton').addEventListener('click', toggleMic);
 $('fallbackTalk').addEventListener('click', fallbackSTT);
 $('cameraButton').addEventListener('click', toggleCamera);
@@ -981,8 +1364,17 @@ $('chatForm').addEventListener('submit', async (event) => {
   }
 });
 window.addEventListener('beforeunload', () => {
+  state.activeRequestController?.abort();
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  for (const element of state.remoteAudioElements) element.pause?.();
   state.room?.disconnect();
   stopLocalCapture();
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape' || $('stopAether').disabled) return;
+  interruptActiveTurn('explicit_stop').catch((error) => {
+    message('system', `Stop could not be confirmed: ${error.message}`);
+  });
 });
 
 renderClientState(clientStore.getState());
