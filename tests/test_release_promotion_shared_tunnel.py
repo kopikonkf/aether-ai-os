@@ -159,22 +159,29 @@ def test_promote_release_asset_present_and_binds_exact_sha():
     text = _read(promote)
     assert "rev-parse origin/main" in text
     assert "git -C $RepoPath archive" in text
+    assert "Expected-target-SHA guard failed" in text
     assert "install-aether-services.ps1" in text
     assert "rollback_release" in text
-    assert "health check failed after promotion; rolled back" in text
+    assert "fail-closed rollback" in text
+    assert "Confirm-ServiceBoundToRelease" in text
     # Promotion is a service-path reconcile only; it must not run AETHER_HOME
     # migration/cutover or snapshot tooling.
     assert "aether_home_snapshot.py" not in text
     assert "aether_migration" not in text
+    # Stage temp + atomic publish (no rev-parse of an archive extraction).
+    assert ".staging-" in text
+    assert "git -C $RepoPath archive" in text
+    assert "git -C $RepoPath rev-parse origin/main" in text
+    assert 'git -C $RepoPath rev-parse "$originMain^{tree}"' in text or "rev-parse " in text
 
 
 def test_release_promotion_preserves_runtime_state_no_migration():
     text = _read(WINDOWS / "promote-aether-release.ps1")
-    # Explicit: promotion stages a release and reconciles services only; it must
-    # not run the AETHER_HOME snapshot cutover path.
-    assert "no AETHER_HOME migration" in text
+    # Promotion stages a release + reconciles services only; no snapshot cutover.
     assert "aether_home_snapshot.py" not in text
     assert "aether_migration_" not in text
+    # No rev-parse against a git archive extraction (which has no .git).
+    assert "targetRelease rev-parse" not in text
 
 
 # ---- ACL preservation (installer no longer broadens AETHER_HOME) ------------

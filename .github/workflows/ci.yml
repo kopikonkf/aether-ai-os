@@ -51,10 +51,10 @@ jobs:
       - name: Validate Cloudflare ingress assets
         run: |
           python -m pytest -q tests/test_cloudflare_ingress_assets.py tests/test_cloudflare_probe_modes.py tests/test_cloudflare_ingress_integration.py -p no:cacheprovider
-      - name: Real ingress boundary proof (Caddy + echo + real probe, not skipped)
+      - name: Real ingress boundary proof + PowerShell asset execution (not skipped)
         run: |
           # Install PowerShell (pwsh) from the official release so the probe
-          # script can be executed for real.
+          # script and the production tunnel/promotion .ps1 can execute for real.
           sudo mkdir -p /opt/microsoft/powershell/7
           curl -fsSL -o /tmp/pwsh.tar.gz "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-x64.tar.gz"
           sudo tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7
@@ -68,7 +68,12 @@ jobs:
           sudo mv caddy /usr/local/bin/caddy
           caddy version
           cd "${{ github.workspace }}"
+          # Ingress Caddy boundary proof (real Caddy + echo + real probe).
           AETHER_INGRESS_INTEGRATION=1 python -m pytest -q tests/test_cloudflare_ingress_integration.py -p no:cacheprovider
+          # Executes the production deploy/cloudflare/update-shared-tunnel.ps1 for
+          # real against temp YAML (apply path, stub cloudflared): emitted-YAML,
+          # validate-before-replace, atomic backup, and failure-rollback.
+          python -m pytest -q tests/test_powershell_ingress_execution.py -p no:cacheprovider
         env:
           AETHER_INGRESS_INTEGRATION: "1"
       - name: Validate Caddyfile with Caddy

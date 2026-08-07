@@ -5,7 +5,7 @@ param(
     [string]$CloudflaredPath = "",
     [string]$LocalOrigin = "http://localhost:8080",
     [string[]]$AetherHostnames = @("aethers.my.id", "www.aethers.my.id"),
-    [string[]]$ProtectedHosts = @("oc.aethers.my.id", "jarvis.aethers.my.id"),
+    [string[]]$ProtectedHostnames = @("oc.aethers.my.id", "jarvis.aethers.my.id"),
     [int]$ProbeTimeoutSeconds = 8,
     [switch]$Apply,
     [switch]$Start
@@ -22,178 +22,230 @@ function Assert-Administrator {
     }
 }
 
-Assert-Administrator
-
 if (-not (Test-Path -LiteralPath $TunnelConfig -PathType Leaf)) {
     throw "Tunnel config not found: $TunnelConfig"
 }
-
 if (-not $CloudflaredPath) {
     $CloudflaredPath = (Get-Command cloudflared.exe -ErrorAction Stop).Source
 }
 
-# ---- Load + parse the current shared tunnel config (preserve everything). ----
 $original = Get-Content -LiteralPath $TunnelConfig -Raw
-
-function Parse-IngressService {
-    param([string]$Line)
-
-    $trimmed = $Line.Trim()
-    if ($trimmed -notmatch '^- hostname:') {
-        return $null
-    }
-    return $trimmed
-}
-
 $lines = $original -split "`r?`n"
-$ingressBlockStart = -1
-for ($i = 0; $i -lt $lines.Count; $i++) {
-    if ($lines[$i].Trim() -eq "ingress:") {
-        $ingressBlockStart = $i
-        break
+
+# ---- Parse existing hostname entries and their service scalar. ----
+function Get-IngressEntries {
+    param([string[]]$SourceLines)
+
+    $entries = @()
+    $inIngress = $false
+    foreach ($line in $SourceLines) {
+        if ($line.Trim() -eq "ingress:") { $inIngress = $true; continue }
+        if (-not $inIngress) { continue }
+        $m = [regex]::Match($line, '^\s*-\s+hostname:\s*(\S+)\s*$')
+        if ($m.Success) {
+            $entries += [ordered]@{
+                type = "hostname"
+                hostname = $m.Groups[1].Value
+                line = $line
+            }
+            continue
+        }
+        $m = [regex]::Match($line, '^\s*-\s+service:\s*(\S+)\s*$')
+        if ($m.Success) {
+            $entries += [ordered]@{
+                type = "service"
+                service = $m.Groups[1].Value
+                line = $line
+            }
+        }
     }
-}
-if ($ingressBlockStart -lt 0) {
-    throw "No 'ingress:' block found in $TunnelConfig"
+    return $entries
 }
 
-# Collect every existing hostname entry so the rewrite can preserve them.
-$knownHosts = @{}
-$inIngress = $false
-foreach ($line in $lines) {
-    if ($line.Trim() -eq "ingress:") { $inIngress = $true; continue }
-    if (-not $inIngress) { continue }
-    if ($line -match '^\s*-\s+service:\s*http_status:404') { continue }
-    $m = [regex]::Match($line, '^\s*-\s+hostname:\s*(\S+)')
-    if ($m.Success) {
-        $knownHosts[$m.Groups[1].Value] = $true
-    }
-}
+$entries = Get-IngressEntries -SourceLines $lines
 
-$protectedMissing = @($ProtectedHosts | Where-Object { -not $knownHosts.ContainsKey($_) })
+# --- Preflight: protected hosts must be present; fallback must be unique. ----
+$entryHosts = @($entries | Where-Object { $_.type -eq "hostname" } | ForEach-Object { $_.hostname })
+$protectedMissing = @($ProtectedHostnames | Where-Object { $_ -notin $entryHosts })
 if ($protectedMissing.Count -gt 0) {
     throw "Protected host(s) missing from shared tunnel config: $($protectedMissing -join ', ')"
 }
+$fallbackServices = @($entries | Where-Object { $_.type -eq "service" -and $_.service -eq "http_status:404" })
+if ($fallbackServices.Count -ne 1) {
+    throw "Expected exactly one http_status:404 fallback; found $($fallbackServices.Count)"
+}
 
-# ---- Build the new config: change ONLY the Aether host origins to $LocalOrigin. ----
+# --- Build candidate config: change ONLY the service scalar for Aether hosts. ----
 $newLines = @()
 $inIngress = $false
+$replaced = 0
 foreach ($line in $lines) {
-    if ($line.Trim() -eq "ingress:") {
-        $inIngress = $true
+    if ($line.Trim() -eq "ingress:") { $inIngress = $true; $newLines += $line; continue }
+    if (-not $inIngress) { $newLines += $line; continue }
+
+    $m = [regex]::Match($line, '^(\s*-\s+hostname:\s*)(\S+)(\s*)$')
+    if ($m.Success -and ($AetherHostnames -contains $m.Groups[2].Value)) {
         $newLines += $line
+        $replaced++
         continue
     }
-    if (-not $inIngress) {
-        $newLines += $line
-        continue
-    }
-    $hostEntry = [regex]::Match($line, '^(\s*-\s+hostname:\s*)(\S+)(\s*)$')
-    if ($hostEntry.Success -and ($AetherHostnames -contains $hostEntry.Groups[2].Value)) {
-        $indent = '    '
-        $newLines += "$indent- hostname: $($hostEntry.Groups[2].Value)"
-        $newLines += "$indent  service: $LocalOrigin"
-        $newLines += "$indent  originRequest:"
-        $newLines += "$indent    connectTimeout: 10s"
-        $newLines += "$indent    noTLSVerify: true"
-        continue
+
+    # Change the service scalar that follows an Aether hostname entry.
+    $svc = [regex]::Match($line, '^(\s*service:\s*)(\S+)(\s*)$')
+    if ($svc.Success -and $replaced -gt 0) {
+        # Only rewrite service lines that belong to the Aether hostname we just
+        # emitted (the immediately preceding non-blank line was its hostname).
+        $prevNonEmpty = $newLines | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 1
+        $prevHost = [regex]::Match($prevNonEmpty, '^\s*-\s+hostname:\s*(\S+)')
+        if ($prevHost.Success -and ($AetherHostnames -contains $prevHost.Groups[1].Value)) {
+            $newLines += $svc.Groups[1].Value + $LocalOrigin + $svc.Groups[3].Value
+            $replaced--
+            continue
+        }
     }
     $newLines += $line
 }
 
-$newConfig = $newLines -join "`r`n"
+if ($replaced -ne 0) {
+    throw "Aether hostname entry without a service scalar (unbalanced): remaining=$replaced"
+}
 
-# ---- Preflight assertions (no mutation without -Apply). ----
+$candidate = $newLines -join "`r`n"
+
+# --- Derived observations from the parsed entries. ----
 function Assert-RoutePreservation {
     param([string]$Config)
 
-    foreach ($hostEntry in $ProtectedHosts) {
-        if ($Config -notmatch [regex]::Escape($hostEntry)) {
-            throw "Protected host was lost: $hostEntry"
+    foreach ($protected in $ProtectedHostnames) {
+        if ($Config -notmatch [regex]::Escape("hostname: $protected")) {
+            throw "Protected host was lost: $protected"
         }
     }
-    if ($Config -notmatch 'http_status:404') {
-        throw "Fallback http_status:404 was lost"
+    if (($Config -split "http_status:404").Count -ne 2) {
+        throw "Fallback http_status:404 must appear exactly once"
+    }
+    foreach ($hostname in $AetherHostnames) {
+        $count = ($Config -split [regex]::Escape("hostname: $hostname")).Count - 1
+        if ($count -ne 1) {
+            throw "Aether host '$hostname' must appear exactly once; found $count"
+        }
     }
 }
 
-Assert-RoutePreservation -Config $newConfig
+Assert-RoutePreservation -Config $candidate
 
-$beforeSha = (Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256).Hash.ToLowerInvariant()
+$ingressDir = Join-Path $AetherHome "runtime\ingress"
+New-Item -ItemType Directory -Force -Path $ingressDir | Out-Null
+$receiptPath = Join-Path $ingressDir "shared-tunnel-receipt.json"
 
-$dryRun = [ordered]@{
-    schema = "aether.shared-tunnel.v1"
+$receipt = [ordered]@{
+    schema = "aether.shared-tunnel.v2"
     event = "cloudflare.shared_tunnel.updated"
     observed_at = (Get-Date).ToUniversalTime().ToString("o")
     applied = [bool]$Apply
-    aether_hosts = $AetherHostnames
+    aether_hostnames = $AetherHostnames
     aether_origin = $LocalOrigin
-    protected_hosts = $ProtectedHosts
+    protected_hostnames = $ProtectedHostnames
     protected_preserved = $true
-    fallback_preserved = $true
+    fallback_unique = $true
+    aether_entries_unique = $true
     config_path = $TunnelConfig
-    config_before_sha256 = $beforeSha
+    config_before_sha256 = (Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256).Hash.ToLowerInvariant()
+    candidate_sha256 = $null
     config_after_sha256 = $null
+    validate_before_apply = $false
     rollback_triggered = $false
+    connector_count_after = $null
+    connector_readiness = $null
 }
 
 if (-not $Apply) {
-    $dryRun.config_after_sha256 = (
+    $receipt.candidate_sha256 = (
         [System.BitConverter]::ToString(
             [System.Security.Cryptography.SHA256]::Create().ComputeHash(
-                [Text.Encoding]::UTF8.GetBytes($newConfig)
+                [Text.Encoding]::UTF8.GetBytes($candidate)
             )
         ).Replace("-", "").ToLowerInvariant()
     )
-    $dryRun | ConvertTo-Json -Depth 8
+    $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding UTF8
+    $receipt | ConvertTo-Json -Depth 8
     return
 }
 
-# ---- Apply with backup + validate + rollback. ----
-$backupPath = "$TunnelConfig.bak-$(Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')"
-Copy-Item -LiteralPath $TunnelConfig -Destination $backupPath -Force
+# ---- Validate-before-apply: write candidate to a same-directory file, then
+#      atomically replace the live config after validation passes. ----
+$stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
+$candidatePath = "$TunnelConfig.candidate-$stamp"
+$backupPath = "$TunnelConfig.bak-$stamp"
+Set-Content -LiteralPath $candidatePath -Value $candidate -Encoding UTF8
+$receipt.candidate_sha256 = (Get-FileHash -LiteralPath $candidatePath -Algorithm SHA256).Hash.ToLowerInvariant()
 
 try {
-    Set-Content -LiteralPath $TunnelConfig -Value $newConfig -Encoding UTF8
-    Assert-RoutePreservation -Config $newConfig
-    & $CloudflaredPath tunnel --config $TunnelConfig ingress validate 2>&1 | Out-Null
+    & $CloudflaredPath tunnel --config $candidatePath ingress validate 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        throw "cloudflared ingress validate failed"
+        throw "cloudflared ingress validate failed on candidate (exit $LASTEXITCODE)"
     }
+    $receipt.validate_before_apply = $true
 
-    $dryRun.config_after_sha256 = (
-        Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
+    # Atomic replacement: copy current to backup, then move candidate into place.
+    Copy-Item -LiteralPath $TunnelConfig -Destination $backupPath -Force
+    Move-Item -LiteralPath $candidatePath -Destination $TunnelConfig -Force
+
+    Assert-RoutePreservation -Config (Get-Content -LiteralPath $TunnelConfig -Raw)
+    $receipt.config_after_sha256 = (Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256).Hash.ToLowerInvariant()
 
     if ($Start) {
-        # Restart the SCM-managed cloudflared connector (single connector policy).
+        # ---- Reconcile exactly ONE cloudflared connector. ----
+        $beforePids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
         $svc = Get-Service -Name Cloudflared -ErrorAction SilentlyContinue
         if ($null -ne $svc) {
             Restart-Service -Name Cloudflared -Force -ErrorAction Stop
         }
-        Start-Sleep -Seconds 2
+        else {
+            throw "Cloudflared SCM service missing; cannot reconcile a single connector."
+        }
+        Start-Sleep -Seconds 3
+
+        $afterPids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+        $receipt.connector_count_after = $afterPids.Count
+        if ($afterPids.Count -ne 1) {
+            $receipt.rollback_triggered = $true
+            throw "Expected exactly one cloudflared process; found $($afterPids.Count). Rolling back config."
+        }
+
+        # Tunnel-owned readiness: cloudflared metrics endpoint (not generic port 2019).
+        $metricsOk = $false
         try {
-            $health = Invoke-WebRequest -Uri "http://127.0.0.1:2019/health" -TimeoutSec $ProbeTimeoutSeconds -UseBasicParsing
-            if ($health.StatusCode -ne 200) {
-                throw "tunnel health probe failed (status $($health.StatusCode))"
-            }
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:20120/metrics" -TimeoutSec $ProbeTimeoutSeconds -UseBasicParsing
+            $metricsOk = ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300)
         }
         catch {
-            # Roll back config on probe failure.
+            $metricsOk = $false
+        }
+        $receipt.connector_readiness = $metricsOk
+        if (-not $metricsOk) {
+            # Fail closed: restore backup, restart service, prove recovery.
             Copy-Item -LiteralPath $backupPath -Destination $TunnelConfig -Force
-            $dryRun.rollback_triggered = $true
-            throw "Tunnel health probe failed after apply; config rolled back. Error: $($_.Exception.Message)"
+            $receipt.rollback_triggered = $true
+            if ($null -ne $svc) {
+                Restart-Service -Name Cloudflared -Force -ErrorAction SilentlyContinue
+            }
+            throw "cloudflared connector readiness (metrics) failed after apply; config restored to backup."
         }
     }
 }
 catch {
-    if (Test-Path -LiteralPath $backupPath) {
-        Copy-Item -LiteralPath $backupPath -Destination $TunnelConfig -Force
+    if (Test-Path -LiteralPath $candidatePath) {
+        Remove-Item -LiteralPath $candidatePath -Force -ErrorAction SilentlyContinue
     }
+    $receipt.rollback_triggered = $true
+    $receipt.error = $_.Exception.Message
+    $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding UTF8
     throw
 }
 
-$ingressDir = Join-Path $AetherHome "runtime\ingress"
-New-Item -ItemType Directory -Force -Path $ingressDir | Out-Null
-$dryRun | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $ingressDir "shared-tunnel-receipt.json") -Encoding UTF8
-$dryRun | ConvertTo-Json -Depth 8
+if (Test-Path -LiteralPath $candidatePath) {
+    Remove-Item -LiteralPath $candidatePath -Force
+}
+$receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding UTF8
+$receipt | ConvertTo-Json -Depth 8

@@ -7,9 +7,11 @@ param(
     [string]$PythonPath = "",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
+    [string]$ExpectedTargetSha = "",
     [int]$HealthTimeoutSeconds = 8,
     [int]$HealthAttempts = 6,
-    [switch]$Start
+    [switch]$Start,
+    [switch]$SkipValidate
 )
 
 Set-StrictMode -Version Latest
@@ -23,6 +25,95 @@ function Assert-Administrator {
     }
 }
 
+function Assert-ProtectedAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$IsContainer,
+        [string]$Label = $Path
+    )
+
+    $targetAcl = Get-Acl -LiteralPath $Path
+    $requiredRules = @{ "S-1-5-18" = $false; "S-1-5-32-544" = $false }
+    $aclViolations = @()
+    if (-not $targetAcl.AreAccessRulesProtected) {
+        $aclViolations += "inheritance_not_disabled"
+    }
+    $hasCI = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
+    $hasOI = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($rule in $targetAcl.Access) {
+        try {
+            $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        }
+        catch {
+            $sid = [string]$rule.IdentityReference
+        }
+        if ($sid -notin @($requiredRules.Keys)) {
+            $aclViolations += "unexpected_rule:${sid}:$($rule.AccessControlType)"
+            continue
+        }
+        $isFullAllow = (
+            $rule.AccessControlType -eq "Allow" -and
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl
+        )
+        $inheritsOk = $true
+        if ($IsContainer) {
+            $inheritsOk = (
+                [bool]($rule.InheritanceFlags -band $hasCI) -and
+                [bool]($rule.InheritanceFlags -band $hasOI)
+            )
+        }
+        if (-not ($isFullAllow -and $inheritsOk)) {
+            $aclViolations += "required_rule_incomplete:${sid}"
+        }
+        else {
+            $requiredRules[$sid] = $true
+        }
+    }
+    foreach ($sid in @($requiredRules.Keys)) {
+        if (-not $requiredRules[$sid]) {
+            $aclViolations += "required_sid_missing:${sid}"
+        }
+    }
+    if ($aclViolations.Count -gt 0) {
+        throw "ACL postcondition verification failed for ${Label}: $($aclViolations -join ', ')"
+    }
+}
+
+function Get-ServiceConfigBinPath {
+    param([string]$Name)
+    try {
+        $service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
+        if ($null -eq $service) { return "" }
+        return [string]$service.PathName
+    }
+    catch {
+        return ""
+    }
+}
+
+function Confirm-ServiceBoundToRelease {
+    param(
+        [string[]]$Names,
+        [string]$ReleasePath
+    )
+
+    $bad = @()
+    foreach ($name in $Names) {
+        $path = Get-ServiceConfigBinPath -Name $name
+        if (-not $path -or $path -notmatch [regex]::Escape($ReleasePath)) {
+            $bad += "$name(payload path does not reference $ReleasePath)"
+        }
+        $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+        if ($null -eq $svc -or $svc.Status -ne "Running") {
+            $bad += "$name(service not Running)"
+        }
+    }
+    if ($bad.Count -gt 0) {
+        throw "Service running-path assertion failed: $($bad -join '; ')"
+    }
+    return $true
+}
+
 Assert-Administrator
 
 if (-not (Test-Path -LiteralPath $RepoPath -PathType Container)) {
@@ -32,56 +123,91 @@ if (-not (Test-Path -LiteralPath $AetherHome -PathType Container)) {
     throw "AETHER_HOME not found: $AetherHome"
 }
 
-# 1. Resolve the exact main SHA from the repo (source authority).
-$headSha = (git -C $RepoPath rev-parse origin/main 2>$null | Out-String).Trim()
-git -C $RepoPath fetch origin main 2>&1 | Out-Null
-$headSha = (git -C $RepoPath rev-parse origin/main 2>$null | Out-String).Trim()
-if (-not $headSha -or $headSha -notmatch '^[0-9a-f]{40}$') {
-    throw "Unable to resolve a clean origin/main SHA"
+# ---- Resolve exact target SHA (source authority) ----------------------------
+git -C $RepoPath fetch origin main 2>$null
+if ($LASTEXITCODE -ne 0) {
+    throw "git fetch origin main failed"
 }
-$headDirty = @(git -C $RepoPath status --porcelain 2>$null)
-if ($headDirty.Count -gt 0) {
+$originMain = (git -C $RepoPath rev-parse origin/main 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $originMain -notmatch '^[0-9a-f]{40}$') {
+    throw "Unable to resolve origin/main SHA"
+}
+if ($ExpectedTargetSha -and $ExpectedTargetSha -ne $originMain) {
+    throw "Expected-target-SHA guard failed: requested $ExpectedTargetSha, origin/main = $originMain"
+}
+$dirty = @(git -C $RepoPath status --porcelain 2>$null)
+if ($dirty.Count -gt 0 -and -not $SkipValidate) {
     throw "Repository working tree is not clean before promotion."
 }
 
-$targetRelease = Join-Path $ReleasesRoot $headSha
+$targetRelease = Join-Path $ReleasesRoot $originMain
 $rollbackPath = Join-Path $ReleasesRoot $RollbackRelease
 
+# Preflight rollback release before any mutation.
+if (-not (Test-Path -LiteralPath $rollbackPath -PathType Container)) {
+    throw "Rollback release path missing (preflight failed): $rollbackPath"
+}
+if (Test-Path -LiteralPath $targetRelease -PathType Container) {
+    throw "Target release already exists (immutable): $targetRelease"
+}
+
+# DACL precondition of AETHER_HOME before reconcile.
+Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME(pre)"
+
 $receipt = [ordered]@{
-    schema = "aether.release-promotion.v1"
+    schema = "aether.release-promotion.v2"
     event = "aether.release.promoted"
     promoted_at = (Get-Date).ToUniversalTime().ToString("o")
-    target_sha = $headSha
+    target_sha = $originMain
+    expected_target_sha = $ExpectedTargetSha
     release_path = $targetRelease
     aether_home = $AetherHome
     rollback_release = $RollbackRelease
     rollback_path = $rollbackPath
-    auto_rollback_attempted = $false
     reconciled = @()
+    running_paths_proven = $false
     rollback_triggered = $false
+    rollback_proven = $false
+    success = $false
 }
 
 try {
-    # 2. Stage a fresh immutable release dir from the exact commit (no copy of
-    #    runtime state, no AETHER_HOME migration).
-    if (Test-Path -LiteralPath $targetRelease -PathType Container) {
-        throw "Target release already exists (immutable): $targetRelease"
-    }
-    New-Item -ItemType Directory -Force -Path $targetRelease | Out-Null
-    git -C $RepoPath archive $headSha | tar -x -C $targetRelease
+    # ---- Stage into a temporary directory + durable metadata, then publish. ----
+    $staging = Join-Path $ReleasesRoot ".staging-$originMain-$(Get-Random)"
+    New-Item -ItemType Directory -Force -Path $staging | Out-Null
+    $archive = Join-Path $ReleasesRoot ".archive-$originMain-$(Get-Random).tar"
+    git -C $RepoPath archive --format=tar --output=$archive $originMain 2>$null
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to stage release archive from $headSha"
+        throw "git archive failed (exit $LASTEXITCODE)"
     }
-    $stagedHead = (git -C $targetRelease rev-parse HEAD 2>$null | Out-String).Trim()
-    if ($stagedHead -ne $headSha) {
-        throw "Staged release HEAD mismatch (promotion aborted before reconcile)"
+    tar -xf $archive -C $staging
+    if ($LASTEXITCODE -ne 0) {
+        throw "tar extraction failed (exit $LASTEXITCODE)"
     }
+    Remove-Item -LiteralPath $archive -Force
 
-    # 3. Reconcile Gateway + Watchdog service binary paths to the new release.
+    # Durable release metadata (the extraction has no .git; do NOT rev-parse it).
+    $tree = git -C $RepoPath rev-parse "$originMain^{tree}" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "unable to resolve target tree hash"
+    }
+    $releaseMeta = [ordered]@{
+        schema = "aether.release.v1"
+        target_sha = $originMain
+        target_tree = ($tree | Out-String).Trim()
+        staged_at = (Get-Date).ToUniversalTime().ToString("o")
+        aether_home = $AetherHome
+    }
+    $releaseMeta | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $staging "AETHER_RELEASE.json") -Encoding UTF8
+
+    # Atomic publish: rename staging -> final. Failed attempt must not occupy final.
+    # (No Match-Space: destination guaranteed absent by preflight above.)
+    Move-Item -LiteralPath $staging -Destination $targetRelease -ErrorAction Stop
+
+    # --- Reconcile services to the new release. ---
     $installer = Join-Path $targetRelease "deploy\windows\install-aether-services.ps1"
     $installerArgs = @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", $installer,
         "-ReleasePath", $targetRelease,
         "-AetherHome", $AetherHome,
@@ -97,8 +223,20 @@ try {
     }
     $receipt.reconciled = @("AetherGateway", "AetherWatchdog")
 
-    # 4. Health gate after reconcile.
+    # --- Restart in governed order, then prove running paths bind new release. ---
     if ($Start) {
+        foreach ($name in @("AetherGateway", "AetherWatchdog")) {
+            $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+            if ($null -ne $svc) {
+                Restart-Service -Name $name -Force -ErrorAction Stop
+            }
+        }
+        Start-Sleep -Seconds 2
+
+        $runningPathOk = Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $targetRelease
+        $receipt.running_paths_proven = $true
+
+        # Health gate against the Exact target release.
         $healthy = $false
         for ($i = 0; $i -lt $HealthAttempts; $i++) {
             Start-Sleep -Seconds 2
@@ -112,22 +250,55 @@ try {
             catch {
             }
         }
-if (-not $healthy) {
+
+        if (-not $healthy) {
+            # --- Fail-closed rollback: require rollback installer, restart, prove. ---
             $receipt.rollback_triggered = $true
-            $receipt.auto_rollback_attempted = $true
-            # Reconcile back to the rollback release path (services only).
             $rollbackInstaller = Join-Path $rollbackPath "deploy\windows\install-aether-services.ps1"
-            if (Test-Path -LiteralPath $rollbackInstaller -PathType Leaf) {
-                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rollbackInstaller -ReleasePath $rollbackPath -AetherHome $AetherHome -HostAddress $HostAddress -Port $Port | Out-Null
+            if (-not (Test-Path -LiteralPath $rollbackInstaller -PathType Leaf)) {
+                throw "Rollback installer missing; cannot fail closed: $rollbackInstaller"
             }
-            throw "Gateway health check failed after promotion; rolled back to $rollbackPath"
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rollbackInstaller -ReleasePath $rollbackPath -AetherHome $AetherHome -HostAddress $HostAddress -Port $Port | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Rollback reconcile failed (exit $LASTEXITCODE)"
+            }
+            foreach ($name in @("AetherGateway", "AetherWatchdog")) {
+                $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
+                if ($null -ne $svc) {
+                    Restart-Service -Name $name -Force -ErrorAction Stop
+                }
+            }
+            Start-Sleep -Seconds 2
+            Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $rollbackPath
+            $ok = $false
+            for ($i = 0; $i -lt $HealthAttempts; $i++) {
+                Start-Sleep -Seconds 2
+                try {
+                    $resp = Invoke-WebRequest -Uri "http://$HostAddress`:$Port/health" -TimeoutSec $HealthTimeoutSeconds -UseBasicParsing
+                    if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 300) {
+                        $ok = $true
+                        break
+                    }
+                }
+                catch {
+                }
+            }
+            $receipt.rollback_proven = $ok
+            throw "Gateway health failed after promotion; fail-closed rollback to $rollbackPath proven=$ok"
         }
     }
+
+    # Re-assert the protected AETHER_HOME DACL AFTER reconciliation.
+    Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME(post)"
+    $receipt.success = "true"
 }
 catch {
-    $receipt.failure_phase = "reconcile_or_health"
+    if (Test-Path -LiteralPath $staging) {
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $receipt.failure_phase = "promote"
     $receipt.error = $_.Exception.Message
-    $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $AetherHome "services\release-promotion-failure.json") -Encoding UTF8
+    $receipt | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $AetherHome "services\release-promotion-failure.json") -Encoding UTF8
     throw
 }
 

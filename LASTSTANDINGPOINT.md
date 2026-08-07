@@ -189,15 +189,16 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
   pre-existing `test_state_snapshot` canonical.sqlite3 Windows lock failure
   (unrelated; ok on ubuntu CI).
 - **Report posted:** https://github.com/kopikonkf/aether-ai-os/pull/34#issuecomment-5216460430
-- **Merged:** PR #34 merged to main at `055f609e314d6d9064e8a237cedb4e7bf33d4178`.
-  After PR #39 merges, stage the resulting exact main SHA, then continue the
-  Founder VPS host-proof sequence:
-  generate a bcrypt hash interactive (temp `.txt`, `icacls` to SYSTEM+Admins;
-  installer removes it) -> `aether_migration_<sha>.ps1` cutover -> validate
-  `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` -> production install (AetherService
-  + Watchdog, no sense-worker) -> ACL -> local auth proof (production Caddyfile +
-  proof echo) -> reuse tunnel `8f53133` + DNS cutover `:8080` -> public proof +
-  recovery receipts CONFORMED.
+- **Merged:** PR #34 merged to main at `055f609e314d6d9064e8a237cedb4e7bf33d4178`;
+  PR #39 (docs continuity) merged after it. AETHER_HOME migration is COMPLETE
+  (receipt `20260806T221720Z`) — it must NOT be re-run. The remaining Founder
+  host-proof sequence (after the release-promotion/shared-tunnel source patch
+  merges) is: stage exact latest `main` -> `promote-aether-release.ps1` (reconcile
+  Gateway/Watchdog only, no migration) -> bcrypt hash interactive (temp `.txt`,
+  `icacls` SYSTEM+Admins; installer removes it) -> Caddy basic auth (ADR-0053) ->
+  local auth proof (production Caddyfile + proof echo) -> `update-shared-tunnel.ps1`
+  origin `:80 -> :8080` on tunnel `8f53133` -> Dee authorizes public cutover ->
+  public proof + recovery receipts CONFORMED.
 
 ## Host state (2026-08-07) — migration COMPLETE; ingress blocked by source patch
 
