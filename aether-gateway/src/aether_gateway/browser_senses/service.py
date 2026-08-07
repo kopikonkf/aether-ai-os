@@ -267,7 +267,18 @@ class BrowserSenseService:
 
     def close(self, token: str, *, reason: str = "client-disconnected") -> BrowserSenseSession:
         session = self.authenticate(token)
-        closed = self.store.transition_session(session.session_id, BrowserSenseSessionState.CLOSED, recorded_at=utc_now(), metadata={"close_reason": reason})
+        return self.close_session(session.session_id, reason=reason)
+
+    def close_session(self, session_id: str, *, reason: str = "server-revoked") -> BrowserSenseSession:
+        session = self.store.get_session(session_id)
+        if session.state in {BrowserSenseSessionState.CLOSED, BrowserSenseSessionState.EXPIRED}:
+            return session
+        closed = self.store.transition_session(
+            session.session_id,
+            BrowserSenseSessionState.CLOSED,
+            recorded_at=utc_now(),
+            metadata={"close_reason": reason},
+        )
         self.event_bus.emit(EventType.BROWSER_SENSE_SESSION_CLOSED, actor="aether.browser-senses", payload={"session_id": closed.session_id, "reason": reason})
         return closed
 

@@ -54,17 +54,30 @@ Founder approval / release evidence
 - Implementation slice 1 is source-present: provider-neutral session/turn/mode,
   consent, interruption, and capability-action contracts; a v1 runtime-profile
   guard; append-only session compatibility; and deterministic tests.
+- Implementation slice 2 is source-present: rate-limited 120-second pairing,
+  trusted-operator card/list and decision routes, P-256 verifier/signature
+  exchange, append-only decision evidence, 30-day/7-day paired-device policy,
+  one-time signed session challenges, protected `__Host-aether_device` and
+  `__Host-aether_senses` cookies, memory-only CSRF, exact Origin/Fetch-Metadata
+  enforcement, a 15-second client revocation heartbeat, and device revocation
+  of subordinate sessions.
+- The Senses shell no longer renders or reads a raw operator token and no longer
+  exposes the browser session bearer token to JavaScript. Persistent WebCrypto
+  storage remains best-effort with an explicit session-only pairing fallback.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slice 1 is source-present.
+  merely because slices 1-2 are source-present. AionUi/Telegram presentation,
+  browser/PWA execution, LiveKit grant revocation, and Founder host evidence
+  still require their own wiring and proof.
 
 ## Next Senses implementation slice
 
-Replace the raw operator-token form with the approved pairing/device bootstrap
-and protected same-origin session-cookie boundary. This is source work and does
-not replace the outstanding Windows service and Cloudflare host proof.
+Extend `persona.yaml` with provider-neutral voice delivery policy, implement the
+bounded prompt compiler, and add Gemini TTS behind the exact-text adapter with
+`FOUNDER_ALPHA_FREE` manifest and tier receipts. Do not change Aether Mind
+authority or treat source presence as live provider proof.
 
 ## Next operational step
 

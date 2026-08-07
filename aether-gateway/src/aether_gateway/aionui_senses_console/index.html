@@ -18,6 +18,16 @@
       <div id="systemState" class="pill offline">OFFLINE</div>
     </header>
 
+    <section id="pairingPanel" class="panel pairing-panel">
+      <div class="panel-head"><h2>Device pairing</h2><span id="pairingState">BOOTSTRAP REQUIRED</span></div>
+      <div class="pairing-grid">
+        <label>Device label <input id="deviceLabel" value="Dee browser" maxlength="120" /></label>
+        <button id="pairButton" class="primary" type="button">Hubungkan perangkat</button>
+        <div id="pairingCode" class="pairing-code" hidden></div>
+      </div>
+      <p id="pairingHint">Pair this browser through Dee's trusted approval surface. No operator credential is entered here.</p>
+    </section>
+
     <section class="grid">
       <article class="panel media-panel">
         <div class="panel-head"><h2>Camera</h2><span id="cameraState">not started</span></div>
@@ -60,7 +70,6 @@
       <details>
         <summary>Connection and privacy</summary>
         <div class="setup-grid">
-          <label>Founder/operator token <input id="operatorToken" type="password" autocomplete="off" placeholder="kept in memory only" /></label>
           <label>Display name <input id="displayName" value="Founder" /></label>
           <label>Voice <select id="voiceSelect" aria-label="Aether browser voice"></select></label>
           <label>Speaking rate <span id="voiceRateValue">1.02</span><input id="voiceRate" type="range" min="0.75" max="1.35" step="0.01" value="1.02" /></label>
@@ -68,7 +77,7 @@
           <label class="voice-preview">Voice preview <button id="previewVoice" type="button" class="secondary">Preview Aether voice</button></label>
           <label>Vision prompt <input id="visionPrompt" value="Describe materially relevant objects, people, text, and changes visible in this frame." /></label>
         </div>
-        <p>Microphone and camera access require HTTPS or localhost and explicit browser permission. No operator token is written to localStorage.</p>
+        <p>Microphone and camera access require HTTPS and explicit browser permission. Device and Senses credentials remain protected in HttpOnly same-origin cookies.</p>
       </details>
     </section>
 
