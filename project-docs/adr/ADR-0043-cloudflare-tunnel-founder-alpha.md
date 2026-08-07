@@ -4,6 +4,8 @@
 - **Date:** 2026-07-28
 - **Scope:** Real VPS bring-up of Aether OS v0.19.2
 - **Feature version impact:** None; operational overlay only
+- **Auth overlay:** RFC by ADR-0053 (Founder Alpha Origin Authentication) —
+  Cloudflare Access is an optional future upgrade, not a requirement of this ADR.
 
 ## Context
 

@@ -8,6 +8,8 @@ param(
     [string]$CaddyPath = "C:\Program Files\Caddy\caddy.exe",
     [string]$CaddyfileSource = "",
     [string]$LocalOrigin = "http://127.0.0.1:8080",
+    [string]$FounderUsername = "founder",
+    [string]$FounderBcryptHash = "",
     [switch]$Start
 )
 
@@ -130,6 +132,19 @@ if (-not (Test-Path -LiteralPath $CaddyfileSource -PathType Leaf)) {
 }
 Copy-Item -LiteralPath $CaddyfileSource -Destination $caddyfilePath -Force
 
+$authFragmentPath = Join-Path $caddyDir "founder-auth.caddy"
+if ($FounderBcryptHash) {
+    $authFragment = @"
+basic_auth bcrypt "Aether Founder Alpha" {
+    $FounderUsername $FounderBcryptHash
+}
+"@
+    $authFragment | Set-Content -LiteralPath $authFragmentPath -Encoding UTF8
+}
+elseif (-not (Test-Path -LiteralPath $authFragmentPath -PathType Leaf)) {
+    throw "Founder auth fragment missing and -FounderBcryptHash not provided: $authFragmentPath"
+}
+
 & $CaddyPath validate --config $caddyfilePath --adapter caddyfile | Out-Null
 if ($LASTEXITCODE -ne 0) {
     throw "Caddy configuration validation failed for $caddyfilePath"
@@ -184,6 +199,10 @@ $manifest = [ordered]@{
     caddy_service = $caddyServiceName
     caddy_path = $CaddyPath
     caddyfile_path = $caddyfilePath
+    auth_mode = "caddy_basic_bcrypt"
+    auth_scope = "all_paths"
+    auth_fragment = (if (Test-Path -LiteralPath $authFragmentPath) { "founder-auth.caddy" } else { $null })
+    auth_hash_recorded = $false
     service_name = $serviceName
     local_origin = $LocalOrigin
     config_path = $configPath

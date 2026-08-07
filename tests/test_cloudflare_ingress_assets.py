@@ -38,7 +38,7 @@ def test_cloudflare_ingress_assets_bind_one_domain_routes_and_receipts():
 def test_cloudflare_ingress_assets_do_not_use_plain_http_origin_on_port_80():
     combined = "\n".join(_read(path) for path in CLOUDFLARE_DIR.iterdir() if path.is_file())
     import re
-    offenders = re.findall(r"http://127\.0\.0\.1:80(?!80)", combined)
+    offenders = re.findall(r"http://127\.0\.0\.1:80(?!80|0)", combined)
     assert offenders == []
 
 
@@ -55,9 +55,28 @@ def test_cloudflare_ingress_probe_supports_access_enforcement_and_authenticated_
     assert "AccessCookie" in probe
     assert "ExpectAccessEnforcement" in probe
     assert "CF_Authorization" in probe
-    assert "unauthenticated_all_protected" in probe
     assert "authenticated_all_ok" in probe
     assert "-MaximumRedirection 0" in probe
+    assert "AuthMode" in probe
+    assert '"CaddyBasic"' in probe or "'CaddyBasic'" in probe
+    assert "BasicUsername" in probe
+    assert "unauthenticated_all_denied" in probe
+    assert "authorization_forwarded_to_upstream" in probe
+
+
+def test_install_writes_auth_fragment_and_never_records_hash():
+    install = _read(CLOUDFLARE_DIR / "install-cloudflare-ingress.ps1")
+    assert "FounderBcryptHash" in install
+    assert "founder-auth.caddy" in install
+    assert 'basic_auth bcrypt "Aether Founder Alpha"' in install
+    assert "auth_hash_recorded" in install
+
+
+def test_caddyfile_imports_auth_fragment_and_strips_authorization():
+    caddyfile = _read(ROOT / "deploy" / "windows" / "Caddyfile")
+    assert "founder-auth.caddy" in caddyfile
+    assert "header_up -Authorization" in caddyfile
+    assert caddyfile.count("header_up -Authorization") == 4
 
 
 def test_cloudflare_ingress_assets_do_not_embed_secrets_or_direct_gateway_exposure():

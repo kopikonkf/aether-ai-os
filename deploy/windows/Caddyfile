@@ -4,23 +4,33 @@
 }
 
 http://127.0.0.1:8080 {
+    import "C:/ProgramData/Aether/caddy/founder-auth.caddy"
+
     encode zstd gzip
 
     @browser_senses path /senses /senses/* /api/browser-senses /api/browser-senses/*
     handle @browser_senses {
-        reverse_proxy 127.0.0.1:8000
+        reverse_proxy 127.0.0.1:8000 {
+            header_up -Authorization
+        }
     }
 
     handle_path /aether/* {
-        reverse_proxy 127.0.0.1:8000
+        reverse_proxy 127.0.0.1:8000 {
+            header_up -Authorization
+        }
     }
 
     handle /health {
         rewrite * /api/status
-        reverse_proxy 127.0.0.1:8000
+        reverse_proxy 127.0.0.1:8000 {
+            header_up -Authorization
+        }
     }
 
     handle {
-        reverse_proxy 127.0.0.1:25808
+        reverse_proxy 127.0.0.1:25808 {
+            header_up -Authorization
+        }
     }
 }
