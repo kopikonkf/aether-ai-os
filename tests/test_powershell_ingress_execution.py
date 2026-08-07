@@ -996,7 +996,10 @@ def test_release_promotion_requires_start_fails_before_mutation(tmp_path: Path):
     result = _run_promotion(tmp_path, mode="ok", with_start=False)
     assert result.returncode != 0
     combined = _strip_ansi((result.stderr or "") + (result.stdout or ""))
-    assert "requires -Start" in combined
+    # pwsh renders the thrown message with a line-number gutter that can split
+    # "-Start" onto its own line, so assert on the two tokens independently.
+    assert "-Start" in combined
+    assert "mandatory" in combined
     # No release was published and no receipt was written (failed before mutation).
     assert not (result._releases / result._sha).exists()  # type: ignore[attr-defined]
     assert not (result._aether_home / "services" / "release-promotion-failure.json").is_file()  # type: ignore[attr-defined]
