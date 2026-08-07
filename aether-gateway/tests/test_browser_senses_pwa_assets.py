@@ -64,6 +64,7 @@ class BrowserSensesPwaAssetsTest(unittest.TestCase):
         self.assertNotIn("/api/", worker)
         self.assertNotIn("/health", worker)
         self.assertIn("VERSIONED_STATIC_ASSETS", policy)
+        self.assertIn("versioned('/senses/capability_actions.js')", policy)
         self.assertIn("url.origin !== allowedOrigin", policy)
         self.assertIn('headers={"Service-Worker-Allowed": "/senses"}', server)
         self.assertIn('path.startswith(("/senses/", "/api/", "/aether/api/"))', server)
@@ -77,11 +78,12 @@ class BrowserSensesPwaAssetsTest(unittest.TestCase):
         for path in (
             CONSOLE / "index.html",
             CONSOLE / "app.js",
+            CONSOLE / "capability_actions.js",
             CONSOLE / "sw.js",
             CONSOLE / "manifest.webmanifest",
         ):
             references = set(
-                re.findall(r"senses-v1-slice-7-[0-9-]+", path.read_text("utf-8"))
+                re.findall(r"senses-v1-slice-8-[0-9-]+", path.read_text("utf-8"))
             )
             self.assertEqual(references, {build_id}, path.name)
 
