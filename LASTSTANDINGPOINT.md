@@ -142,9 +142,11 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
   pre-existing `test_state_snapshot` canonical.sqlite3 Windows lock failure
   (unrelated; ok on ubuntu CI).
 - **Report posted:** https://github.com/kopikonkf/aether-ai-os/pull/34#issuecomment-5216460430
-- **Waiting:** ChatGPT to merge PR #34. After merge: stage exact main -> generate
-  bcrypt hash interactive (temp `.txt`, `icacls` to SYSTEM+Admins; installer
-  removes it) -> `aether_migration_<sha>.ps1` cutover -> validate
+- **Merged:** PR #34 merged to main at `055f609e314d6d9064e8a237cedb4e7bf33d4178`.
+  After PR #39 merges, stage the resulting exact main SHA, then continue the
+  Founder VPS host-proof sequence:
+  generate a bcrypt hash interactive (temp `.txt`, `icacls` to SYSTEM+Admins;
+  installer removes it) -> `aether_migration_<sha>.ps1` cutover -> validate
   `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` -> production install (AetherService
   + Watchdog, no sense-worker) -> ACL -> local auth proof (production Caddyfile +
   proof echo) -> reuse tunnel `8f53133` + DNS cutover `:8080` -> public proof +
