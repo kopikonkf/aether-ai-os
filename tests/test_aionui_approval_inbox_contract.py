@@ -90,6 +90,20 @@ def test_renderer_has_explicit_hash_bound_decision_flow_without_token() -> None:
     assert "raw action body" in page
 
 
+def test_senses_handoff_is_exact_hash_bound_before_aionui_selection() -> None:
+    page = read("aionui-integration/packages/desktop/src/renderer/pages/approval-inbox/index.tsx")
+    hook = read("aionui-integration/packages/desktop/src/renderer/pages/approval-inbox/useAetherApprovals.ts")
+    senses = read("aether-gateway/src/aether_gateway/aionui_senses_console/index.html")
+
+    assert "window.location.hash.split('?', 2)" in page
+    assert "inspect(approvalId, actionHash)" in page
+    assert "expectedActionHash?: string" in hook
+    assert "approval.action_hash !== expectedActionHash" in hook
+    assert "Senses cannot approve this action" in senses
+    assert "telegramApprovalCommand" in senses
+    assert "Approve exact action" not in senses
+
+
 def test_installer_checklist_requires_target_checkout_conformance() -> None:
     installer = read("aionui-integration/scripts/install_aionui_integration.py")
     readme = read("aionui-integration/README.md")
