@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from aether.contracts import ActionResult
+import aether_gateway.adapters.telegram_bot as telegram_bot
 from aether_gateway.adapters.telegram_bot import TelegramSenseAdapter
 from aether_gateway.approvals import TelegramApprovalCallbackCodec
 
@@ -19,8 +20,11 @@ class FakeInbox:
             raise KeyError(approval_id)
         return self.pending
 
-    def list(self):
+    def list(self, _status=None):
         return [self.pending]
+
+    def sweep_expired(self):
+        return []
 
 
 class FakeCoordinator:
@@ -52,8 +56,16 @@ class FakeCoordinator:
             SimpleNamespace(
                 content="authoritative completed receipt",
                 modality="text",
-                metadata={"chat_id": 99},
-                target="telegram:99",
+                metadata=(
+                    {"chat_id": 99}
+                    if self.inbox.pending.request_channel == "telegram"
+                    else {}
+                ),
+                target=(
+                    "telegram:99"
+                    if self.inbox.pending.request_channel == "telegram"
+                    else "browser:sense-session.1"
+                ),
             )
             if approved and not self.replayed
             else None
@@ -65,9 +77,11 @@ class FakeMessage:
     def __init__(self, chat_id: int = 99) -> None:
         self.chat = SimpleNamespace(id=chat_id)
         self.replies: list[str] = []
+        self.reply_markups: list[object | None] = []
 
-    async def reply_text(self, text: str) -> None:
+    async def reply_text(self, text: str, **kwargs) -> None:
         self.replies.append(text)
+        self.reply_markups.append(kwargs.get("reply_markup"))
 
 
 class FakeQuery:
@@ -85,14 +99,25 @@ class FakeQuery:
         self.edits.append(text)
 
 
-def _pending(chat_id: int = 99):
+def _pending(
+    chat_id: int | None = 99,
+    *,
+    request_channel: str = "telegram",
+    session_id: str | None = None,
+):
+    metadata = {"channel": request_channel}
+    if chat_id is not None:
+        metadata["chat_id"] = chat_id
+    if session_id is not None:
+        metadata["session_id"] = session_id
     return SimpleNamespace(
         approval_id="approval.1234567890abcdef",
         action_id="act.1234567890abcdef",
         action_hash="a" * 64,
         expires_at="2026-07-29T12:00:00Z",
+        request_channel=request_channel,
         proposal=SimpleNamespace(
-            metadata={"chat_id": chat_id},
+            metadata=metadata,
             target=SimpleNamespace(value="tool"),
             operation="write",
             risk=SimpleNamespace(value="medium"),
@@ -118,21 +143,24 @@ def _adapter(pending, codec):
 
 def test_callback_codec_is_compact_restart_safe_and_tamper_evident() -> None:
     codec = TelegramApprovalCallbackCodec("x" * 32)
-    payload = codec.encode("approve", "approval.1234567890abcdef")
+    payload = codec.encode("approve", "approval.1234567890abcdef", "a" * 64)
     assert len(payload.encode("utf-8")) <= 64
-    decoded = codec.decode(payload)
+    decoded = codec.decode(payload, "a" * 64)
     assert decoded.decision == "approve"
     assert decoded.approval_id == "approval.1234567890abcdef"
 
     with pytest.raises(ValueError, match="signature"):
-        codec.decode(payload[:-1] + ("A" if payload[-1] != "A" else "B"))
+        codec.decode(payload[:-1] + ("A" if payload[-1] != "A" else "B"), "a" * 64)
+
+    with pytest.raises(ValueError, match="signature"):
+        codec.decode(payload, "b" * 64)
 
 
 def test_inline_approve_is_bound_to_founder_and_chat_and_edits_original_card() -> None:
     codec = TelegramApprovalCallbackCodec("x" * 32)
     pending = _pending()
     adapter, coordinator = _adapter(pending, codec)
-    query = FakeQuery(codec.encode("approve", pending.approval_id))
+    query = FakeQuery(codec.encode("approve", pending.approval_id, pending.action_hash))
     update = SimpleNamespace(callback_query=query)
 
     asyncio.run(adapter.approval_callback(update, SimpleNamespace()))
@@ -156,7 +184,10 @@ def test_inline_callback_rejects_wrong_chat_without_consuming_approval() -> None
     codec = TelegramApprovalCallbackCodec("x" * 32)
     pending = _pending(chat_id=99)
     adapter, coordinator = _adapter(pending, codec)
-    query = FakeQuery(codec.encode("approve", pending.approval_id), chat_id=100)
+    query = FakeQuery(
+        codec.encode("approve", pending.approval_id, pending.action_hash),
+        chat_id=100,
+    )
 
     asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
 
@@ -165,11 +196,83 @@ def test_inline_callback_rejects_wrong_chat_without_consuming_approval() -> None
     assert "different chat" in (query.answers[-1][0] or "")
 
 
+def test_browser_handoff_can_be_consumed_only_in_founder_private_chat() -> None:
+    codec = TelegramApprovalCallbackCodec("x" * 32)
+    pending = _pending(
+        chat_id=None,
+        request_channel="browser",
+        session_id="browser:sense-session.1",
+    )
+    adapter, coordinator = _adapter(pending, codec)
+    payload = codec.encode("approve", pending.approval_id, pending.action_hash)
+
+    private_query = FakeQuery(payload, user_id=7, chat_id=7)
+    asyncio.run(
+        adapter.approval_callback(
+            SimpleNamespace(callback_query=private_query),
+            SimpleNamespace(),
+        )
+    )
+    assert len(coordinator.calls) == 1
+    assert private_query.edits == [
+        "Approval approval.1234567890abcdef consumed exactly once. "
+        "The originating Senses surface will reconcile from the authoritative receipt."
+    ]
+
+    adapter, coordinator = _adapter(pending, codec)
+    group_query = FakeQuery(payload, user_id=7, chat_id=-100123)
+    asyncio.run(
+        adapter.approval_callback(
+            SimpleNamespace(callback_query=group_query),
+            SimpleNamespace(),
+        )
+    )
+    assert coordinator.calls == []
+    assert group_query.answers[-1][1] is True
+
+
+def test_approvals_command_renders_browser_handoff_as_exact_inline_card(monkeypatch) -> None:
+    class Button:
+        def __init__(self, text, callback_data):
+            self.text = text
+            self.callback_data = callback_data
+
+    class Markup:
+        def __init__(self, rows):
+            self.inline_keyboard = rows
+
+    monkeypatch.setattr(telegram_bot, "InlineKeyboardButton", Button)
+    monkeypatch.setattr(telegram_bot, "InlineKeyboardMarkup", Markup)
+    codec = TelegramApprovalCallbackCodec("x" * 32)
+    pending = _pending(
+        chat_id=None,
+        request_channel="browser",
+        session_id="browser:sense-session.1",
+    )
+    adapter, coordinator = _adapter(pending, codec)
+    message = FakeMessage(chat_id=7)
+    update = SimpleNamespace(
+        effective_user=SimpleNamespace(id=7),
+        effective_chat=SimpleNamespace(id=7),
+        message=message,
+    )
+
+    asyncio.run(adapter.approvals_command(update, SimpleNamespace()))
+
+    assert coordinator.calls == []
+    assert len(message.replies) == 2
+    markup = message.reply_markups[-1]
+    payload = markup.inline_keyboard[0][0].callback_data
+    decoded = codec.decode(payload, pending.action_hash)
+    assert decoded.approval_id == pending.approval_id
+    assert decoded.decision == "approve"
+
+
 def test_details_callback_does_not_consume_approval() -> None:
     codec = TelegramApprovalCallbackCodec("x" * 32)
     pending = _pending()
     adapter, coordinator = _adapter(pending, codec)
-    query = FakeQuery(codec.encode("details", pending.approval_id))
+    query = FakeQuery(codec.encode("details", pending.approval_id, pending.action_hash))
 
     asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
 
@@ -198,7 +301,7 @@ def test_fresh_approval_sends_exactly_one_followup_message() -> None:
     async def sender(chat_id: int, text: str) -> None:
         sent.append((chat_id, text))
     adapter, _ = _adapter_with_sender(pending, codec, sender)
-    query = FakeQuery(codec.encode("approve", pending.approval_id))
+    query = FakeQuery(codec.encode("approve", pending.approval_id, pending.action_hash))
 
     asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
 
@@ -213,7 +316,7 @@ def test_delivery_failure_does_not_claim_sent() -> None:
     async def failing_sender(chat_id: int, text: str) -> None:
         raise RuntimeError("telegram transport down")
     adapter, _ = _adapter_with_sender(pending, codec, failing_sender)
-    query = FakeQuery(codec.encode("approve", pending.approval_id))
+    query = FakeQuery(codec.encode("approve", pending.approval_id, pending.action_hash))
 
     asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
 
@@ -231,7 +334,7 @@ def test_replay_sends_no_followup_message() -> None:
     async def sender(chat_id: int, text: str) -> None:
         sent.append((chat_id, text))
     adapter, _ = _adapter_with_sender(pending, codec, sender, replayed=True)
-    query = FakeQuery(codec.encode("approve", pending.approval_id))
+    query = FakeQuery(codec.encode("approve", pending.approval_id, pending.action_hash))
 
     asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
 
@@ -246,7 +349,7 @@ def test_rejection_sends_no_followup_message() -> None:
     async def sender(chat_id: int, text: str) -> None:
         sent.append((chat_id, text))
     adapter, _ = _adapter_with_sender(pending, codec, sender)
-    query = FakeQuery(codec.encode("reject", pending.approval_id))
+    query = FakeQuery(codec.encode("reject", pending.approval_id, pending.action_hash))
 
     asyncio.run(adapter.approval_callback(SimpleNamespace(callback_query=query), SimpleNamespace()))
 
