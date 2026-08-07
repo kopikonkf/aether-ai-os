@@ -377,9 +377,16 @@ function Invoke-UniversalRollback {
 
     Invoke-Installer -ReleasePath $rollbackPath -TargetSha $RollbackRelease -Phase "rollback"
     foreach ($name in @("AetherGateway", "AetherWatchdog")) {
-        $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
-        if ($null -ne $svc) {
-            Restart-Service -Name $name -Force -ErrorAction Stop | Out-Null
+        try {
+            $svc = Get-Service -Name $name -ErrorAction Stop
+            if ($null -ne $svc) {
+                Restart-Service -Name $name -Force -ErrorAction Stop | Out-Null
+            }
+        }
+        catch {
+            # Service absent on this host; nothing to restart. On Linux pwsh a
+            # missing service raises a terminating error from Get-Service that
+            # -ErrorAction SilentlyContinue cannot suppress.
         }
     }
     Start-Sleep -Seconds 2
@@ -442,9 +449,16 @@ try {
     # --- Restart in governed order, then prove running paths bind new release. ---
     if ($Start) {
         foreach ($name in @("AetherGateway", "AetherWatchdog")) {
-            $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
-            if ($null -ne $svc) {
-                Restart-Service -Name $name -Force -ErrorAction Stop | Out-Null
+            try {
+                $svc = Get-Service -Name $name -ErrorAction Stop
+                if ($null -ne $svc) {
+                    Restart-Service -Name $name -Force -ErrorAction Stop | Out-Null
+                }
+            }
+            catch {
+                # Service absent on this host; nothing to restart. On Linux pwsh a
+                # missing service raises a terminating error from Get-Service that
+                # -ErrorAction SilentlyContinue cannot suppress.
             }
         }
         Start-Sleep -Seconds 2
