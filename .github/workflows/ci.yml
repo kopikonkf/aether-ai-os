@@ -62,7 +62,7 @@ jobs:
           # throwaway test password, then write the fragment and validate.
           # Password "ci-only-guard" is never used in production.
           CI_HASH="$(docker run --rm caddy:2.11.3 caddy hash-password --algorithm bcrypt --bcrypt-cost 14 --plaintext 'ci-only-guard')"
-          printf 'basic_auth bcrypt "Aether Founder Alpha" {\n    founder %s\n}\n' "founder $CI_HASH" > caddy-validate/founder-auth.caddy
+          printf 'basic_auth bcrypt "Aether Founder Alpha" {\n    founder %s\n}\n' "$CI_HASH" > caddy-validate/founder-auth.caddy
           docker run --rm -v "${{ github.workspace }}/caddy-validate:/config" \
             caddy:2.11.3 caddy validate --config /config/Caddyfile --adapter caddyfile
       - name: Upload Gateway test receipt
