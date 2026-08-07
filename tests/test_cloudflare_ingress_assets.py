@@ -38,7 +38,7 @@ def test_cloudflare_ingress_assets_bind_one_domain_routes_and_receipts():
 def test_cloudflare_ingress_assets_do_not_use_plain_http_origin_on_port_80():
     combined = "\n".join(_read(path) for path in CLOUDFLARE_DIR.iterdir() if path.is_file())
     import re
-    offenders = re.findall(r"http://127\.0\.0\.1:80(?!80)", combined)
+    offenders = re.findall(r"http://127\.0\.0\.1:80(?!80|0)", combined)
     assert offenders == []
 
 
@@ -55,9 +55,64 @@ def test_cloudflare_ingress_probe_supports_access_enforcement_and_authenticated_
     assert "AccessCookie" in probe
     assert "ExpectAccessEnforcement" in probe
     assert "CF_Authorization" in probe
-    assert "unauthenticated_all_protected" in probe
     assert "authenticated_all_ok" in probe
-    assert "-MaximumRedirection 0" in probe
+    assert "AllowAutoRedirect" in probe
+    assert "AuthMode" in probe
+    assert '"CaddyBasic"' in probe or "'CaddyBasic'" in probe
+    assert "Credential" in probe
+    assert "WrongCredential" in probe
+    assert "unauthenticated_all_denied" in probe
+    assert "invalid_credentials_all_denied" in probe
+    assert "authorization_forwarded_to_upstream" in probe
+    assert "header_strip_observed" in probe
+    assert "EchoRoute" in probe
+    assert "WWW-Authenticate" in probe or "www_authenticate" in probe
+
+
+def test_probe_uses_secret_safe_credential_surface():
+    probe = _read(CLOUDFLARE_DIR / "probe-cloudflare-ingress.ps1")
+    # No plaintext password parameter may exist: passwords come from a
+    # PSCredential object or stdin only.
+    assert "CredentialPasswordStdin" in probe
+    assert "[string]$CredentialPassword" not in probe
+    assert "[string]$WrongCredentialPassword" not in probe
+    assert "CredentialPassword" not in re.sub(r"PasswordStdin", "", probe)
+    # The header-strip conclusion must come from the echo upstream observation,
+    # never from an inspection of Caddy /config/.
+    assert "CaddyAdminUrl" not in probe
+    assert "caddy_config_checked" not in probe
+    assert ".json" in probe or "-Authorization" in probe
+
+
+def test_install_writes_auth_fragment_and_never_records_hash():
+    install = _read(CLOUDFLARE_DIR / "install-cloudflare-ingress.ps1")
+    assert "FounderAuthFile" in install
+    assert "FounderBcryptHash" not in install
+    assert "founder-auth.caddy" in install
+    assert 'basic_auth bcrypt "Aether Founder Alpha"' in install
+    assert "auth_hash_recorded" in install
+    assert r"$2[aby]$14$" in install or r"2[aby]\$14\$" in install
+    assert "FounderUsername" in install
+
+
+def test_install_consumes_and_removes_transient_hash_input():
+    # ADR-0053: no .env; the ACL-protected founder-auth.caddy fragment is the only
+    # hash storage. The installer must verify the transient input's DACL before
+    # reading it and delete it after the canonical fragment is safely written.
+    install = _read(CLOUDFLARE_DIR / "install-cloudflare-ingress.ps1")
+    assert "Assert-ProtectedAcl -Path $FounderAuthFile" in install
+    assert "Remove-Item -LiteralPath $FounderAuthFile" in install
+    assert "Failed to remove transient founder hash input" in install
+    # No .env file may be the hash storage location.
+    combined = "\n".join(_read(path) for path in CLOUDFLARE_DIR.iterdir() if path.is_file())
+    assert "founder-bcrypt.env" not in combined
+
+
+def test_caddyfile_imports_auth_fragment_and_strips_authorization():
+    caddyfile = _read(ROOT / "deploy" / "windows" / "Caddyfile")
+    assert "founder-auth.caddy" in caddyfile
+    assert "header_up -Authorization" in caddyfile
+    assert caddyfile.count("header_up -Authorization") == 4
 
 
 def test_cloudflare_ingress_assets_do_not_embed_secrets_or_direct_gateway_exposure():
@@ -81,7 +136,7 @@ def test_probe_access_protection_covers_redirect_and_denial():
     assert "/cdn-cgi/access/" in probe
     assert "401, 403" in probe
     assert "access_protected" in probe
-    assert re.search(r"unauthenticatedAllProtected.*access_protected", probe, re.S)
+    assert re.search(r"unauthenticatedAllDenied.*basic_challenge", probe, re.S)
 
 
 def test_install_checks_icacls_exit_code_and_acl_postcondition():

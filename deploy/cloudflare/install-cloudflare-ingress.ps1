@@ -8,6 +8,8 @@ param(
     [string]$CaddyPath = "C:\Program Files\Caddy\caddy.exe",
     [string]$CaddyfileSource = "",
     [string]$LocalOrigin = "http://127.0.0.1:8080",
+    [string]$FounderUsername = "founder",
+    [string]$FounderAuthFile = "",
     [switch]$Start
 )
 
@@ -72,19 +74,27 @@ if (-not $homeExistedBefore) {
     if ($LASTEXITCODE -ne 0) {
         throw "ACL hardening failed for AETHER_HOME with exit code $LASTEXITCODE"
     }
+}
 
-    $homeAcl = Get-Acl -LiteralPath $AetherHome
+function Assert-ProtectedAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$IsContainer,
+        [string]$Label = $Path
+    )
+
+    $targetAcl = Get-Acl -LiteralPath $Path
     $requiredRules = @{
         "S-1-5-18" = $false
         "S-1-5-32-544" = $false
     }
     $aclViolations = @()
-    if (-not $homeAcl.AreAccessRulesProtected) {
+    if (-not $targetAcl.AreAccessRulesProtected) {
         $aclViolations += "inheritance_not_disabled"
     }
     $hasContainerInherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
     $hasObjectInherit = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
-    foreach ($rule in $homeAcl.Access) {
+    foreach ($rule in $targetAcl.Access) {
         try {
             $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
         }
@@ -99,8 +109,14 @@ if (-not $homeExistedBefore) {
             $rule.AccessControlType -eq "Allow" -and
             ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl
         )
-        $inherits = ([bool]($rule.InheritanceFlags -band $hasContainerInherit) -and [bool]($rule.InheritanceFlags -band $hasObjectInherit))
-        if (-not ($ruleIsFullControlAllow -and $inherits)) {
+        $inheritsOk = $true
+        if ($IsContainer) {
+            $inheritsOk = (
+                [bool]($rule.InheritanceFlags -band $hasContainerInherit) -and
+                [bool]($rule.InheritanceFlags -band $hasObjectInherit)
+            )
+        }
+        if (-not ($ruleIsFullControlAllow -and $inheritsOk)) {
             $aclViolations += "required_rule_incomplete:${sid}:rights=$($rule.FileSystemRights):inherit=$($rule.InheritanceFlags)"
         }
         else {
@@ -113,7 +129,7 @@ if (-not $homeExistedBefore) {
         }
     }
     if ($aclViolations.Count -gt 0) {
-        throw "ACL postcondition verification failed for AETHER_HOME: $($aclViolations -join ', ')"
+        throw "ACL postcondition verification failed for ${Label}: $($aclViolations -join ', ')"
     }
 }
 
@@ -129,6 +145,66 @@ if (-not (Test-Path -LiteralPath $CaddyfileSource -PathType Leaf)) {
     throw "Caddyfile source not found: $CaddyfileSource"
 }
 Copy-Item -LiteralPath $CaddyfileSource -Destination $caddyfilePath -Force
+
+$authFragmentPath = Join-Path $caddyDir "founder-auth.caddy"
+
+if ($FounderUsername -notmatch '^[a-zA-Z0-9_-]{1,64}$') {
+    throw "Founder username must be a safe fixed identifier: $FounderUsername"
+}
+
+if ($FounderAuthFile) {
+    if (-not (Test-Path -LiteralPath $FounderAuthFile -PathType Leaf)) {
+        throw "Founder auth hash file not found: $FounderAuthFile"
+    }
+    if (-not $FounderUsername) {
+        throw "FounderUsername is required when an auth hash file is used."
+    }
+    # The hash input is secret-bearing. Require it to be inheritance-protected
+    # with exactly SYSTEM + Administrators before reading (same DACL contract as
+    # the canonical fragment). This is the ONLY place a bcrypt hash input may be
+    # consumed; it is removed after the canonical fragment is safely written.
+    Assert-ProtectedAcl -Path $FounderAuthFile -IsContainer $false -Label "founder hash input"
+    $authHashValue = (Get-Content -LiteralPath $FounderAuthFile -Raw).Trim()
+    if ($authHashValue -match " " -or $authHashValue -match "`t") {
+        throw "Founder auth file must contain only a single bcrypt hash"
+    }
+    if ($authHashValue -notmatch '^[$]2[aby]\$14\$[./A-Za-z0-9]{53}$') {
+        throw "Founder auth hash is not a valid cost-14 bcrypt hash"
+    }
+
+    $authFragment = @"
+basic_auth bcrypt "Aether Founder Alpha" {
+    $FounderUsername $authHashValue
+}
+"@
+    $authFragment | Set-Content -LiteralPath $authFragmentPath -Encoding UTF8
+}
+elseif (-not (Test-Path -LiteralPath $authFragmentPath -PathType Leaf)) {
+    throw "Founder auth fragment missing and -FounderAuthFile not provided: $authFragmentPath"
+}
+
+& icacls $authFragmentPath /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "ACL hardening failed for $authFragmentPath"
+}
+Assert-ProtectedAcl -Path $authFragmentPath -IsContainer $false -Label $authFragmentPath
+
+# The canonical fragment is now written and ACL-protected. Remove the transient
+# hash input so no second file holds the bcrypt hash; only founder-auth.caddy
+# remains as hash storage (per ADR-0053).
+if ($FounderAuthFile) {
+    if (Test-Path -LiteralPath $FounderAuthFile -PathType Leaf) {
+        Remove-Item -LiteralPath $FounderAuthFile -Force
+        if (Test-Path -LiteralPath $FounderAuthFile -PathType Leaf) {
+            throw "Failed to remove transient founder hash input: $FounderAuthFile"
+        }
+    }
+}
+
+# The auth fragment is secret-bearing. Fail closed unless the (possibly
+# pre-existing) AETHER_HOME root is itself protected SYSTEM/Administrators
+# with both SIDs as Allow + FullControl + Container|ObjectInherit.
+Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME"
 
 & $CaddyPath validate --config $caddyfilePath --adapter caddyfile | Out-Null
 if ($LASTEXITCODE -ne 0) {
@@ -184,6 +260,10 @@ $manifest = [ordered]@{
     caddy_service = $caddyServiceName
     caddy_path = $CaddyPath
     caddyfile_path = $caddyfilePath
+    auth_mode = "caddy_basic_bcrypt"
+    auth_scope = "all_paths"
+    auth_fragment = (if (Test-Path -LiteralPath $authFragmentPath) { "founder-auth.caddy" } else { $null })
+    auth_hash_recorded = $false
     service_name = $serviceName
     local_origin = $LocalOrigin
     config_path = $configPath
