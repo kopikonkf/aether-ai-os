@@ -163,6 +163,56 @@ class GoogleCloudTTSAdapter(_JsonTTSAdapter):
         return VoiceArtifact(base64.b64decode(audio, validate=True), "audio/mpeg", "mp3")
 
 
+class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
+    """Gemini TTS peripheral that receives one bounded exact-text prompt."""
+
+    endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions"
+
+    def synthesize(
+        self, request: VoiceSynthesisRequest, resolve_credential: CredentialResolver
+    ) -> VoiceArtifact:
+        if not request.delivery_instruction:
+            raise ValueError("Gemini exact-text TTS requires a compiled delivery instruction")
+        token = resolve_credential(self.manifest.credential_ref)
+        response = self._post_json(
+            self.endpoint,
+            {
+                "model": self.manifest.model_id,
+                "input": request.exact_text_provider_input,
+                "response_format": {"type": "audio"},
+                "generation_config": {
+                    "speech_config": [{"voice": self.manifest.voice_id}]
+                },
+            },
+            {"x-goog-api-key": token},
+        )
+        payload = response.json()
+        output_audio = payload.get("output_audio") or payload.get("outputAudio")
+        if not isinstance(output_audio, Mapping):
+            raise TypeError("Gemini TTS response did not contain output_audio")
+        encoded = output_audio.get("data")
+        if not isinstance(encoded, str):
+            raise TypeError("Gemini TTS response did not contain audio data")
+        try:
+            audio = base64.b64decode(encoded, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Gemini TTS response contained malformed base64 audio") from exc
+        if not audio:
+            raise ValueError("Gemini TTS response contained empty audio")
+        content_type = str(
+            output_audio.get("mime_type")
+            or output_audio.get("mimeType")
+            or "audio/pcm;rate=24000"
+        )
+        if content_type.startswith("audio/wav"):
+            extension = "wav"
+        elif content_type.startswith("audio/mpeg"):
+            extension = "mp3"
+        else:
+            extension = "pcm"
+        return VoiceArtifact(audio, content_type, extension)
+
+
 class OpenAIExactTextTTSAdapter(_JsonTTSAdapter):
     endpoint = "https://api.openai.com/v1/audio/speech"
 

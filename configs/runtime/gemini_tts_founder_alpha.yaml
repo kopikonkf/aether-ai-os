@@ -1,0 +1,49 @@
+policy_id: aether.voice.gemini-founder-alpha.v1
+runtime_profile: GOVERNED_PIPELINE
+deployment_class: FOUNDER_ALPHA_FREE
+
+provider:
+  provider_id: gemini-exact-tts
+  endpoint: https://generativelanguage.googleapis.com/v1beta/interactions
+  model_id: gemini-3.1-flash-tts-preview
+  voice_id: Aoede
+  language: id-ID
+  output_format: pcm
+  credential_ref: env://GEMINI_API_KEY
+  priority: 1
+  streaming: true
+  billing_tier: free
+  quota_class: provider_enforced_free_preview
+  data_use_classification: submitted_text_may_be_used_to_improve_provider_products
+  preview: true
+  terms_snapshot_date: "2026-08-07"
+  audition_state: pending_founder_audition
+
+fallback_order:
+  - browser-speech
+  - text-only
+
+privacy:
+  founder_alpha_consent_required: true
+  private_text_only_supported: true
+  secret_classes_denied:
+    - credentials_or_secrets
+    - pairing_data
+    - approval_codes
+    - private_keys
+    - payment_details
+
+circuit:
+  failure_threshold: 1
+  cooldown_seconds: 60
+
+billing:
+  auto_upgrade: false
+  paid_upgrade_requires_founder_authorization: true
+
+evidence:
+  provider_terms_url: https://ai.google.dev/gemini-api/docs/terms
+  pricing_url: https://ai.google.dev/gemini-api/docs/pricing
+  speech_generation_url: https://ai.google.dev/gemini-api/docs/speech-generation
+  exact_text_required: true
+  founder_audition_required: true
