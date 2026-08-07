@@ -1,6 +1,6 @@
 # LAST STANDING POINT - Aether OS
 
-**Canonical date:** 2026-08-07
+**Canonical date:** 2026-08-08
 **Release:** MVP v0.20 - Governed Shipping + Measured Demand Operations
 **State:** source-present, host-proof pending
 
@@ -86,9 +86,9 @@ Founder approval / release evidence
   without an authoritative consent receipt, and a capability cannot become
   `SUCCEEDED` without an authoritative execution receipt.
 - Camera enablement in the shell is now local preview only and no longer
-  publishes continuous camera video to LiveKit. This safety correction does
-  not claim bounded-vision conformance: server-side consent leases, keyframe
-  validation, raw-frame deletion, and crash sweeping remain pending.
+  publishes continuous camera video to LiveKit. That slice-4 safety correction
+  preceded the server-side consent, keyframe validation, deletion, and sweeping
+  work now recorded under slice 6 below.
 - Implementation slice 5 is source-present: every browser and LiveKit voice
   generation has a stable `turn_id`, `correlation_id`, and monotonic generation;
   an append-only SQLite claim ledger prevents the same ID from authorizing
@@ -113,11 +113,33 @@ Founder approval / release evidence
   Only an explicit Retry creates a fresh, linked turn.
 - Conversational interruption remains orthogonal to capability-action state;
   Stop never implies action cancel, approval, or rejection.
+- Implementation slice 6 is source-present: camera and screen transmission now
+  require server-authoritative consent leases bound to the exact paired device,
+  Senses session, source, and mode. One-shot leases expire after 120 seconds and
+  are consumed by one accepted frame; bounded leases expire after 15 minutes,
+  enforce one keyframe every 15 seconds, require monotonic sequence numbers, and
+  cannot be renewed without a new user gesture.
+- Camera and screen preview remain separate local-only streams. The shell now
+  exposes distinct screen controls, visible bounded-lease countdowns, and
+  immediate camera/screen shutdown on explicit stop, permission loss,
+  backgrounding, page hide, or freeze. Neither preview path publishes a
+  continuous LiveKit video track.
+- Gateway validates the exact session capability, consent/device/source binding,
+  capture timestamp, byte limit, declared MIME versus file signature, actual
+  dimensions, and sequence before cognition. Raw keyframes are written only as
+  mode-0600 ephemeral working files, deleted in the terminal-turn `finally`
+  boundary, and covered by a five-second crash sweeper with headroom below the
+  frozen five-minute orphan limit.
+- Persistent vision evidence contains hashes, byte count, dimensions, source,
+  consent/turn/correlation IDs, timestamps, provider/model IDs, outcome, and
+  deletion receipt only. `VisionFrameReceipt` no longer requires or accepts a
+  persistent storage path; raw bytes and prompt text are absent from the
+  consent/frame SQLite ledgers and browser-sense event receipts.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-5 are source-present. The Gemini adapter is not yet
+  merely because slices 1-6 are source-present. The Gemini adapter is not yet
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
   and AionUi/Telegram presentation, browser/PWA execution, LiveKit grant
   revocation, credentialed provider execution, and Founder host evidence still
@@ -125,11 +147,11 @@ Founder approval / release evidence
 
 ## Next Senses implementation slice
 
-Implement server-authoritative camera/screen consent leases and bounded
-keyframe transmission, including content validation, raw-frame deletion,
-expiry/revocation enforcement, and crash sweeping. Keep local preview distinct
-from transmission and do not claim vision conformance until raw-media lifecycle
-proof is receipt-backed.
+Bundle browser dependencies, add the installable PWA shell and a safe
+service-worker cache policy, then prove desktop/mobile foreground suspension,
+cold/warm launch behavior, and zero caching of raw media, authentication
+responses, cookies, tokens, or sensor payloads. Keep Senses source-present and
+do not claim mobile or host conformance before real browser/PWA evidence.
 
 ## Next operational step
 

@@ -142,7 +142,9 @@ test('camera and screen consent are independent and suspension revokes both', ()
   state = reduceClientState(state, event('CONSENT_BOUNDED_GRANTED', {
     source: 'screen',
     consentId: 'screen-consent-1',
+    receiptId: 'screen-consent-receipt-1',
     expiresAt: '2026-08-07T10:15:00Z',
+    captureIntervalSeconds: 15,
   }));
   assert.equal(state.consent.screen.mode, ConsentMode.BOUNDED);
   state = reduceClientState(state, event('APP_SUSPENDED'));
@@ -312,6 +314,7 @@ test('bounded consent fails closed without source, ID, and expiry', () => {
     () => reduceClientState(state, event('CONSENT_BOUNDED_GRANTED', {
       source: 'camera',
       consentId: 'camera-consent-1',
+      receiptId: 'camera-consent-receipt-1',
     })),
     /requires an expiry/,
   );
@@ -321,6 +324,37 @@ test('bounded consent fails closed without source, ID, and expiry', () => {
     })),
     /requires a consent ID/,
   );
+});
+
+test('vision frame and revocation receipts must match the authoritative lease', () => {
+  let state = activeState();
+  state = reduceClientState(state, event('CONSENT_BOUNDED_GRANTED', {
+    source: 'camera',
+    consentId: 'camera-consent-2',
+    receiptId: 'camera-consent-receipt-2',
+    expiresAt: '2026-08-07T10:15:00Z',
+    captureIntervalSeconds: 15,
+  }));
+  assert.throws(
+    () => reduceClientState(state, event('CONSENT_FRAME_RECEIPTED', {
+      source: 'camera', consentId: 'different', receiptId: 'frame-receipt-1',
+      sequenceNumber: 1,
+    })),
+    /does not match active consent/,
+  );
+  state = reduceClientState(state, event('CONSENT_FRAME_RECEIPTED', {
+    source: 'camera', consentId: 'camera-consent-2', receiptId: 'frame-receipt-1',
+    sequenceNumber: 1, capturedAt: '2026-08-07T10:00:00Z',
+  }));
+  assert.equal(state.consent.camera.sequenceNumber, 1);
+  assert.throws(
+    () => reduceClientState(state, event('CONSENT_REVOKED', { source: 'camera' })),
+    /authoritative receipt/,
+  );
+  state = reduceClientState(state, event('CONSENT_REVOKED', {
+    source: 'camera', receiptId: 'camera-revocation-receipt-1',
+  }));
+  assert.equal(state.consent.camera.mode, ConsentMode.OFF);
 });
 
 test('auth revocation stops sensors without resetting the explicit privacy choice', () => {
@@ -562,16 +596,19 @@ test('Senses app is wired only through the reducer presentation boundary', async
   assert.doesNotMatch(app, /\bworking\s*:/);
 });
 
-test('canonical handoff records slice five boundaries and the next slice', async () => {
+test('canonical handoff records slice six boundaries and the next slice', async () => {
   const handoff = await readFile(
     new URL('../../LASTSTANDINGPOINT.md', import.meta.url),
     'utf8',
   );
 
   assert.match(handoff, /Implementation slice 5 is source-present/);
-  assert.match(handoff, /merely because slices 1-5 are source-present/);
+  assert.match(handoff, /Implementation slice 6 is source-present/);
+  assert.match(handoff, /merely because slices 1-6 are source-present/);
   assert.match(handoff, /late-result-discarded/);
   assert.match(handoff, /never submitted again automatically/);
-  assert.match(handoff, /server-authoritative camera\/screen consent leases/);
+  assert.match(handoff, /server-authoritative consent leases/);
+  assert.match(handoff, /VisionFrameReceipt` no longer requires/);
+  assert.match(handoff, /Bundle browser dependencies/);
   assert.match(handoff, /Conversational interruption remains orthogonal/);
 });

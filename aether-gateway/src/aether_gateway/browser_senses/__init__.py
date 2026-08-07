@@ -15,6 +15,12 @@ from .service import (
     LiveKitTokenIssuer,
 )
 from .turns import BrowserSenseTurnLedger, TurnClaimConflict
+from .vision import (
+    VisionConsentError,
+    VisionDeletionError,
+    VisionFrameValidationError,
+    VisionLifecycle,
+)
 
 __all__ = [
     "BootstrapError",
@@ -29,4 +35,8 @@ __all__ = [
     "LiveKitTokenIssuer",
     "SessionCredentialError",
     "TurnClaimConflict",
+    "VisionConsentError",
+    "VisionDeletionError",
+    "VisionFrameValidationError",
+    "VisionLifecycle",
 ]

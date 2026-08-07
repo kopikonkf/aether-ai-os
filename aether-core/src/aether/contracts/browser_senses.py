@@ -300,23 +300,60 @@ class BrowserSenseCapabilityActionReceipt:
 class VisionFrameReceipt:
     frame_id: str
     session_id: str
+    consent_id: str
+    source: BrowserSenseConsentSource
+    sequence_number: int
     content_hash: str
     byte_count: int
     content_type: str
-    width: int | None
-    height: int | None
-    observed_at: str
-    storage_reference: str
-    prompt: str | None = None
+    width: int
+    height: int
+    captured_at: str
+    accepted_at: str
+    ephemeral_handle: str
+    prompt_hash: str
+    deletion_outcome: str
+    deleted_at: str
+    deletion_reason: str
+    turn_id: str
+    correlation_id: str
+    outcome: str
+    provider_id: str | None = None
+    model_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.source, BrowserSenseConsentSource):
+            object.__setattr__(self, "source", BrowserSenseConsentSource(self.source))
+        _require_text(self.frame_id, "vision frame ID")
+        _require_text(self.session_id, "vision frame session ID")
+        _require_text(self.consent_id, "vision frame consent ID")
+        if self.sequence_number < 1:
+            raise ValueError("vision frame sequence must be positive")
         if self.byte_count < 1:
             raise ValueError("vision frame must contain bytes")
         if self.content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise ValueError("unsupported vision frame content type")
-        if not self.content_hash.strip() or not self.storage_reference.strip():
-            raise ValueError("vision frame requires content hash and storage reference")
+        if self.width < 1 or self.height < 1:
+            raise ValueError("vision frame dimensions must be positive")
+        _require_sha256(self.content_hash, "vision frame content hash")
+        _require_sha256(self.prompt_hash, "vision frame prompt hash")
+        _require_text(self.captured_at, "vision frame capture time")
+        _require_text(self.accepted_at, "vision frame accepted time")
+        _require_text(self.deleted_at, "vision frame deletion time")
+        _require_text(self.deletion_reason, "vision frame deletion reason")
+        _require_text(self.turn_id, "vision frame turn ID")
+        _require_text(self.correlation_id, "vision frame correlation ID")
+        _require_text(self.outcome, "vision frame outcome")
+        if self.deletion_outcome not in {"deleted", "swept"}:
+            raise ValueError("vision frame receipt requires proven deletion")
+        if (
+            not self.ephemeral_handle.strip()
+            or self.ephemeral_handle != self.frame_id
+            or "/" in self.ephemeral_handle
+            or "\\" in self.ephemeral_handle
+        ):
+            raise ValueError("vision frame ephemeral handle must not be a storage path")
 
 
 @dataclass(frozen=True)

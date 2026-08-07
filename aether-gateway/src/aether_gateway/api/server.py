@@ -98,6 +98,9 @@ from aether_gateway.browser_senses import (
     LiveKitTokenIssuer,
     SessionCredentialError,
     TurnClaimConflict,
+    VisionConsentError,
+    VisionDeletionError,
+    VisionFrameValidationError,
 )
 from aether_gateway.runtime_sdk import (
     CodingRuntimeDispatchAdapter, ExternalStreamingCodingRuntimeAdapter, LocalStructuredCodingRuntimeAdapter, RuntimeAdapterRegistry, RuntimeTelemetryStore,
@@ -482,17 +485,32 @@ async def circadian_loop() -> None:
             print(f"Circadian Loop Error: {exc}")
 
 
+async def vision_orphan_sweeper_loop() -> None:
+    while True:
+        await asyncio.sleep(5)
+        try:
+            await asyncio.to_thread(browser_sense_service.sweep_orphan_frames)
+        except Exception as exc:
+            browser_sense_event_bus.emit(
+                EventType.BROWSER_SENSE_VISION_FRAME_SWEPT,
+                actor="aether.browser-senses",
+                payload={"sweep_error": type(exc).__name__},
+                severity="error",
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     circadian_task = asyncio.create_task(circadian_loop())
     telegram_task = asyncio.create_task(telegram_adapter.start_polling())
     fleet_task = asyncio.create_task(fleet_scheduler.run_forever())
+    vision_sweeper_task = asyncio.create_task(vision_orphan_sweeper_loop())
     try:
         yield
     finally:
-        for task in (circadian_task, telegram_task, fleet_task):
+        for task in (circadian_task, telegram_task, fleet_task, vision_sweeper_task):
             task.cancel()
-        for task in (circadian_task, telegram_task, fleet_task):
+        for task in (circadian_task, telegram_task, fleet_task, vision_sweeper_task):
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
@@ -568,7 +586,7 @@ class ChatRequest(BaseModel):
 
 class BrowserSenseSessionRequest(BaseModel):
     display_name: str = "Founder"
-    capabilities: list[str] = Field(default_factory=lambda: ["text", "microphone", "speaker", "camera"])
+    capabilities: list[str] = Field(default_factory=lambda: ["text", "microphone", "speaker", "camera", "screen-share"])
     ttl_seconds: int = Field(default=3600, ge=300, le=3600)
     challenge_id: str = Field(min_length=1, max_length=200)
     device_signature: str = Field(min_length=1, max_length=512)
@@ -577,7 +595,7 @@ class BrowserSenseSessionRequest(BaseModel):
 class BrowserSenseBootstrapRequest(BaseModel):
     device_label: str = Field(min_length=1, max_length=120)
     client_mode: str = Field(default="browser", min_length=1, max_length=32)
-    capabilities: list[str] = Field(default_factory=lambda: ["text", "microphone", "speaker", "camera"])
+    capabilities: list[str] = Field(default_factory=lambda: ["text", "microphone", "speaker", "camera", "screen-share"])
     public_key_jwk: dict
     verifier_hash: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
 
@@ -622,11 +640,24 @@ class BrowserSenseTextRequest(BrowserSenseTurnIdentityRequest):
 
 
 class BrowserSenseVisionRequest(BrowserSenseTurnIdentityRequest):
+    consent_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9._:-]+$")
+    source: str = Field(pattern=r"^(camera|screen)$")
+    sequence_number: int = Field(ge=1, le=2_147_483_647)
+    captured_at: str = Field(min_length=20, max_length=40)
     data_base64: str = Field(min_length=1)
     content_type: str = "image/jpeg"
     prompt: str = Field(default="Describe materially relevant objects, people, text, and changes visible in this frame.", max_length=4000)
-    width: int | None = Field(default=None, ge=1, le=8192)
-    height: int | None = Field(default=None, ge=1, le=8192)
+    width: int = Field(ge=1, le=4096)
+    height: int = Field(ge=1, le=4096)
+
+
+class BrowserSenseVisionConsentRequest(BaseModel):
+    source: str = Field(pattern=r"^(camera|screen)$")
+    mode: str = Field(pattern=r"^(one-shot|bounded)$")
+
+
+class BrowserSenseVisionConsentRevokeRequest(BaseModel):
+    reason: str = Field(default="explicit-stop", min_length=1, max_length=160)
 
 
 class BrowserSenseWorkerChatRequest(BrowserSenseTurnIdentityRequest):
@@ -1504,16 +1535,60 @@ async def browser_sense_text(
         raise HTTPException(status_code=502, detail=f"Browser cognition failed: {type(exc).__name__}: {exc}") from exc
 
 
+@app.post("/api/browser-senses/vision/consents", status_code=201)
+def grant_browser_sense_vision_consent(
+    req: BrowserSenseVisionConsentRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, binding, _ = _browser_cookie_auth(request, x_aether_csrf)
+    try:
+        return browser_sense_service.grant_vision_consent(
+            token,
+            device_id=binding["device_id"],
+            source=req.source,
+            mode=req.mode,
+        )
+    except BrowserSenseAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except VisionConsentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/browser-senses/vision/consents/{consent_id}/revoke")
+def revoke_browser_sense_vision_consent(
+    consent_id: str,
+    req: BrowserSenseVisionConsentRevokeRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, binding, _ = _browser_cookie_auth(request, x_aether_csrf)
+    try:
+        return browser_sense_service.revoke_vision_consent(
+            token,
+            device_id=binding["device_id"],
+            consent_id=consent_id,
+            reason=req.reason,
+        )
+    except BrowserSenseAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except VisionConsentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/browser-senses/vision")
 async def browser_sense_vision(
     req: BrowserSenseVisionRequest,
     request: Request,
     x_aether_csrf: str | None = Header(default=None),
 ):
-    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
+    token, binding, _ = _browser_cookie_auth(request, x_aether_csrf)
     try:
         return await browser_sense_service.handle_vision(
-            token, data_base64=req.data_base64, content_type=req.content_type,
+            token, device_id=binding["device_id"], consent_id=req.consent_id,
+            source=req.source, sequence_number=req.sequence_number,
+            captured_at=req.captured_at, data_base64=req.data_base64,
+            content_type=req.content_type,
             prompt=req.prompt, width=req.width, height=req.height,
             turn_id=req.turn_id, correlation_id=req.correlation_id,
             generation=req.generation, retry_of_turn_id=req.retry_of_turn_id,
@@ -1522,8 +1597,12 @@ async def browser_sense_vision(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except TurnClaimConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
+    except VisionConsentError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (VisionFrameValidationError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except VisionDeletionError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Vision cognition failed: {type(exc).__name__}: {exc}") from exc
 
@@ -1636,6 +1715,14 @@ def senses_console_client_state_js():
 def senses_console_turn_generation_js():
     return FileResponse(
         AIONUI_SENSES_CONSOLE_DIR / "turn_generation.js",
+        media_type="application/javascript",
+    )
+
+
+@app.get("/senses/vision_capture.js", include_in_schema=False)
+def senses_console_vision_capture_js():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "vision_capture.js",
         media_type="application/javascript",
     )
 

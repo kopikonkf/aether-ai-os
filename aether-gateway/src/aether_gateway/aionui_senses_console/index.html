@@ -58,6 +58,19 @@
         </div>
       </article>
 
+      <article class="panel media-panel">
+        <div class="panel-head"><h2>Screen</h2><span id="screenState">not started</span></div>
+        <div class="video-stage">
+          <video id="screenVideo" class="screen-preview" autoplay muted playsinline></video>
+          <div id="screenVisionBadge" class="vision-badge">SCREEN IDLE</div>
+        </div>
+        <div class="controls wrap">
+          <button id="screenButton" class="secondary">Enable screen preview</button>
+          <button id="screenVisionButton" class="secondary" disabled>Ask about screen</button>
+          <label class="toggle"><input id="autoScreenVision" type="checkbox" /> bounded screen every 15s</label>
+        </div>
+      </article>
+
       <article class="panel voice-panel">
         <div class="panel-head"><h2>Voice</h2><span id="voiceState">not started</span></div>
         <div id="orb" class="orb"><div></div><div></div><div></div></div>
@@ -97,7 +110,7 @@
           <label class="voice-preview">Voice preview <button id="previewVoice" type="button" class="secondary">Preview Aether voice</button></label>
           <label>Vision prompt <input id="visionPrompt" value="Describe materially relevant objects, people, text, and changes visible in this frame." /></label>
         </div>
-        <p>Microphone and camera access require HTTPS and explicit browser permission. Device and Senses credentials remain protected in HttpOnly same-origin cookies. Private text-only suppresses browser and external speech without disabling Gateway text cognition.</p>
+        <p>Microphone, camera, and display capture require HTTPS and explicit browser permission. Preview stays local; only receipt-bound keyframes may be transmitted. Device and Senses credentials remain protected in HttpOnly same-origin cookies. Private text-only suppresses browser and external speech without disabling Gateway text cognition.</p>
       </details>
     </section>
 

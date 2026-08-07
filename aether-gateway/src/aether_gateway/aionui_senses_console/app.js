@@ -10,6 +10,7 @@ import {
   createTurnGenerationCoordinator,
   stopTurnAudio,
 } from './turn_generation.js';
+import { createVisionCaptureCoordinator } from './vision_capture.js';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -25,7 +26,10 @@ const state = {
   heartbeatTimer: null,
   micEnabled: false,
   cameraEnabled: false,
-  autoVisionTimer: null,
+  screenStream: null,
+  screenEnabled: false,
+  visionTimers: { camera: null, screen: null },
+  visionCountdownTimer: null,
   fallbackRecognition: null,
   remoteAudioElements: new Set(),
   remoteAudioTracks: new Set(),
@@ -45,6 +49,7 @@ const TURN_STATE_TOPIC = 'aether.senses.turn-state.v1';
 const TURN_REQUEST_TIMEOUT_MS = 30000;
 const RECONCILIATION_DELAYS_MS = Object.freeze([0, 1000, 3000]);
 const turnCoordinator = createTurnGenerationCoordinator();
+const visionCoordinator = createVisionCaptureCoordinator();
 
 function message(role, text) {
   const node = document.createElement('div');
@@ -84,6 +89,8 @@ function renderClientState(clientState) {
   $('fallbackTalk').disabled = !presentation.canSend;
   $('cameraButton').disabled = !presentation.canUseSensors && !state.cameraEnabled;
   $('visionButton').disabled = !presentation.canUseSensors || !state.cameraEnabled;
+  $('screenButton').disabled = !presentation.canUseSensors && !state.screenEnabled;
+  $('screenVisionButton').disabled = !presentation.canUseSensors || !state.screenEnabled;
   $('chatInput').disabled = !presentation.canSend;
   $('chatForm').querySelector('button[type="submit"]').disabled = !presentation.canSend;
   $('stopAether').disabled = !presentation.canStopTurn;
@@ -158,17 +165,29 @@ async function lookupTurnStatus(turn) {
   }
 }
 
-function stopAutoVision() {
-  clearInterval(state.autoVisionTimer);
-  state.autoVisionTimer = null;
-  $('autoVision').checked = false;
+function stopAutoVision(source) {
+  clearInterval(state.visionTimers[source]);
+  state.visionTimers[source] = null;
+  $(source === 'camera' ? 'autoVision' : 'autoScreenVision').checked = false;
+}
+
+function stopAllAutoVision() {
+  stopAutoVision('camera');
+  stopAutoVision('screen');
+  clearInterval(state.visionCountdownTimer);
+  state.visionCountdownTimer = null;
 }
 
 function stopLocalCapture() {
-  stopAutoVision();
+  stopAllAutoVision();
+  visionCoordinator.stop('camera');
+  visionCoordinator.stop('screen');
   state.localStream?.getTracks().forEach((track) => track.stop());
   state.localStream = null;
   state.cameraEnabled = false;
+  state.screenStream?.getTracks().forEach((track) => track.stop());
+  state.screenStream = null;
+  state.screenEnabled = false;
   state.fallbackRecognition?.abort?.();
   state.fallbackRecognition = null;
   if ('speechSynthesis' in window) {
@@ -205,6 +224,9 @@ function clearSessionRuntime() {
   $('cameraState').textContent = 'not started';
   $('cameraButton').textContent = 'Enable camera';
   $('localVideo').srcObject = null;
+  $('screenState').textContent = 'not started';
+  $('screenButton').textContent = 'Enable screen preview';
+  $('screenVideo').srcObject = null;
   $('sessionLabel').textContent = 'no session';
 }
 
@@ -405,7 +427,7 @@ async function requestPairing() {
       client_mode: window.matchMedia('(display-mode: standalone)').matches
         ? 'pwa'
         : 'browser',
-      capabilities: ['text', 'microphone', 'speaker', 'camera'],
+      capabilities: ['text', 'microphone', 'speaker', 'camera', 'screen-share'],
       public_key_jwk: generated.publicJwk,
       verifier_hash: verifierHash,
     }),
@@ -687,7 +709,7 @@ async function issueSession(epoch) {
     authFailure: 'device',
     body: JSON.stringify({
       display_name: $('displayName').value.trim() || 'Founder',
-      capabilities: ['text', 'microphone', 'speaker', 'camera'],
+      capabilities: ['text', 'microphone', 'speaker', 'camera', 'screen-share'],
       ttl_seconds: 3600,
       challenge_id: challenge.challenge_id,
       device_signature: await signChallenge(challenge.challenge),
@@ -891,23 +913,103 @@ async function toggleCamera() {
       await ensureCamera();
       return;
     }
-    state.localStream?.getTracks().forEach((track) => track.stop());
-    state.localStream = null;
-    state.cameraEnabled = false;
-    $('localVideo').srcObject = null;
-    $('cameraState').textContent = 'camera off';
-    $('cameraButton').textContent = 'Enable camera';
-    $('visionButton').disabled = true;
-    stopAutoVision();
-    dispatchForEpoch('CONSENT_REVOKED', clientStore.getEpoch(), { source: 'camera' });
+    await stopVisionSource('camera', 'camera-stop');
   } catch (error) {
     message('system', `Camera failed: ${error.message}`);
   }
 }
 
-function captureFrame() {
-  const video = $('localVideo');
-  if (!video.videoWidth) throw new Error('Camera frame is not ready.');
+async function ensureScreen() {
+  if (state.screenEnabled) return;
+  if (!deriveClientPresentation(clientStore.getState()).canUseSensors) {
+    throw new Error('Connect a verified browser session before enabling screen preview.');
+  }
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: { frameRate: { ideal: 5, max: 5 } },
+    audio: false,
+  });
+  state.screenStream = stream;
+  state.screenEnabled = true;
+  $('screenVideo').srcObject = stream;
+  dispatchForEpoch('CONSENT_PREVIEW_STARTED', clientStore.getEpoch(), {
+    source: 'screen',
+  });
+  $('screenState').textContent = 'local preview';
+  $('screenButton').textContent = 'Disable screen preview';
+  $('screenVisionButton').disabled = !state.session;
+  stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+    stopVisionSource('screen', 'browser-permission-ended').catch((error) => {
+      message('system', `Screen stop could not be confirmed: ${error.message}`);
+    });
+  }, { once: true });
+  message(
+    'system',
+    'Screen preview is local. Continuous screen video is never published as v1 cognition.',
+  );
+}
+
+async function toggleScreen() {
+  try {
+    if (!state.screenEnabled) {
+      await ensureScreen();
+      return;
+    }
+    await stopVisionSource('screen', 'screen-stop');
+  } catch (error) {
+    message('system', `Screen capture failed: ${error.message}`);
+  }
+}
+
+async function stopVisionLease(source, reason) {
+  stopAutoVision(source);
+  const lease = visionCoordinator.stop(source);
+  if (!lease) {
+    dispatchForEpoch('CONSENT_LOCAL_STOPPED', clientStore.getEpoch(), { source });
+    return null;
+  }
+  dispatchForEpoch('CONSENT_LOCAL_STOPPED', clientStore.getEpoch(), { source });
+  if (!state.session || !state.csrfNonce) return null;
+  const revoked = await jsonFetch(
+    `${API}/api/browser-senses/vision/consents/${encodeURIComponent(lease.consentId)}/revoke`,
+    {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ reason }),
+    },
+  );
+  if ([
+    AuthSessionState.ACTIVE_REALTIME,
+    AuthSessionState.ACTIVE_DEGRADED,
+  ].includes(clientStore.getState().authSession)) {
+    dispatchForEpoch('CONSENT_REVOKED', clientStore.getEpoch(), {
+      source,
+      receiptId: revoked.receipt_id,
+    });
+  }
+  return revoked;
+}
+
+async function stopVisionSource(source, reason) {
+  const revocation = stopVisionLease(source, reason);
+  const streamKey = source === 'camera' ? 'localStream' : 'screenStream';
+  const enabledKey = source === 'camera' ? 'cameraEnabled' : 'screenEnabled';
+  const video = $(source === 'camera' ? 'localVideo' : 'screenVideo');
+  const stateNode = $(source === 'camera' ? 'cameraState' : 'screenState');
+  const button = $(source === 'camera' ? 'cameraButton' : 'screenButton');
+  const askButton = $(source === 'camera' ? 'visionButton' : 'screenVisionButton');
+  state[streamKey]?.getTracks().forEach((track) => track.stop());
+  state[streamKey] = null;
+  state[enabledKey] = false;
+  video.srcObject = null;
+  stateNode.textContent = `${source} off`;
+  button.textContent = source === 'camera' ? 'Enable camera' : 'Enable screen preview';
+  askButton.disabled = true;
+  await revocation;
+}
+
+function captureFrame(source) {
+  const video = $(source === 'camera' ? 'localVideo' : 'screenVideo');
+  if (!video.videoWidth) throw new Error(`${source} frame is not ready.`);
   const canvas = $('frameCanvas');
   const maxWidth = 960;
   const scale = Math.min(1, maxWidth / video.videoWidth);
@@ -928,6 +1030,27 @@ function captureFrame() {
     height: canvas.height,
     prompt: $('visionPrompt').value.trim(),
   };
+}
+
+async function grantVisionLease(source, mode) {
+  const consent = await jsonFetch(`${API}/api/browser-senses/vision/consents`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ source, mode }),
+  });
+  visionCoordinator.grant(consent);
+  dispatchForEpoch(
+    mode === 'bounded' ? 'CONSENT_BOUNDED_GRANTED' : 'CONSENT_ONE_SHOT_GRANTED',
+    clientStore.getEpoch(),
+    {
+      source,
+      consentId: consent.consent_id,
+      receiptId: consent.receipt_id,
+      expiresAt: consent.expires_at,
+      captureIntervalSeconds: consent.capture_interval_seconds,
+    },
+  );
+  return consent;
 }
 
 function presentAssistantResponse(response, epoch, turn, status) {
@@ -1064,47 +1187,96 @@ async function beginBrowserTurn({ retry = false } = {}) {
   return retry ? turnCoordinator.startExplicitRetry() : turnCoordinator.start();
 }
 
-async function askVision(silent = false) {
+async function askVision(source = 'camera', silent = false) {
   if (!state.session) throw new Error('Connect a browser session first.');
+  const enabled = source === 'camera' ? state.cameraEnabled : state.screenEnabled;
+  if (!enabled) throw new Error(`Enable ${source} local preview before transmission.`);
+  let lease = visionCoordinator.snapshot()[source];
+  if (!lease) {
+    await grantVisionLease(source, 'one-shot');
+    lease = visionCoordinator.snapshot()[source];
+  }
   const epoch = clientStore.getEpoch();
   const turn = await beginBrowserTurn();
   dispatchForEpoch('TURN_GENERATION_STARTED', epoch, turnEvent(turn, {
     retryOfTurnId: turn.retryOfTurnId,
   }));
-  $('visionBadge').textContent = 'VISION COMMITTING';
+  const badge = $(source === 'camera' ? 'visionBadge' : 'screenVisionBadge');
+  badge.textContent = `${source.toUpperCase()} COMMITTING`;
   try {
-    if (!silent) message('user', '[camera frame]');
+    if (!silent) message('user', `[${source} keyframe]`);
+    const payload = visionCoordinator.envelope(
+      source,
+      captureFrame(source),
+      $('visionPrompt').value.trim(),
+    );
     const result = await executeBrowserTurn({
       endpoint: '/api/browser-senses/vision',
-      payload: captureFrame(),
+      payload,
       turn,
       epoch,
       inputForRetry: null,
     });
-    $('visionBadge').textContent = result ? 'VISION READY' : 'VISION UNCONFIRMED';
+    if (result?.frame) {
+      dispatchForEpoch('CONSENT_FRAME_RECEIPTED', epoch, {
+        source,
+        consentId: result.frame.consent_id,
+        receiptId: result.frame.receipt_id,
+        sequenceNumber: result.frame.sequence_number,
+        capturedAt: result.frame.captured_at,
+      });
+    }
+    badge.textContent = result ? `${source.toUpperCase()} READY` : `${source.toUpperCase()} UNCONFIRMED`;
   } catch (error) {
-    $('visionBadge').textContent = 'VISION ERROR';
+    badge.textContent = `${source.toUpperCase()} ERROR`;
     message('system', `Vision failed: ${error.message}`);
+    if (/consent lease is expired/i.test(error.message)) {
+      await stopVisionLease(source, 'lease-expired').catch(() => null);
+    }
   }
 }
 
-function toggleAutoVision() {
-  if (!$('autoVision').checked) {
-    stopAutoVision();
+function renderVisionCountdowns() {
+  const now = Date.now();
+  for (const source of ['camera', 'screen']) {
+    const lease = visionCoordinator.snapshot()[source];
+    if (!lease || lease.mode !== 'bounded') continue;
+    const remaining = Math.max(0, Math.ceil((lease.expiresAt - now) / 1000));
+    $(source === 'camera' ? 'cameraState' : 'screenState').textContent = (
+      `VISION ACTIVE · ${remaining}s`
+    );
+    if (remaining === 0) {
+      stopVisionLease(source, 'lease-expired').catch((error) => {
+        message('system', `Vision expiry stop failed: ${error.message}`);
+      });
+    }
+  }
+}
+
+async function toggleAutoVision(source = 'camera') {
+  const checkbox = $(source === 'camera' ? 'autoVision' : 'autoScreenVision');
+  if (!checkbox.checked) {
+    await stopVisionLease(source, 'bounded-stop');
     return;
   }
-  if (!state.cameraEnabled || !state.session) {
-    $('autoVision').checked = false;
-    message('system', 'Connect and enable camera before bounded vision.');
+  const enabled = source === 'camera' ? state.cameraEnabled : state.screenEnabled;
+  if (!enabled || !state.session) {
+    checkbox.checked = false;
+    message('system', `Connect and enable ${source} preview before bounded vision.`);
     return;
   }
-  state.autoVisionTimer = setInterval(
-    () => askVision(true).catch((error) => message('system', error.message)),
+  await grantVisionLease(source, 'bounded');
+  state.visionTimers[source] = setInterval(
+    () => askVision(source, true).catch((error) => message('system', error.message)),
     15000,
   );
+  if (!state.visionCountdownTimer) {
+    state.visionCountdownTimer = setInterval(renderVisionCountdowns, 1000);
+  }
+  renderVisionCountdowns();
   message(
     'system',
-    'Bounded-interval client capture requested. Server consent/lifecycle conformance remains a later slice.',
+    `${source} bounded vision is active for 15 minutes at one keyframe every 15 seconds.`,
   );
 }
 
@@ -1349,9 +1521,18 @@ $('micButton').addEventListener('click', toggleMic);
 $('fallbackTalk').addEventListener('click', fallbackSTT);
 $('cameraButton').addEventListener('click', toggleCamera);
 $('visionButton').addEventListener('click', () => {
-  askVision(false).catch((error) => message('system', error.message));
+  askVision('camera', false).catch((error) => message('system', error.message));
 });
-$('autoVision').addEventListener('change', toggleAutoVision);
+$('autoVision').addEventListener('change', () => {
+  toggleAutoVision('camera').catch((error) => message('system', error.message));
+});
+$('screenButton').addEventListener('click', toggleScreen);
+$('screenVisionButton').addEventListener('click', () => {
+  askVision('screen', false).catch((error) => message('system', error.message));
+});
+$('autoScreenVision').addEventListener('change', () => {
+  toggleAutoVision('screen').catch((error) => message('system', error.message));
+});
 $('chatForm').addEventListener('submit', async (event) => {
   event.preventDefault();
   const text = $('chatInput').value.trim();
@@ -1369,6 +1550,22 @@ window.addEventListener('beforeunload', () => {
   for (const element of state.remoteAudioElements) element.pause?.();
   state.room?.disconnect();
   stopLocalCapture();
+});
+async function stopBackgroundSensors(reason) {
+  const stops = [];
+  if (state.cameraEnabled) stops.push(stopVisionSource('camera', reason));
+  if (state.screenEnabled) stops.push(stopVisionSource('screen', reason));
+  await Promise.allSettled(stops);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden') return;
+  stopBackgroundSensors('browser-backgrounded').catch(() => null);
+});
+window.addEventListener('pagehide', () => {
+  stopBackgroundSensors('page-hidden').catch(() => null);
+});
+document.addEventListener('freeze', () => {
+  stopBackgroundSensors('page-frozen').catch(() => null);
 });
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || $('stopAether').disabled) return;
