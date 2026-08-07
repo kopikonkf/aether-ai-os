@@ -176,6 +176,10 @@ def test_promote_release_asset_present_and_binds_exact_sha():
     # rollback_manifest_proven reads the LIVE service-manifest, not the static
     # rollback AETHER_RELEASE.json.
     assert "service-manifest.json" in text
+    # rollback_proven is the aggregate of running-path + health + DACL + live
+    # manifest; a mismatch or DACL failure leaves it FALSE.
+    assert "rollback_acl_proven" in text
+    assert "Rollback postconditions failed" in text
     # Promotion is a service-path reconcile only; it must not run AETHER_HOME
     # migration/cutover or snapshot tooling.
     assert "aether_home_snapshot.py" not in text

@@ -58,6 +58,15 @@ function Assert-ProtectedAcl {
         [string]$Label = $Path
     )
 
+    $hook = $env:AETHER_PROMO_ACL_CMD
+    if ($hook -and (Test-Path -LiteralPath $hook -PathType Leaf)) {
+        & $hook -Path $Path -Label $Label
+        if ($LASTEXITCODE -ne 0) {
+            throw "ACL postcondition verification failed for ${Label} (hook exit $LASTEXITCODE)"
+        }
+        return
+    }
+
     $targetAcl = Get-Acl -LiteralPath $Path
     $requiredRules = @{ "S-1-5-18" = $false; "S-1-5-32-544" = $false }
     $aclViolations = @()
@@ -300,6 +309,8 @@ $receipt = [ordered]@{
     rollback_triggered = $false
     rollback_reason = $null
     rollback_running_path_proven = $false
+    rollback_health_proven = $false
+    rollback_acl_proven = $false
     rollback_manifest_proven = $false
     rollback_error = $null
     rollback_proven = $false
@@ -429,14 +440,46 @@ function Invoke-UniversalRollback {
     Restart-GatewayServices -ReleasePath $rollbackPath
     $receipt.restart_proven = $true
 
-    $receipt.rollback_running_path_proven = (Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $rollbackPath)
-    $ok = Test-Health
-    $receipt.rollback_proven = $ok
-    if (-not $SkipAclCheck) {
-        Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME(post-rollback)"
+    # Every postcondition is observed independently, then aggregated. The
+    # aggregate may only become true when ALL of them hold.
+    $runningPathOk = $false
+    try {
+        $runningPathOk = (Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $rollbackPath)
     }
-    $receipt.rollback_manifest_proven = (Test-RollbackManifest)
-    return $ok
+    catch {
+        $runningPathOk = $false
+    }
+    $receipt.rollback_running_path_proven = $runningPathOk
+
+    $healthOk = Test-Health
+    $receipt.rollback_health_proven = $healthOk
+
+    $aclOk = $true
+    if (-not $SkipAclCheck) {
+        try {
+            Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME(post-rollback)"
+            $aclOk = $true
+        }
+        catch {
+            $aclOk = $false
+        }
+    }
+    $receipt.rollback_acl_proven = $aclOk
+
+    $manifestOk = Test-RollbackManifest
+    $receipt.rollback_manifest_proven = $manifestOk
+
+    $proven = ($runningPathOk -and $healthOk -and $aclOk -and $manifestOk)
+    $receipt.rollback_proven = $proven
+    if (-not $proven) {
+        $failed = @()
+        if (-not $runningPathOk) { $failed += "running_path" }
+        if (-not $healthOk) { $failed += "health" }
+        if (-not $aclOk) { $failed += "acl" }
+        if (-not $manifestOk) { $failed += "live_manifest" }
+        $receipt.rollback_error = "Rollback postconditions failed after reconcile: $($failed -join ', ')"
+    }
+    return $proven
 }
 
 $serviceMutationStarted = $false

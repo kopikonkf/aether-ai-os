@@ -234,7 +234,9 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
     wraps EVERY failure after service-configuration mutation** using the CURRENT safe
     installer against `81582f70`, proving running path + health + DACL +
     **live `AETHER_HOME\services\service-manifest.json` provenance** rebound to the
-    rollback release; `targetRelease` is NEVER deleted once services may reference it
+    rollback release, and **`rollback_proven` is the aggregate of ALL of those
+    postconditions** (a manifest mismatch or DACL failure leaves the aggregate
+    FALSE with an observation-derived error); `targetRelease` is NEVER deleted once services may reference it
     (only a publish that never touched services is removed for retry-safety);
     retry-safe (reuse matching release metadata, remove partial publish); boolean
     receipt with target_sha + paths; DACL asserted before AND after.

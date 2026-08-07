@@ -16,7 +16,12 @@ Round-7 additions (review #4886054831):
     recovery_proven=true.
   - Fault injection covers: restart failure, old live PID after binPath change,
     omitted -Start, post-rollback live-manifest SHA, stale-PID stop failure,
-    and duplicate connector during recovery.
+    duplicate connector during recovery, and post-rollback DACL failure.
+
+Round-8 (review #4886270956):
+  - `rollback_proven` is now the aggregate of running-path + health + DACL +
+    live-manifest postconditions; a manifest mismatch or DACL failure leaves the
+    aggregate FALSE with an observation-derived rollback_error.
 
 These tests run the real *.ps1 through PowerShell on any runner (pwsh on Linux
 CI, powershell.exe on Windows). Windows-only SCM recovery tests remain gated to
@@ -811,11 +816,22 @@ def _write_restart_seam(tmp_path: Path, target_release: str, fail_target: bool =
     return seam
 
 
+def _write_acl_seam(tmp_path: Path, fail_post_rollback: bool = False) -> Path:
+    seam = tmp_path / "acl.ps1"
+    body = "param([string]$Path, [string]$Label)\n"
+    if fail_post_rollback:
+        body += "if ($Label -match 'post-rollback') { exit 1 }\n"
+    body += "exit 0\n"
+    seam.write_text(body, encoding="utf-8")
+    return seam
+
+
 def _promotion_env(
     install_seam: Path | None = None,
     health_seam: Path | None = None,
     service_seam: Path | None = None,
     restart_seam: Path | None = None,
+    acl_seam: Path | None = None,
 ) -> dict:
     env = dict(os.environ)
     if install_seam is not None:
@@ -826,11 +842,18 @@ def _promotion_env(
         env["AETHER_PROMO_SERVICE_CMD"] = str(service_seam)
     if restart_seam is not None:
         env["AETHER_PROMO_RESTART_CMD"] = str(restart_seam)
+    if acl_seam is not None:
+        env["AETHER_PROMO_ACL_CMD"] = str(acl_seam)
     return env
 
 
 def _promote_cmd(
-    repo: Path, aether_home: Path, releases: Path, sha: str, with_start: bool = True
+    repo: Path,
+    aether_home: Path,
+    releases: Path,
+    sha: str,
+    with_start: bool = True,
+    skip_acl_check: bool = True,
 ) -> list[str]:
     cmd = [
         POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -841,10 +864,11 @@ def _promote_cmd(
         "-RollbackRelease", ROLL,
         "-ExpectedTargetSha", sha,
         "-AllowNonElevated",
-        "-SkipAclCheck",
         "-HealthAttempts", "1",
         "-HealthTimeoutSeconds", "1",
     ]
+    if skip_acl_check:
+        cmd.append("-SkipAclCheck")
     if with_start:
         cmd.append("-Start")
     return cmd
@@ -852,7 +876,8 @@ def _promote_cmd(
 
 def _run_promotion(tmp_path: Path, mode: str, *, fail_target: bool = False,
                    old_release: str | None = None, with_start: bool = True,
-                   restart_fail_target: bool = False) -> subprocess.CompletedProcess:
+                   restart_fail_target: bool = False, skip_acl_check: bool = True,
+                   acl_fail_post_rollback: bool = False) -> subprocess.CompletedProcess:
     repo, sha = _make_promotion_repo(tmp_path)
     aether_home = tmp_path / "aether-home"
     aether_home.mkdir()
@@ -870,11 +895,15 @@ def _run_promotion(tmp_path: Path, mode: str, *, fail_target: bool = False,
         tmp_path, str(releases / sha), fail_target=fail_target, old_release=old_release
     )
     restart_seam = _write_restart_seam(tmp_path, str(releases / sha), fail_target=restart_fail_target)
+    acl_seam = None
+    if not skip_acl_check:
+        acl_seam = _write_acl_seam(tmp_path, fail_post_rollback=acl_fail_post_rollback)
 
     result = subprocess.run(
-        _promote_cmd(repo, aether_home, releases, sha, with_start=with_start),
+        _promote_cmd(repo, aether_home, releases, sha, with_start=with_start,
+                     skip_acl_check=skip_acl_check),
         capture_output=True, text=True, timeout=120,
-        env=_promotion_env(install_seam, health_seam, service_seam, restart_seam),
+        env=_promotion_env(install_seam, health_seam, service_seam, restart_seam, acl_seam),
     )
     result._aether_home = aether_home  # type: ignore[attr-defined]
     result._releases = releases  # type: ignore[attr-defined]
@@ -1095,12 +1124,37 @@ def test_release_promotion_running_path_failure_rolls_back_proven(tmp_path: Path
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
 def test_release_promotion_live_manifest_mismatch_reports_unproven(tmp_path: Path):
     # The rollback reconcile succeeds but writes a service-manifest.json whose
-    # target_sha does NOT match the rollback release -> live provenance is not
-    # proven even though health/running-path recovered.
+    # target_sha does NOT match the rollback release -> the aggregate rollback
+    # verdict must be FALSE even though health/running-path recovered.
     result = _run_promotion(tmp_path, mode="manifest-mismatch")
     assert result.returncode != 0
 
     receipt = _read_promotion_receipt(result)
-    assert receipt["rollback_proven"] is True
+    assert receipt["rollback_triggered"] is True
+    assert receipt["rollback_running_path_proven"] is True
+    assert receipt["rollback_health_proven"] is True
     assert receipt["rollback_manifest_proven"] is False
+    assert receipt["rollback_proven"] is False
+    assert "live_manifest" in (receipt.get("rollback_error") or "")
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_release_promotion_dacl_post_rollback_failure_aggregate_false(tmp_path: Path):
+    # The post-rollback DACL postcondition fails -> the aggregate rollback
+    # verdict must be FALSE with an observation-derived error, even though
+    # running-path and health recovered.
+    result = _run_promotion(
+        tmp_path, mode="health-fail", skip_acl_check=False, acl_fail_post_rollback=True
+    )
+    assert result.returncode != 0
+
+    receipt = _read_promotion_receipt(result)
+    assert receipt["rollback_triggered"] is True
+    assert receipt["rollback_running_path_proven"] is True
+    assert receipt["rollback_health_proven"] is True
+    assert receipt["rollback_acl_proven"] is False
+    assert receipt["rollback_manifest_proven"] is True
+    assert receipt["rollback_proven"] is False
+    assert "acl" in (receipt.get("rollback_error") or "")
     assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
