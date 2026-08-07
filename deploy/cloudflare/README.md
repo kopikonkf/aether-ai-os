@@ -77,7 +77,7 @@ headers, the founder username, or the bcrypt hash to receipts.
 # authenticated: expect 2xx on every route
 .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
   -BaseUrl "https://aether.example.com" `
-  -AuthMode "CaddyBasic" -Credential (Get-Credential)
+  -AuthMode "CaddyBasic" -CredentialUsername "founder" -CredentialPassword "<password>"
 ```
 
 Receipts:

@@ -34,12 +34,18 @@ def routes_ok(results: list[dict]) -> bool:
     return len(results) > 0 and all(r["ok"] for r in results)
 
 
-def validate_flags(auth_mode: str, access_cookie: bool, credential: bool, enforce: bool) -> list[str]:
+def validate_flags(auth_mode: str, access_cookie: bool, credential: bool, enforce: bool, wrong_cred: bool = False) -> list[str]:
     errs = []
-    if auth_mode == "CaddyBasic" and enforce:
-        errs.append("ExpectAccessEnforcement is Access-only")
-    if auth_mode == "None" and (access_cookie or credential or enforce):
+    if auth_mode == "None" and (access_cookie or credential or wrong_cred or enforce):
         errs.append("AuthMode=None rejects credential/access flags")
+    if auth_mode == "CaddyBasic" and enforce:
+        errs.append("ExpectAccessEnforcement is Access-only; cannot combine with CaddyBasic")
+    if auth_mode == "CaddyBasic" and access_cookie:
+        errs.append("AccessCookie is Access-only; cannot combine with CaddyBasic")
+    if auth_mode == "Access" and (credential or wrong_cred):
+        errs.append("Credential/WrongCredential are CaddyBasic-only; cannot combine with Access")
+    if auth_mode == "Access" and enforce and access_cookie:
+        errs.append("ExpectAccessEnforcement expects no AccessCookie")
     return errs
 
 
@@ -92,8 +98,14 @@ def test_authenticated_requires_2xx():
 def test_incompatible_flags_rejected():
     assert validate_flags("CaddyBasic", False, False, True)  # enforce + caddy
     assert validate_flags("None", True, True, False)  # creds + none
+    assert validate_flags("None", False, True, False, wrong_cred=True)  # none + wrong cred
+    assert validate_flags("Access", False, True, False)  # access + credential
+    assert validate_flags("Access", False, False, False, wrong_cred=True)  # access + wrong cred
+    assert validate_flags("CaddyBasic", True, False, False)  # caddy + access cookie
+    assert validate_flags("Access", True, False, True)  # access + enforce + cookie
     assert validate_flags("None", False, False, False) == []
     assert validate_flags("CaddyBasic", False, True, False) == []
+    assert validate_flags("Access", True, False, False) == []
 
 
 def test_access_protected_rejects_unrelated_redirect_and_accepts_cf_redirect():

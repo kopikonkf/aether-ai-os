@@ -50,7 +50,7 @@ jobs:
           PY
       - name: Validate Cloudflare ingress assets
         run: |
-          python -m pytest -q tests/test_cloudflare_ingress_assets.py tests/test_cloudflare_probe_modes.py
+          python -m pytest -q tests/test_cloudflare_ingress_assets.py tests/test_cloudflare_probe_modes.py tests/test_cloudflare_ingress_integration.py
       - name: Validate Caddyfile with Caddy
         run: |
           mkdir -p caddy-validate

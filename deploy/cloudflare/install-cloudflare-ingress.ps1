@@ -76,19 +76,25 @@ if (-not $homeExistedBefore) {
     }
 }
 
-function Assert-AetherHomeProtected {
-    $homeAcl = Get-Acl -LiteralPath $AetherHome
+function Assert-ProtectedAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$IsContainer,
+        [string]$Label = $Path
+    )
+
+    $targetAcl = Get-Acl -LiteralPath $Path
     $requiredRules = @{
         "S-1-5-18" = $false
         "S-1-5-32-544" = $false
     }
     $aclViolations = @()
-    if (-not $homeAcl.AreAccessRulesProtected) {
+    if (-not $targetAcl.AreAccessRulesProtected) {
         $aclViolations += "inheritance_not_disabled"
     }
     $hasContainerInherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
     $hasObjectInherit = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
-    foreach ($rule in $homeAcl.Access) {
+    foreach ($rule in $targetAcl.Access) {
         try {
             $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
         }
@@ -103,8 +109,14 @@ function Assert-AetherHomeProtected {
             $rule.AccessControlType -eq "Allow" -and
             ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl
         )
-        $inherits = ([bool]($rule.InheritanceFlags -band $hasContainerInherit) -and [bool]($rule.InheritanceFlags -band $hasObjectInherit))
-        if (-not ($ruleIsFullControlAllow -and $inherits)) {
+        $inheritsOk = $true
+        if ($IsContainer) {
+            $inheritsOk = (
+                [bool]($rule.InheritanceFlags -band $hasContainerInherit) -and
+                [bool]($rule.InheritanceFlags -band $hasObjectInherit)
+            )
+        }
+        if (-not ($ruleIsFullControlAllow -and $inheritsOk)) {
             $aclViolations += "required_rule_incomplete:${sid}:rights=$($rule.FileSystemRights):inherit=$($rule.InheritanceFlags)"
         }
         else {
@@ -117,7 +129,7 @@ function Assert-AetherHomeProtected {
         }
     }
     if ($aclViolations.Count -gt 0) {
-        throw "ACL postcondition verification failed for AETHER_HOME: $($aclViolations -join ', ')"
+        throw "ACL postcondition verification failed for ${Label}: $($aclViolations -join ', ')"
     }
 }
 
@@ -167,29 +179,12 @@ elseif (-not (Test-Path -LiteralPath $authFragmentPath -PathType Leaf)) {
 if ($LASTEXITCODE -ne 0) {
     throw "ACL hardening failed for $authFragmentPath"
 }
-$fragAcl = Get-Acl -LiteralPath $authFragmentPath
-$fragViolations = @()
-if (-not $fragAcl.AreAccessRulesProtected) {
-    $fragViolations += "inheritance_not_disabled"
-}
-foreach ($rule in $fragAcl.Access) {
-    try {
-        $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
-    }
-    catch {
-        $sid = [string]$rule.IdentityReference
-    }
-    if ($sid -notin @("S-1-5-18", "S-1-5-32-544") -or $rule.AccessControlType -ne "Allow") {
-        $fragViolations += "unexpected_rule:${sid}:$($rule.AccessControlType)"
-    }
-}
-if ($fragViolations.Count -gt 0) {
-    throw "ACL postcondition failed for ${authFragmentPath}: $($fragViolations -join ', ')"
-}
+Assert-ProtectedAcl -Path $authFragmentPath -IsContainer $false -Label $authFragmentPath
 
 # The auth fragment is secret-bearing. Fail closed unless the (possibly
-# pre-existing) AETHER_HOME root is itself protected SYSTEM/Administrators.
-Assert-AetherHomeProtected
+# pre-existing) AETHER_HOME root is itself protected SYSTEM/Administrators
+# with both SIDs as Allow + FullControl + Container|ObjectInherit.
+Assert-ProtectedAcl -Path $AetherHome -IsContainer $true -Label "AETHER_HOME"
 
 & $CaddyPath validate --config $caddyfilePath --adapter caddyfile | Out-Null
 if ($LASTEXITCODE -ne 0) {

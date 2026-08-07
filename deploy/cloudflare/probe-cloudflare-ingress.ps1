@@ -7,8 +7,10 @@ param(
     [ValidateSet("None", "Access", "CaddyBasic")]
     [string]$AuthMode = "None",
     [string]$AccessCookie = "",
-    [System.Management.Automation.PSCredential]$Credential = $null,
-    [System.Management.Automation.PSCredential]$WrongCredential = $null,
+    [string]$CredentialUsername = "",
+    [string]$CredentialPassword = "",
+    [string]$WrongCredentialUsername = "",
+    [string]$WrongCredentialPassword = "",
     [string]$CaddyAdminUrl = "http://127.0.0.1:2019",
     [switch]$ExpectAccessEnforcement
 )
@@ -16,11 +18,29 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-if ($AuthMode -eq "CaddyBasic" -and $ExpectAccessEnforcement) {
-    throw "ExpectAccessEnforcement is Access-only; reject conflicting flags for CaddyBasic."
+$hasCredential = [bool]$CredentialUsername
+$hasWrongCredential = [bool]$WrongCredentialUsername
+
+# Fail-closed parameter matrix. Each AuthMode accepts only its own credential
+# surface; cross-mode or conflicting flags are rejected.
+$conflicts = @()
+if ($AuthMode -eq "None" -and ($AccessCookie -or $hasCredential -or $hasWrongCredential -or $ExpectAccessEnforcement)) {
+    $conflicts += "AuthMode=None rejects all credential/access flags"
 }
-if ($AuthMode -eq "None" -and ($AccessCookie -or $Credential -or $ExpectAccessEnforcement)) {
-    throw "AuthMode=None rejects credential/access flags; they cannot be combined."
+if ($AuthMode -eq "CaddyBasic" -and $ExpectAccessEnforcement) {
+    $conflicts += "ExpectAccessEnforcement is Access-only; cannot combine with CaddyBasic"
+}
+if ($AuthMode -eq "CaddyBasic" -and $AccessCookie) {
+    $conflicts += "AccessCookie is Access-only; cannot combine with CaddyBasic"
+}
+if ($AuthMode -eq "Access" -and ($hasCredential -or $hasWrongCredential)) {
+    $conflicts += "Credential/WrongCredential are CaddyBasic-only; cannot combine with Access"
+}
+if ($AuthMode -eq "Access" -and $ExpectAccessEnforcement -and $AccessCookie) {
+    $conflicts += "ExpectAccessEnforcement expects no AccessCookie (unauthenticated proof)"
+}
+if ($conflicts.Count -gt 0) {
+    throw "Invalid probe flag combination: $($conflicts -join '; ')"
 }
 
 $requiredRoutes = @("/health", "/aether/api/status", "/api/browser-senses/status", "/senses")
@@ -74,7 +94,8 @@ function Invoke-AetherProbeRoute {
     param(
         [Parameter(Mandatory = $true)][string]$Route,
         [string]$Cookie = "",
-        [System.Management.Automation.PSCredential]$Cred = $null
+        [string]$Username = "",
+        [string]$Password = ""
     )
 
     $started = Get-Date
@@ -89,8 +110,8 @@ function Invoke-AetherProbeRoute {
     if ($Cookie) {
         $headers["Cookie"] = "CF_Authorization=$Cookie"
     }
-    if ($null -ne $Cred) {
-        $pair = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($Cred.UserName):$($Cred.GetNetworkCredential().Password)"))
+    if ($Username) {
+        $pair = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${Username}:${Password}"))
         $headers["Authorization"] = "Basic $pair"
     }
 
@@ -151,12 +172,12 @@ $unauthenticatedRoutes = @(
 
 if ($AuthMode -eq "CaddyBasic") {
     $unauthenticatedAllDenied = (
-        ($unauthenticatedRoutes | Where-Object { -not $_.basic_challenge }).Count -eq 0
+        @($unauthenticatedRoutes | Where-Object { -not $_.basic_challenge }).Count -eq 0
     )
 }
 else {
     $unauthenticatedAllDenied = (
-        ($unauthenticatedRoutes | Where-Object { -not $_.access_protected }).Count -eq 0
+        @($unauthenticatedRoutes | Where-Object { -not $_.access_protected }).Count -eq 0
     )
 }
 
@@ -168,29 +189,29 @@ if ($AuthMode -eq "Access" -and $AccessCookie) {
         }
     )
 }
-elseif ($AuthMode -eq "CaddyBasic" -and $null -ne $Credential) {
+elseif ($AuthMode -eq "CaddyBasic" -and $hasCredential) {
     $authenticatedRoutes = @(
         foreach ($route in $requiredRoutes) {
-            Invoke-AetherProbeRoute -Route $route -Cred $Credential
+            Invoke-AetherProbeRoute -Route $route -Username $CredentialUsername -Password $CredentialPassword
         }
     )
 }
 $authenticatedAllOk = (
     $authenticatedRoutes.Count -gt 0 -and
-    ($authenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
+    @($authenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
 )
 
 $invalidRoutes = @()
-if ($AuthMode -eq "CaddyBasic" -and $null -ne $WrongCredential) {
+if ($AuthMode -eq "CaddyBasic" -and $hasWrongCredential) {
     $invalidRoutes = @(
         foreach ($route in $requiredRoutes) {
-            Invoke-AetherProbeRoute -Route $route -Cred $WrongCredential
+            Invoke-AetherProbeRoute -Route $route -Username $WrongCredentialUsername -Password $WrongCredentialPassword
         }
     )
 }
 $invalidCredentialsAllDenied = (
     $invalidRoutes.Count -gt 0 -and
-    ($invalidRoutes | Where-Object { -not $_.basic_challenge }).Count -eq 0
+    @($invalidRoutes | Where-Object { -not $_.basic_challenge }).Count -eq 0
 )
 
 $headerStripped = $false
@@ -226,7 +247,7 @@ $requiredOk = switch ($AuthMode) {
         }
     }
     default {
-        ($unauthenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
+        @($unauthenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
     }
 }
 
