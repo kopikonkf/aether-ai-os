@@ -5,7 +5,7 @@ import {
   SHELL_NAVIGATION_URL,
   cacheCleanupPlan,
   classifyRequest,
-} from './pwa_cache_policy.js?v=senses-v1-slice-7-20260808-1';
+} from './pwa_cache_policy.js?v=senses-v1-slice-8-20260808-1';
 
 async function fetchStatic(path) {
   const response = await fetch(new Request(path, {
