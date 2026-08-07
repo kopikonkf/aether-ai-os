@@ -110,39 +110,44 @@ actions. Do not treat speech interruption as capability-action cancellation.
 
 Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed those receipts into Founder acceptance, then run the first governed private experiment, capture the impact brief, promote it publicly, measure demand, and feed the result back into portfolio reallocation and CEE learning.
 
-## Cloudflare ingress PR #34 (round-3, 2026-08-07)
+## Cloudflare ingress PR #34 (round-4, 2026-08-07)
 
-- **Head:** `ef6766d` (branch `agent/founder-auth-0053`), rebased onto exact main
-  `53f75c218` (incl. #36 Senses bootstrap + #37 Senses voice). `mergeable_state=clean`,
-  `mergeable=true`.
-- **6 review corrections from ChatGPT all addressed:**
+- **Head:** `aa91939` (branch `agent/founder-auth-0053`), rebased onto exact main
+  `b57403395f7838972575b7fb7149d3d0e457dc3e` (incl. #36 bootstrap + #37 voice +
+  #38 Senses client-state slice-4). `mergeable_state=clean`, `mergeable=true`,
+  synthetic-merge commit `9594ef3`.
+- **4 round-3-then-4 review blockers from ChatGPT all addressed:**
   1. Rebase to exact main (done, no conflicts).
-  2. Secret-safe credential interface: `-CredentialPassword`/`-WrongCredentialPassword`
-     plaintext params removed; passwords only via `PSCredential` (`-Credential`) or stdin
-     (`-CredentialPasswordStdin`). README updated.
-  3. Partial parameters rejected (`Resolve-CredentialPair`): username-only, password-only,
-     wrong-*-only, cross-AuthMode fail-closed.
-  4. Receipt `authorization_forwarded_to_upstream` derived from echo upstream response
-     body (what upstream actually received via `-EchoRoute`); `CaddyAdminUrl`/config
-     inspection and `caddy_config_checked` removed.
-  5. Real probe now exercises valid flow for None, Access, and CaddyBasic (was only
-     CaddyBasic; None/Access were Python mirror).
-  6. CI: new step installs pwsh 7.4.6 + Caddy v2.11.3 (linux) and runs the boundary test
-     with `AETHER_INGRESS_INTEGRATION=1`; run `31171319788` (synthetic merge on `ef6766d`)
-     = **success**, `Real ingress boundary proof` = `6 passed in 18.29s` (NOT skipped).
-  7. VPS/DNS/tunnel/Cloudflare untouched.
-- Probe also made cross-platform: `-AetherHome` passed by integration tests; service
-  status check gated to Windows (`Get-Service` absent on pwsh/Linux -> reports `n/a`);
-  .NET `HttpWebRequest` with `AllowAutoRedirect=$false` replaces `Invoke-WebRequest`
-  (reliable 3xx/401/403 + Location/echo body across PS versions).
-- **Local:** 26/26 cloudflare tests pass (assets/probe_modes/probe_behavior/integration)
-  on Windows PS 5.1 + Caddy 2.11.3.
-- **Report posted:** https://github.com/kopikonkf/aether-ai-os/pull/34#issuecomment-5216087416
-- **Waiting:** ChatGPT to merge PR #34. After merge: stage exact main -> generate bcrypt
-  hash interactively -> `aether_migration_<sha>.ps1` cutover -> validate receipt
-  `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` -> production install (AetherService +
-  Watchdog, no sense-worker) -> ACL -> local auth proof -> reuse tunnel `8f53133` + DNS
-  cutover `:8080` -> public proof + recovery receipts CONFORMED.
-- NOTE: `tests/test_state_snapshot.py::...canonical.sqlite3` fails locally with
-  `PermissionError WinError 32` (sqlite handle lock during tmp cleanup) - pre-existing,
-  unrelated to ingress; passes on ubuntu CI.
+  2. Boundary proof uses the ACTUAL production Caddyfile
+     `deploy/windows/Caddyfile`: render with both `:8000`/`:25808` upstreams
+     re-pointed at the echo server so every handler exercises the template's own
+     `header_up -Authorization`. No bespoke test Caddyfile. Echo/PROOF route is
+     proof-only; production Caddyfile keeps no public echo endpoint.
+  3. One complete CaddyBasic receipt in a single real-probe invocation
+     (correct + wrong creds + echo via stdin): asserts
+     `unauthenticated_all_denied=true`, `authenticated_all_ok=true`,
+     `invalid_credentials_all_denied=true`, `header_strip_observed=true`,
+     `authorization_forwarded_to_upstream=false`, `secret_values_exposed=false`.
+  4. Hash staging conforms ADR-0053: README stages bcrypt to a transient temp
+     `.txt` (never `.env`); installer `Assert-ProtectedAcl` on hash input (exact
+     SYSTEM+Administrators, inheritance-protected) before reading, then
+     `Remove-Item` it after `founder-auth.caddy` is safely written. Only the
+     protected canonical fragment persists.
+  5. CI: `Real ingress boundary proof` (pwsh 7.4.6 + Caddy v2.11.3 linux, env
+     `AETHER_INGRESS_INTEGRATION=1`) = `6 passed`, NOT skipped. Run
+     `31173898737` (synthetic merge on `aa91939`) = success. Mergeable clean.
+  6. VPS/DNS/tunnel/Access/Cloudflare untouched.
+- **Local:** 27/27 cloudflare tests pass (assets/probe_modes/probe_behavior/
+  integration) on Windows PS 5.1 + Caddy 2.11.3. Full `tests/` = 50 pass with only
+  pre-existing `test_state_snapshot` canonical.sqlite3 Windows lock failure
+  (unrelated; ok on ubuntu CI).
+- **Report posted:** https://github.com/kopikonkf/aether-ai-os/pull/34#issuecomment-5216460430
+- **Merged:** PR #34 merged to main at `055f609e314d6d9064e8a237cedb4e7bf33d4178`.
+  After PR #39 merges, stage the resulting exact main SHA, then continue the
+  Founder VPS host-proof sequence:
+  generate a bcrypt hash interactive (temp `.txt`, `icacls` to SYSTEM+Admins;
+  installer removes it) -> `aether_migration_<sha>.ps1` cutover -> validate
+  `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` -> production install (AetherService
+  + Watchdog, no sense-worker) -> ACL -> local auth proof (production Caddyfile +
+  proof echo) -> reuse tunnel `8f53133` + DNS cutover `:8080` -> public proof +
+  recovery receipts CONFORMED.
