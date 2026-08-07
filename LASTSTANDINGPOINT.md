@@ -1,6 +1,6 @@
 # LAST STANDING POINT - Aether OS
 
-**Canonical date:** 2026-07-31
+**Canonical date:** 2026-08-07
 **Release:** MVP v0.20 - Governed Shipping + Measured Demand Operations
 **State:** source-present, host-proof pending
 
@@ -46,7 +46,26 @@ Founder approval / release evidence
 - No live rollback or kill switch was exercised here.
 - Windows service and Cloudflare public proof still belong on the Founder VPS and public domain.
 
+## Aether Senses v1 workstream
+
+- Dee approved and froze `aether.senses.interaction.v1` on 2026-08-07. The
+  canonical contract is
+  `project-docs/foundations/AETHER_SENSES_V1_INTERACTION_CONTRACT.md`.
+- Implementation slice 1 is source-present: provider-neutral session/turn/mode,
+  consent, interruption, and capability-action contracts; a v1 runtime-profile
+  guard; append-only session compatibility; and deterministic tests.
+- The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
+  `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
+- The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
+  `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
+  merely because slice 1 is source-present.
+
+## Next Senses implementation slice
+
+Replace the raw operator-token form with the approved pairing/device bootstrap
+and protected same-origin session-cookie boundary. This is source work and does
+not replace the outstanding Windows service and Cloudflare host proof.
+
 ## Next operational step
 
 Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed those receipts into Founder acceptance, then run the first governed private experiment, capture the impact brief, promote it publicly, measure demand, and feed the result back into portfolio reallocation and CEE learning.
-
