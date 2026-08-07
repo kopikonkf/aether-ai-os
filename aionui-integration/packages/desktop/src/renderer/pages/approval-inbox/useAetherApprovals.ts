@@ -50,8 +50,14 @@ export function useAetherApprovals(status: AetherApprovalFilter, refreshMs = 10_
     return next;
   }, [apply, selected, status]);
 
-  const inspect = useCallback(async (approvalId: string) => {
-    const next = await apply(() => window.aetherApproval.get(approvalId));
+  const inspect = useCallback(async (approvalId: string, expectedActionHash?: string) => {
+    const next = await apply(async () => {
+      const approval = await window.aetherApproval.get(approvalId);
+      if (expectedActionHash && approval.action_hash !== expectedActionHash) {
+        throw new Error('Approval handoff action hash does not match the trusted inbox record');
+      }
+      return approval;
+    });
     if (mounted.current) setSelected(next);
     return next;
   }, [apply]);
