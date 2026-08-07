@@ -18,9 +18,9 @@ from pathlib import Path
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -86,7 +86,18 @@ from aether_gateway.missions import GovernedMissionActionAdapter
 from aether_gateway.opportunities import (AutonomousOpportunityScout, Crawl4AIRestrictedAdapter, GenericPublicHttpAdapter, OpportunityMissionBridge, SourceCapabilityMesh, StaticCatalogAdapter)
 from aether_gateway.web_intelligence import AdaptiveSourceDiscovery, EvidenceFreshnessScheduler, LiveWebAcquisitionService, SourceConformanceService
 from aether_gateway.experiments import ReversibleExperimentRunner
-from aether_gateway.browser_senses import BrowserSenseAuthError, BrowserSenseService, BrowserSessionTokenCodec, LiveKitTokenIssuer
+from aether_gateway.browser_senses import (
+    BootstrapError,
+    BootstrapRateLimitError,
+    BootstrapStateError,
+    BrowserSenseAuthError,
+    BrowserSenseBootstrapService,
+    BrowserSenseService,
+    BrowserSessionTokenCodec,
+    DeviceCredentialError,
+    LiveKitTokenIssuer,
+    SessionCredentialError,
+)
 from aether_gateway.runtime_sdk import (
     CodingRuntimeDispatchAdapter, ExternalStreamingCodingRuntimeAdapter, LocalStructuredCodingRuntimeAdapter, RuntimeAdapterRegistry, RuntimeTelemetryStore,
     SQLiteWorkspaceBindingStore, WorkspaceBindingError,
@@ -420,6 +431,13 @@ browser_sense_service = BrowserSenseService(
     maximum_frame_bytes=int(os.environ.get("AETHER_VISION_MAX_FRAME_BYTES", "750000")),
     default_ttl_seconds=int(os.environ.get("AETHER_BROWSER_SENSE_TTL_SECONDS", "3600")),
 )
+_senses_origin = str(os.environ.get("AETHER_SENSES_ORIGIN") or "https://aethers.my.id").strip().rstrip("/")
+browser_sense_bootstrap = BrowserSenseBootstrapService(
+    root_dir / "senses" / "browser-senses-auth.sqlite3",
+    event_bus=browser_sense_event_bus,
+    secret=_browser_secret,
+    allowed_origin=_senses_origin,
+)
 trusted_approval_inbox = TrustedApprovalInbox(pending_action_store, action_path, action_event_bus)
 approval_coordinator = ApprovalCoordinator(trusted_approval_inbox, cognitive_gateway)
 approval_inbox = ApprovalInboxService(approval_coordinator)
@@ -479,13 +497,60 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Aether Gateway API", version="0.19.2", lifespan=lifespan)
+_cors_extra_origins = tuple(
+    item.strip().rstrip("/")
+    for item in os.environ.get("AETHER_CORS_ALLOWED_ORIGINS", "").split(",")
+    if item.strip()
+)
+if "*" in _cors_extra_origins:
+    raise RuntimeError("AETHER_CORS_ALLOWED_ORIGINS must not contain a wildcard")
+_cors_origins = tuple(dict.fromkeys((
+    _senses_origin,
+    *_cors_extra_origins,
+)))
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(_cors_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def browser_senses_response_boundary(request: Request, call_next):
+    path = request.url.path
+    if (
+        path.startswith("/api/browser-senses/")
+        and path != "/api/browser-senses/worker/chat"
+        and request.method in {"POST", "PUT", "PATCH", "DELETE"}
+    ):
+        origin = str(request.headers.get("origin") or "").strip().rstrip("/")
+        fetch_site = str(request.headers.get("sec-fetch-site") or "").strip().casefold()
+        if origin != browser_sense_bootstrap.allowed_origin or fetch_site != "same-origin":
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Browser sense request origin is not permitted"},
+                headers={"Cache-Control": "no-store"},
+            )
+    response = await call_next(request)
+    if path == "/senses" or path.startswith((
+        "/senses/", "/api/browser-senses/bootstrap/", "/api/browser-senses/session",
+    )):
+        response.headers["Cache-Control"] = "no-store"
+    if path == "/senses" or path.startswith("/senses/"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; "
+            "connect-src 'self' https://*.livekit.cloud wss://*.livekit.cloud; "
+            "img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; "
+            "base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
+        )
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "microphone=(self), camera=(self), display-capture=(self)"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 GATEWAY_STARTED_AT = datetime.datetime.now(datetime.UTC)
 
@@ -503,8 +568,27 @@ class ChatRequest(BaseModel):
 class BrowserSenseSessionRequest(BaseModel):
     display_name: str = "Founder"
     capabilities: list[str] = Field(default_factory=lambda: ["text", "microphone", "speaker", "camera"])
-    ttl_seconds: int = Field(default=3600, ge=300, le=86400)
-    metadata: dict = Field(default_factory=dict)
+    ttl_seconds: int = Field(default=3600, ge=300, le=3600)
+    challenge_id: str = Field(min_length=1, max_length=200)
+    device_signature: str = Field(min_length=1, max_length=512)
+
+
+class BrowserSenseBootstrapRequest(BaseModel):
+    device_label: str = Field(min_length=1, max_length=120)
+    client_mode: str = Field(default="browser", min_length=1, max_length=32)
+    capabilities: list[str] = Field(default_factory=lambda: ["text", "microphone", "speaker", "camera"])
+    public_key_jwk: dict
+    verifier_hash: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+
+
+class BrowserSenseBootstrapExchangeRequest(BaseModel):
+    verifier: str = Field(min_length=1, max_length=256)
+    device_signature: str = Field(min_length=1, max_length=512)
+
+
+class BrowserSenseBootstrapDecisionRequest(BaseModel):
+    approved: bool
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class BrowserSenseSessionStateRequest(BaseModel):
@@ -1066,58 +1150,290 @@ def _browser_bearer(authorization: str | None) -> str:
     return authorization[7:].strip()
 
 
+def _require_senses_origin(request: Request) -> None:
+    origin = str(request.headers.get("origin") or "").strip().rstrip("/")
+    fetch_site = str(request.headers.get("sec-fetch-site") or "").strip().casefold()
+    if origin != browser_sense_bootstrap.allowed_origin or fetch_site != "same-origin":
+        raise HTTPException(status_code=403, detail="Browser sense request origin is not permitted")
+
+
+def _senses_source(request: Request) -> str:
+    if os.environ.get("AETHER_TRUST_CLOUDFLARE_HEADERS", "false").strip().casefold() in {"1", "true", "yes", "on"}:
+        candidate = str(request.headers.get("cf-connecting-ip") or "").strip()
+        if candidate:
+            return candidate
+    return str(request.client.host if request.client else "network-unavailable")
+
+
+def _set_device_cookie(response: Response, credential: str) -> None:
+    response.set_cookie(
+        "__Host-aether_device", credential,
+        max_age=browser_sense_bootstrap.device_absolute_seconds,
+        secure=True, httponly=True, samesite="strict", path="/",
+    )
+
+
+def _set_session_cookie(response: Response, credential: str) -> None:
+    response.set_cookie(
+        "__Host-aether_senses", credential,
+        max_age=browser_sense_bootstrap.session_absolute_seconds,
+        secure=True, httponly=True, samesite="strict", path="/",
+    )
+
+
+def _bootstrap_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, KeyError):
+        return HTTPException(status_code=404, detail="Browser sense bootstrap resource not found")
+    if isinstance(exc, BootstrapRateLimitError):
+        return HTTPException(status_code=429, detail=str(exc))
+    if isinstance(exc, (DeviceCredentialError, SessionCredentialError, PermissionError)):
+        status = 403 if "CSRF" in str(exc) else 401
+        return HTTPException(status_code=status, detail=str(exc))
+    if isinstance(exc, BootstrapStateError):
+        return HTTPException(status_code=409, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+_BROWSER_SENSE_PROTOCOL_ERRORS = (BootstrapError, KeyError, PermissionError, ValueError)
+
+
+def _browser_cookie_auth(
+    request: Request,
+    csrf_nonce: str | None,
+    *,
+    require_csrf: bool = True,
+) -> tuple[str, dict, object]:
+    _require_senses_origin(request)
+    credential = str(request.cookies.get("__Host-aether_senses") or "")
+    try:
+        binding = browser_sense_bootstrap.authenticate_session(
+            credential, csrf_nonce=csrf_nonce, require_csrf=require_csrf,
+        )
+        session = browser_sense_service.authenticate(credential)
+    except (BrowserSenseAuthError, SessionCredentialError) as exc:
+        raise _bootstrap_error(exc) from exc
+    if session.session_id != binding["session_id"]:
+        raise HTTPException(status_code=401, detail="Browser sense session binding mismatch")
+    return credential, binding, session
+
+
 @app.get("/api/browser-senses/status")
 def browser_senses_status():
-    return browser_sense_service.status()
+    return {**browser_sense_service.status(), "bootstrap": browser_sense_bootstrap.status_summary()}
+
+
+@app.post("/api/browser-senses/bootstrap/requests", status_code=201)
+def create_browser_sense_bootstrap(
+    req: BrowserSenseBootstrapRequest,
+    request: Request,
+):
+    _require_senses_origin(request)
+    try:
+        return browser_sense_bootstrap.request_pairing(
+            public_key_jwk=req.public_key_jwk,
+            verifier_hash=req.verifier_hash,
+            device_label=req.device_label,
+            client_mode=req.client_mode,
+            capabilities=req.capabilities,
+            source=_senses_source(request),
+        )
+    except _BROWSER_SENSE_PROTOCOL_ERRORS as exc:
+        raise _bootstrap_error(exc) from exc
+
+
+@app.post("/api/browser-senses/bootstrap/requests/{bootstrap_id}/status")
+def browser_sense_bootstrap_status(
+    bootstrap_id: str,
+    request: Request,
+    x_aether_bootstrap_proof: str | None = Header(default=None),
+):
+    _require_senses_origin(request)
+    try:
+        return browser_sense_bootstrap.status(
+            bootstrap_id, client_proof=x_aether_bootstrap_proof or "",
+        )
+    except _BROWSER_SENSE_PROTOCOL_ERRORS as exc:
+        raise _bootstrap_error(exc) from exc
+
+
+@app.get("/api/browser-senses/bootstrap/requests")
+def list_browser_sense_bootstraps(
+    request: Request,
+    status: str = Query(default="pending"),
+    x_aether_operator_token: str | None = Header(default=None),
+):
+    _require_senses_origin(request)
+    _authenticate_operator(x_aether_operator_token)
+    if status not in {"pending", "approved", "denied", "expired", "exchanged", "all"}:
+        raise HTTPException(status_code=400, detail="Unknown browser sense pairing status")
+    return {"requests": browser_sense_bootstrap.list_requests(state=status)}
+
+
+@app.post("/api/browser-senses/bootstrap/requests/{bootstrap_id}/decision")
+def decide_browser_sense_bootstrap(
+    bootstrap_id: str,
+    req: BrowserSenseBootstrapDecisionRequest,
+    request: Request,
+    x_aether_operator_token: str | None = Header(default=None),
+):
+    _require_senses_origin(request)
+    operator = _authenticate_operator(x_aether_operator_token)
+    try:
+        return browser_sense_bootstrap.decide(
+            bootstrap_id,
+            approved=req.approved,
+            principal=operator.principal,
+            reason=req.reason,
+            channel=operator.channel,
+        )
+    except _BROWSER_SENSE_PROTOCOL_ERRORS as exc:
+        raise _bootstrap_error(exc) from exc
+
+
+@app.post("/api/browser-senses/bootstrap/requests/{bootstrap_id}/exchange")
+def exchange_browser_sense_bootstrap(
+    bootstrap_id: str,
+    req: BrowserSenseBootstrapExchangeRequest,
+    request: Request,
+    response: Response,
+    x_aether_bootstrap_proof: str | None = Header(default=None),
+):
+    _require_senses_origin(request)
+    try:
+        result = browser_sense_bootstrap.exchange(
+            bootstrap_id,
+            client_proof=x_aether_bootstrap_proof or "",
+            verifier=req.verifier,
+            device_signature=req.device_signature,
+            principal=operator_authenticator.principal,
+        )
+    except _BROWSER_SENSE_PROTOCOL_ERRORS as exc:
+        raise _bootstrap_error(exc) from exc
+    _set_device_cookie(response, result.pop("credential"))
+    return result
+
+
+@app.delete("/api/browser-senses/devices/{device_id}")
+def revoke_browser_sense_device(
+    device_id: str,
+    request: Request,
+    x_aether_operator_token: str | None = Header(default=None),
+):
+    _require_senses_origin(request)
+    operator = _authenticate_operator(x_aether_operator_token)
+    try:
+        result = browser_sense_bootstrap.revoke_device(
+            device_id, principal=operator.principal, reason="explicit-operator-revocation",
+        )
+        for session_id in result["sessions_closed"]:
+            browser_sense_service.close_session(session_id, reason="device-revoked")
+    except _BROWSER_SENSE_PROTOCOL_ERRORS as exc:
+        raise _bootstrap_error(exc) from exc
+    return {
+        **result,
+        "session_ids_closed": result["sessions_closed"],
+        "sessions_closed": len(result["sessions_closed"]),
+    }
+
+
+@app.post("/api/browser-senses/session/challenges", status_code=201)
+def create_browser_sense_session_challenge(request: Request):
+    _require_senses_origin(request)
+    try:
+        return browser_sense_bootstrap.create_session_challenge(
+            str(request.cookies.get("__Host-aether_device") or "")
+        )
+    except _BROWSER_SENSE_PROTOCOL_ERRORS as exc:
+        raise _bootstrap_error(exc) from exc
 
 
 @app.post("/api/browser-senses/session")
 def create_browser_sense_session(
     req: BrowserSenseSessionRequest,
-    x_aether_operator_token: str | None = Header(default=None),
+    request: Request,
+    response: Response,
 ):
-    operator = _authenticate_operator(x_aether_operator_token)
+    _require_senses_origin(request)
     try:
-        capabilities = tuple(BrowserSenseCapability(item) for item in req.capabilities)
-        return browser_sense_service.issue_session(
-            principal=operator.principal, display_name=req.display_name, capabilities=capabilities,
-            ttl_seconds=req.ttl_seconds, metadata={**req.metadata, "channel": operator.channel},
+        device = browser_sense_bootstrap.consume_session_challenge(
+            str(request.cookies.get("__Host-aether_device") or ""),
+            challenge_id=req.challenge_id,
+            device_signature=req.device_signature,
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        capabilities = tuple(BrowserSenseCapability(item) for item in req.capabilities)
+        issued = browser_sense_service.issue_session(
+            principal=device["principal"], display_name=req.display_name, capabilities=capabilities,
+            ttl_seconds=req.ttl_seconds,
+            metadata={"channel": "paired-device", "device_id": device["device_id"]},
+        )
+        session_credential = issued.pop("browser_session_token")
+        csrf_nonce = browser_sense_bootstrap.bind_session(
+            session_id=issued["session"]["session_id"],
+            device_id=device["device_id"],
+            session_credential=session_credential,
+            expires_at=issued["session"]["expires_at"],
+        )
+    except _BROWSER_SENSE_PROTOCOL_ERRORS as exc:
+        raise _bootstrap_error(exc) from exc
+    _set_session_cookie(response, session_credential)
+    return {**issued, "csrf_nonce": csrf_nonce}
 
 
 @app.post("/api/browser-senses/session/active")
 def activate_browser_sense_session(
     req: BrowserSenseSessionStateRequest,
-    authorization: str | None = Header(default=None),
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
 ):
+    token, binding, _ = _browser_cookie_auth(request, x_aether_csrf)
     try:
-        session = browser_sense_service.mark_active(_browser_bearer(authorization), metadata={"transport": req.transport})
+        session = browser_sense_service.mark_active(token, metadata={"transport": req.transport})
+        browser_sense_bootstrap.mark_session_state(binding["session_id"], "active")
         return browser_sense_service._session_dict(session)
     except BrowserSenseAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+@app.post("/api/browser-senses/session/status")
+def authenticated_browser_sense_session_status(
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    _, _, session = _browser_cookie_auth(request, x_aether_csrf)
+    return browser_sense_service._session_dict(session)
+
+
 @app.post("/api/browser-senses/session/close")
 def close_browser_sense_session(
     req: BrowserSenseSessionStateRequest,
-    authorization: str | None = Header(default=None),
+    request: Request,
+    response: Response,
+    x_aether_csrf: str | None = Header(default=None),
 ):
+    token, binding, _ = _browser_cookie_auth(request, x_aether_csrf)
     try:
-        session = browser_sense_service.close(_browser_bearer(authorization), reason=req.reason or "client-disconnected")
+        reason = req.reason or "client-disconnected"
+        session = browser_sense_service.close(token, reason=reason)
+        browser_sense_bootstrap.close_session(binding["session_id"], reason=reason)
+        response.delete_cookie(
+            "__Host-aether_senses", path="/", secure=True, httponly=True, samesite="strict",
+        )
         return browser_sense_service._session_dict(session)
     except BrowserSenseAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @app.post("/api/browser-senses/tracks")
-async def record_browser_sense_track(request: BrowserSenseTrackRequest, authorization: str | None = Header(default=None)):
-    token = _browser_bearer_token(authorization)
+async def record_browser_sense_track(
+    req: BrowserSenseTrackRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
     try:
         receipt = browser_sense_service.record_track(
-            token, track_sid=request.track_sid, kind=MediaTrackKind(request.kind),
-            source=request.source, muted=request.muted, metadata=request.metadata,
+            token, track_sid=req.track_sid, kind=MediaTrackKind(req.kind),
+            source=req.source, muted=req.muted, metadata=req.metadata,
         )
         return asdict(receipt)
     except (BrowserSenseAuthError, ValueError) as exc:
@@ -1125,9 +1441,14 @@ async def record_browser_sense_track(request: BrowserSenseTrackRequest, authoriz
 
 
 @app.post("/api/browser-senses/text")
-async def browser_sense_text(req: BrowserSenseTextRequest, authorization: str | None = Header(default=None)):
+async def browser_sense_text(
+    req: BrowserSenseTextRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
     try:
-        return await browser_sense_service.handle_text(_browser_bearer(authorization), req.text)
+        return await browser_sense_service.handle_text(token, req.text)
     except BrowserSenseAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except Exception as exc:
@@ -1135,10 +1456,15 @@ async def browser_sense_text(req: BrowserSenseTextRequest, authorization: str | 
 
 
 @app.post("/api/browser-senses/vision")
-async def browser_sense_vision(req: BrowserSenseVisionRequest, authorization: str | None = Header(default=None)):
+async def browser_sense_vision(
+    req: BrowserSenseVisionRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
     try:
         return await browser_sense_service.handle_vision(
-            _browser_bearer(authorization), data_base64=req.data_base64, content_type=req.content_type,
+            token, data_base64=req.data_base64, content_type=req.content_type,
             prompt=req.prompt, width=req.width, height=req.height,
         )
     except BrowserSenseAuthError as exc:
