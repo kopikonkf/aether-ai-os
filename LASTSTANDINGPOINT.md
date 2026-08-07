@@ -64,20 +64,31 @@ Founder approval / release evidence
 - The Senses shell no longer renders or reads a raw operator token and no longer
   exposes the browser session bearer token to JavaScript. Persistent WebCrypto
   storage remains best-effort with an explicit session-only pairing fallback.
+- Implementation slice 3 is source-present: `persona.yaml` now owns a
+  provider-neutral allowlist of delivery presets and expressive cues; a
+  deterministic compiler emits only bounded director instructions; and Gemini
+  TTS is available behind the common exact-text voice contract with a
+  hash-only tier receipt.
+- The declared Founder Alpha candidate is `gemini-3.1-flash-tts-preview` with
+  voice `Aoede`, free-tier disclosure, explicit-consent and `Private text-only`
+  boundaries, secret-class suppression, one-attempt quota circuit breaking,
+  browser-speech/text fallback, no automatic billing upgrade, and
+  `pending_founder_audition` status.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-2 are source-present. AionUi/Telegram presentation,
-  browser/PWA execution, LiveKit grant revocation, and Founder host evidence
-  still require their own wiring and proof.
+  merely because slices 1-3 are source-present. The Gemini adapter is not yet
+  the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
+  and AionUi/Telegram presentation, browser/PWA execution, LiveKit grant
+  revocation, credentialed provider execution, and Founder host evidence still
+  require their own wiring and proof.
 
 ## Next Senses implementation slice
 
-Extend `persona.yaml` with provider-neutral voice delivery policy, implement the
-bounded prompt compiler, and add Gemini TTS behind the exact-text adapter with
-`FOUNDER_ALPHA_FREE` manifest and tier receipts. Do not change Aether Mind
-authority or treat source presence as live provider proof.
+Implement one client state reducer for authentication, transport mode, turn,
+consent, capability action, and external-speech privacy. Remove the generic
+connected/thinking/working booleans without activating a new capability adapter.
 
 ## Next operational step
 
