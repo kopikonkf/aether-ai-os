@@ -220,37 +220,44 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
   (PR #40) is fail-closed, so Fase A (exact ACL setter + tree-wide postcondition)
   MUST run before any promote.
 - **Ingress host mutation is awaiting the release-promotion / shared-tunnel
-  source PR (`agent/release-promotion-shared-tunnel`, round-6 fixes pushed at
-  head `815acdf`, CI green, awaiting re-review):**
+  source PR (`agent/release-promotion-shared-tunnel`; round-7 review in
+  progress; the branch head is always volatile and is NOT recorded here):**
   - `install-aether-services.ps1`: removed `/inheritance:e`; `Ensure-ProtectedAetherHome`
     (new=apply protected exact, existing=assert only); `-TargetSha` bound to manifest.
   - `promote-aether-release.ps1`: `-ExpectedTargetSha` is mandatory (provenance guard);
-    stage via temp dir + atomic publish; `Invoke-Git`/`Invoke-GitCapture` wrappers so
-    Windows PowerShell 5.1 cannot turn git's normal stderr progress into a terminating
-    error; restart + running-path proof; **universal rollback envelope wraps EVERY
-    failure after service-configuration mutation** (target installer, restart,
-    running-path, health, post-DACL) using the CURRENT safe installer against
-    `81582f70`; `targetRelease` is NEVER deleted once services may reference it
+    **`-Start` is required for any mutating promotion** (restart + live running-path +
+    health gates are never optional and never skipped); stage via temp dir + atomic
+    publish; `Invoke-Git`/`Invoke-GitCapture` wrappers so Windows PowerShell 5.1 cannot
+    turn git's normal stderr progress into a terminating error; **restart failures are
+    never swallowed**; running-path proof correlates the LIVE `Win32_Service.ProcessId`
+    with `Win32_Process.CommandLine` bound to the release; **universal rollback envelope
+    wraps EVERY failure after service-configuration mutation** using the CURRENT safe
+    installer against `81582f70`, proving running path + health + DACL +
+    **live `AETHER_HOME\services\service-manifest.json` provenance** rebound to the
+    rollback release; `targetRelease` is NEVER deleted once services may reference it
     (only a publish that never touched services is removed for retry-safety);
-    rollback proves running path + health + DACL + rollback manifest SHA; retry-safe
-    (reuse matching release metadata, remove partial publish); boolean receipt with
-    target_sha + paths; DACL asserted before AND after.
+    retry-safe (reuse matching release metadata, remove partial publish); boolean
+    receipt with target_sha + paths; DACL asserted before AND after.
   - `update-shared-tunnel.ps1`: rewrites ONLY the two Aether `service:` scalars
     (`:80 -> :8080`), preserves `oc`/`jarvis`/`http_status:404`; validate-before-apply
     + atomic replace + backup; **connector binding via `Win32_Service.ProcessId`
     correlated with `Win32_Process.CommandLine` (exact CIM), exact config-derived
     tunnel UUID** (never a hard-coded prefix, never the UUID-in-cmdline assumption);
-    governed handoff stops ONLY the SCM PID plus positively matched stale direct
-    PIDs and preserves unrelated connectors (no broad `Stop-AllCloudflaredProcesses`);
-    `Assert-Administrator` runs before `-Apply/-Start` mutation; every receipt field
-    is initialized and every observation null-checked; fail-closed restore on every
-    post-replace failure with `recovery_proven` claimed only when observed.
+    **the SCM connector is stopped via `Stop-Service` + wait (never `Stop-Process`),
+    then only positively matched stale direct PIDs are stopped** and stop failures are
+    never swallowed, preserving unrelated connectors; `Assert-Administrator` runs before
+    `-Apply/-Start` mutation; every receipt field is initialized and every observation
+    null-checked; fail-closed restore on every post-replace failure, and **recovery
+    requires the exact-one governed connector assertion plus observed readiness**
+    before `recovery_proven` is set.
   - Executable fault-injection tests run the real `.ps1` through PowerShell on any
     runner via documented env-gated observation seams (default path always real
     CIM/SCM/service control): tunnel success binding + stale-direct handoff,
-    restart-failure restore, readiness-failure recovery; promotion universal rollback
-    (target-installer failure, rollback failure, health failure, running-path failure,
-    success, reuse-existing manifest SHA).
+    restart-failure restore, stale-PID stop-failure, readiness-failure recovery,
+    duplicate-connector recovery refusal; promotion success, reuse-existing manifest SHA,
+    target-installer failure, rollback failure, health failure, running-path failure,
+    old-live-PID after binPath change, restart failure, omitted `-Start`, and live
+    service-manifest SHA mismatch.
   - No DNS CNAME change needed — cutover is origin mapping only.
 - **Next (after this PR reviews + merges):** Fase A (ACL hardening) -> stage exact
   latest reviewed `main` SHA (`-ExpectedTargetSha`) -> promote services (no migration)

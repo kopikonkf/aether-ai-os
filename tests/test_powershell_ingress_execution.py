@@ -4,19 +4,19 @@
 Executable tests of the production PowerShell ingress/release scripts (not just
 Python mirrors). They run the real *.ps1 through PowerShell.
 
-Round-6 additions (review #4885016717):
-  - update-shared-tunnel.ps1 now binds the SCM connector via
-    Win32_Service.ProcessId / Win32_Process.CommandLine (exact CIM), compares
-    the exact config-derived tunnel UUID, stops ONLY governed PIDs (SCM + a
-    positively matched stale direct connector) while preserving unrelated
-    connectors, requires elevation before mutation, and initializes every
-    receipt field.
-  - promote-aether-release.ps1 now wraps EVERY failure after service
-    configuration mutation in one universal rollback envelope and never deletes
-    the target release once services may reference it.
-  - Executable fault-injection tests traverse the real success/failure branches
-    through documented, env-gated observation hooks. The default (unset) path
-    is always the real CIM/SCM/service-control behaviour.
+Round-7 additions (review #4886054831):
+  - promote-aether-release.ps1 never swallows Get-Service/Restart-Service
+    failures; a mutating promotion REQUIRES -Start and always runs restart +
+    live running-path + health gates; running-path proof correlates the live
+    Win32_Service.ProcessId with Win32_Process.CommandLine; rollback_manifest_proven
+    reads the LIVE AETHER_HOME\\services\\service-manifest.json provenance.
+  - update-shared-tunnel.ps1 stops the SCM connector through Stop-Service (never
+    Stop-Process) + wait, then stops only positively matched stale direct PIDs;
+    recovery requires the exact-one governed connector assertion before
+    recovery_proven=true.
+  - Fault injection covers: restart failure, old live PID after binPath change,
+    omitted -Start, post-rollback live-manifest SHA, stale-PID stop failure,
+    and duplicate connector during recovery.
 
 These tests run the real *.ps1 through PowerShell on any runner (pwsh on Linux
 CI, powershell.exe on Windows). Windows-only SCM recovery tests remain gated to
@@ -140,6 +140,15 @@ def _write_start_seam(start_path: Path, body: str) -> Path:
     return start_path
 
 
+def _write_stop_seam(stop_path: Path, fail: bool = False) -> Path:
+    stop_path.write_text(
+        "param([string]$ScmServiceName, [int]$ScmPid, [string]$StalePids)\n"
+        + ("exit 1\n" if fail else "exit 0\n"),
+        encoding="utf-8",
+    )
+    return stop_path
+
+
 # ---------------------------------------------------------------------------
 # Basic apply / dry-run / elevation-gate coverage.
 # ---------------------------------------------------------------------------
@@ -149,9 +158,7 @@ def _write_start_seam(start_path: Path, body: str) -> Path:
 def test_shared_tunnel_apply_rewrites_only_aether_origins(tmp_path: Path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(SAMPLE, encoding="utf-8")
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir()
-    stub = _write_binary_stub(stub_dir)
+    stub = _write_binary_stub(tmp_path / "bin")
     env = dict(os.environ)
     env["CLOUDFLARED_STUB_EXIT"] = "0"
 
@@ -194,9 +201,7 @@ def test_shared_tunnel_apply_rewrites_only_aether_origins(tmp_path: Path):
 def test_shared_tunnel_apply_rolls_back_on_validate_failure(tmp_path: Path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(SAMPLE, encoding="utf-8")
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir()
-    stub = _write_binary_stub(stub_dir)
+    stub = _write_binary_stub(tmp_path / "bin")
 
     env = dict(os.environ)
     env["CLOUDFLARED_STUB_EXIT"] = "1"  # simulate validate failure
@@ -223,9 +228,7 @@ def test_shared_tunnel_apply_rolls_back_on_validate_failure(tmp_path: Path):
 def test_shared_tunnel_dry_run_emits_candidate_observations(tmp_path: Path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(SAMPLE, encoding="utf-8")
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir()
-    stub = _write_binary_stub(stub_dir)
+    stub = _write_binary_stub(tmp_path / "bin")
 
     cmd = [
         POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -238,7 +241,7 @@ def test_shared_tunnel_dry_run_emits_candidate_observations(tmp_path: Path):
     assert result.returncode == 0
     receipt = json.loads(result.stdout)
     assert receipt["applied"] is False
-    assert receipt["schema"] == "aether.shared-tunnel.v4"
+    assert receipt["schema"] == "aether.shared-tunnel.v5"
     assert receipt["protected_hostnames"] == ["oc.aethers.my.id", "jarvis.aethers.my.id"]
     assert receipt["connector_count_after"] is None
     assert receipt["connector_mutation_started"] is False
@@ -258,9 +261,7 @@ def test_shared_tunnel_dry_run_emits_candidate_observations(tmp_path: Path):
 def test_shared_tunnel_apply_requires_elevation_by_default(tmp_path: Path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(SAMPLE, encoding="utf-8")
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir()
-    stub = _write_binary_stub(stub_dir)
+    stub = _write_binary_stub(tmp_path / "bin")
 
     # -AllowNonElevated is off by default; mutation must be refused before any
     # file is written. Non-elevated sessions prove the gate on Windows; on
@@ -325,11 +326,13 @@ def test_shared_tunnel_start_success_binding_and_stale_direct_handoff(tmp_path: 
             "exit 0\n"
         ),
     )
+    stop_seam = _write_stop_seam(tmp_path / "stop.ps1")
 
     env = dict(os.environ)
     env["CLOUDFLARED_STUB_EXIT"] = "0"
     env["AETHER_TUNNEL_OBSERVER_JSON"] = str(observer)
     env["AETHER_TUNNEL_START_CMD"] = str(start_seam)
+    env["AETHER_TUNNEL_STOP_CMD"] = str(stop_seam)
     env["AETHER_TUNNEL_READINESS"] = "true"
 
     cmd = [
@@ -379,11 +382,13 @@ def test_shared_tunnel_start_restart_failure_restores_config_recovery_unproven(t
         ],
     )
     start_seam = _write_start_seam(tmp_path / "start.ps1", "exit 1\n")
+    stop_seam = _write_stop_seam(tmp_path / "stop.ps1")
 
     env = dict(os.environ)
     env["CLOUDFLARED_STUB_EXIT"] = "0"
     env["AETHER_TUNNEL_OBSERVER_JSON"] = str(observer)
     env["AETHER_TUNNEL_START_CMD"] = str(start_seam)
+    env["AETHER_TUNNEL_STOP_CMD"] = str(stop_seam)
     env["AETHER_TUNNEL_READINESS"] = "false"
 
     cmd = [
@@ -412,7 +417,55 @@ def test_shared_tunnel_start_restart_failure_restores_config_recovery_unproven(t
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
-def test_shared_tunnel_start_readiness_failure_recovers_connector(tmp_path: Path):
+def test_shared_tunnel_stale_pid_stop_failure_recovery_unproven(tmp_path: Path):
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(SAMPLE, encoding="utf-8")
+    stub = _write_binary_stub(tmp_path / "bin")
+
+    governed = _governed_cmdline(cfg)
+    observer = tmp_path / "observer.json"
+    _write_tunnel_observer(
+        cfg, observer,
+        [
+            {"processId": 100, "commandLine": governed},
+            {"processId": 200, "commandLine": governed},
+        ],
+    )
+    start_seam = _write_start_seam(tmp_path / "start.ps1", "exit 0\n")
+    # Governed stop fails (e.g. a stale direct PID could not be stopped). The
+    # failure must propagate and recovery must NOT be claimed.
+    stop_seam = _write_stop_seam(tmp_path / "stop.ps1", fail=True)
+
+    env = dict(os.environ)
+    env["CLOUDFLARED_STUB_EXIT"] = "0"
+    env["AETHER_TUNNEL_OBSERVER_JSON"] = str(observer)
+    env["AETHER_TUNNEL_START_CMD"] = str(start_seam)
+    env["AETHER_TUNNEL_STOP_CMD"] = str(stop_seam)
+    env["AETHER_TUNNEL_READINESS"] = "false"
+
+    cmd = [
+        POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(CLOUDFLARE / "update-shared-tunnel.ps1"),
+        "-TunnelConfig", str(cfg),
+        "-CloudflaredPath", str(stub),
+        "-AetherHome", str(tmp_path / "aether-home"),
+        "-AllowNonElevated",
+        "-Apply", "-Start",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    assert result.returncode != 0
+    assert cfg.read_text(encoding="utf-8-sig") == SAMPLE
+
+    receipt_file = tmp_path / "aether-home" / "runtime" / "ingress" / "shared-tunnel-receipt.json"
+    assert receipt_file.is_file()
+    receipt = json.loads(receipt_file.read_text(encoding="utf-8-sig"))
+    assert receipt["rollback_triggered"] is True
+    assert receipt["recovery_proven"] is False
+    assert "stop hook failed" in (receipt.get("error") or "").lower()
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_shared_tunnel_readiness_failure_recovers_connector(tmp_path: Path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(SAMPLE, encoding="utf-8")
     stub = _write_binary_stub(tmp_path / "bin")
@@ -449,11 +502,13 @@ def test_shared_tunnel_start_readiness_failure_recovers_connector(tmp_path: Path
             "exit 0\n"
         ),
     )
+    stop_seam = _write_stop_seam(tmp_path / "stop.ps1")
 
     env = dict(os.environ)
     env["CLOUDFLARED_STUB_EXIT"] = "0"
     env["AETHER_TUNNEL_OBSERVER_JSON"] = str(observer)
     env["AETHER_TUNNEL_START_CMD"] = str(start_seam)
+    env["AETHER_TUNNEL_STOP_CMD"] = str(stop_seam)
 
     cmd = [
         POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -478,6 +533,82 @@ def test_shared_tunnel_start_readiness_failure_recovers_connector(tmp_path: Path
     assert receipt["recovery_proven"] is True
 
 
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_shared_tunnel_duplicate_connector_recovery_unproven(tmp_path: Path):
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(SAMPLE, encoding="utf-8")
+    stub = _write_binary_stub(tmp_path / "bin")
+
+    governed = _governed_cmdline(cfg)
+    observer = tmp_path / "observer.json"
+    _write_tunnel_observer(
+        cfg, observer,
+        [
+            {"processId": 100, "commandLine": governed},
+            {"processId": 200, "commandLine": governed},
+        ],
+    )
+    counter = tmp_path / "start-counter.txt"
+    # Promote phase: single governed connector, readiness false -> promote fails.
+    # Recovery phase: the start seam leaves TWO governed connectors -> the
+    # exact-one assertion must fail, so recovery is NOT claimed.
+    start_seam = _write_start_seam(
+        tmp_path / "start.ps1",
+        (
+            "$f = '" + str(counter) + "'\n"
+            "$n = 0\n"
+            "if (Test-Path -LiteralPath $f) { $n = [int](Get-Content -LiteralPath $f) }\n"
+            "$n++\n"
+            "Set-Content -LiteralPath $f -Value $n\n"
+            "if ($n -eq 1) {\n"
+            "$obs = @{ scm = @{ name='Cloudflared'; processId=100; "
+            "pathName='C:\\cloudflared.exe'; state='Running' }; processes = @("
+            f"@{{ processId=100; commandLine='{governed}' }}"
+            ") } | ConvertTo-Json -Depth 6\n"
+            f"Set-Content -LiteralPath '{observer}' -Value $obs\n"
+            "$env:AETHER_TUNNEL_READINESS = 'false'\n"
+            "} else {\n"
+            "$obs = @{ scm = @{ name='Cloudflared'; processId=100; "
+            "pathName='C:\\cloudflared.exe'; state='Running' }; processes = @("
+            f"@{{ processId=100; commandLine='{governed}' }}, "
+            f"@{{ processId=200; commandLine='{governed}' }}"
+            ") } | ConvertTo-Json -Depth 6\n"
+            f"Set-Content -LiteralPath '{observer}' -Value $obs\n"
+            "$env:AETHER_TUNNEL_READINESS = 'true'\n"
+            "}\n"
+            "exit 0\n"
+        ),
+    )
+    stop_seam = _write_stop_seam(tmp_path / "stop.ps1")
+
+    env = dict(os.environ)
+    env["CLOUDFLARED_STUB_EXIT"] = "0"
+    env["AETHER_TUNNEL_OBSERVER_JSON"] = str(observer)
+    env["AETHER_TUNNEL_START_CMD"] = str(start_seam)
+    env["AETHER_TUNNEL_STOP_CMD"] = str(stop_seam)
+
+    cmd = [
+        POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(CLOUDFLARE / "update-shared-tunnel.ps1"),
+        "-TunnelConfig", str(cfg),
+        "-CloudflaredPath", str(stub),
+        "-AetherHome", str(tmp_path / "aether-home"),
+        "-AllowNonElevated",
+        "-Apply", "-Start",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    assert result.returncode != 0
+    assert cfg.read_text(encoding="utf-8-sig") == SAMPLE
+
+    receipt_file = tmp_path / "aether-home" / "runtime" / "ingress" / "shared-tunnel-receipt.json"
+    assert receipt_file.is_file()
+    receipt = json.loads(receipt_file.read_text(encoding="utf-8-sig"))
+    assert receipt["rollback_triggered"] is True
+    assert receipt["recovery_proven"] is False
+    # The exact-one assertion observed the duplicate before refusing recovery.
+    assert receipt["connector_count_after"] == 2
+
+
 @pytest.mark.skipif(
     POWERSHELL is None or not _IS_WINDOWS,
     reason="connector -Start recovery needs Windows SCM",
@@ -485,9 +616,7 @@ def test_shared_tunnel_start_readiness_failure_recovers_connector(tmp_path: Path
 def test_shared_tunnel_start_missing_service_rolls_back_config(tmp_path: Path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(SAMPLE, encoding="utf-8")
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir()
-    stub = _write_binary_stub(stub_dir)
+    stub = _write_binary_stub(tmp_path / "bin")
 
     env = dict(os.environ)
     env["CLOUDFLARED_STUB_EXIT"] = "0"  # validate would succeed
@@ -516,9 +645,7 @@ def test_shared_tunnel_start_missing_service_rolls_back_config(tmp_path: Path):
 def test_shared_tunnel_start_asserts_single_connector_receipt(tmp_path: Path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(SAMPLE, encoding="utf-8")
-    stub_dir = tmp_path / "bin"
-    stub_dir.mkdir()
-    stub = _write_binary_stub(stub_dir)
+    stub = _write_binary_stub(tmp_path / "bin")
     aether_home = tmp_path / "aether-home"
 
     cmd = [
@@ -539,7 +666,7 @@ def test_shared_tunnel_start_asserts_single_connector_receipt(tmp_path: Path):
     receipt_file = aether_home / "runtime" / "ingress" / "shared-tunnel-receipt.json"
     assert receipt_file.is_file(), "failure receipt not written"
     receipt = json.loads(receipt_file.read_text(encoding="utf-8-sig"))
-    assert receipt["schema"] == "aether.shared-tunnel.v4"
+    assert receipt["schema"] == "aether.shared-tunnel.v5"
     assert receipt["rollback_triggered"] is True
     assert receipt.get("error")
 
@@ -596,24 +723,21 @@ def _make_rollback_release(releases: Path) -> None:
     )
 
 
-def _promotion_env(install_seam: Path | None = None, health_seam: Path | None = None,
-                   service_seam: Path | None = None) -> dict:
-    env = dict(os.environ)
-    if install_seam is not None:
-        env["AETHER_PROMO_INSTALL_CMD"] = str(install_seam)
-    if health_seam is not None:
-        env["AETHER_PROMO_HEALTH_CMD"] = str(health_seam)
-    if service_seam is not None:
-        env["AETHER_PROMO_SERVICE_CMD"] = str(service_seam)
-    return env
-
-
 def _write_install_seam(tmp_path: Path, mode: str, log: Path, health_file: Path) -> Path:
     seam = tmp_path / "install.ps1"
     body = (
         "param([string]$ReleasePath, [string]$TargetSha, [string]$AetherHome, "
         "[string]$HostAddress, [string]$Port, [string]$Phase)\n"
         "Add-Content -Path '@LOG@' -Value \"$Phase|$ReleasePath\"\n"
+        # Write the live service manifest exactly like the real installer.
+        "if ($Phase -eq 'rollback' -and '@MODE@' -eq 'manifest-mismatch') {\n"
+        "  $mf = @{ release_path = $ReleasePath; target_sha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }\n"
+        "} else {\n"
+        "  $mf = @{ release_path = $ReleasePath; target_sha = $TargetSha }\n"
+        "}\n"
+        "New-Item -ItemType Directory -Force -Path (Join-Path $AetherHome 'services') | Out-Null\n"
+        "Set-Content -LiteralPath (Join-Path $AetherHome 'services\\service-manifest.json') "
+        "-Value ($mf | ConvertTo-Json -Compress)\n"
         "if ($Phase -eq 'rollback') { Set-Content -LiteralPath '@HEALTH@' -Value 'true' }\n"
         "if ($Phase -eq 'promote' -and '@MODE@' -in @('target-fail','both-fail')) { exit 1 }\n"
         "if ($Phase -eq 'rollback' -and '@MODE@' -in @('rollback-fail','both-fail')) { exit 1 }\n"
@@ -639,23 +763,69 @@ def _write_health_seam(health_file: Path) -> Path:
     return seam
 
 
-def _write_service_seam(tmp_path: Path, target_release: str, fail_target: bool) -> Path:
+def _write_service_seam(
+    tmp_path: Path,
+    target_release: str,
+    fail_target: bool = False,
+    old_release: str | None = None,
+) -> Path:
     seam = tmp_path / "service.ps1"
     body = "param([string]$ReleasePath)\n$running = $true\n"
     if fail_target:
         body += f"if ($ReleasePath -eq '{target_release}') {{ $running = $false }}\n"
     body += (
+        "$pidv = 4242\n"
+        "$cmdline = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe "
+        "-File aether-service-runner.ps1 -ReleasePath ' + $ReleasePath + ' run'\n"
+    )
+    if old_release:
+        body += (
+            f"$old = '{old_release}'\n"
+            f"if ($ReleasePath -eq '{target_release}') {{ $cmdline = $cmdline.Replace($ReleasePath, $old) }}\n"
+        )
+    body += (
         "@(\n"
-        "  @{ name='AetherGateway'; running=$running; path=$ReleasePath },\n"
-        "  @{ name='AetherWatchdog'; running=$running; path=$ReleasePath }\n"
+        "  @{ name='AetherGateway'; running=$running; path=$ReleasePath; pid=$pidv; cmdline=$cmdline },\n"
+        "  @{ name='AetherWatchdog'; running=$running; path=$ReleasePath; pid=$pidv; cmdline=$cmdline }\n"
         ") | ConvertTo-Json -Compress\n"
     )
     seam.write_text(body, encoding="utf-8")
     return seam
 
 
-def _promote_cmd(repo: Path, aether_home: Path, releases: Path, sha: str) -> list[str]:
-    return [
+def _write_restart_seam(tmp_path: Path, target_release: str, fail_target: bool = False) -> Path:
+    seam = tmp_path / "restart.ps1"
+    body = "param([string]$ReleasePath)\n"
+    if fail_target:
+        body += f"if ($ReleasePath -eq '{target_release}') {{ exit 1 }}\nexit 0\n"
+    else:
+        body += "exit 0\n"
+    seam.write_text(body, encoding="utf-8")
+    return seam
+
+
+def _promotion_env(
+    install_seam: Path | None = None,
+    health_seam: Path | None = None,
+    service_seam: Path | None = None,
+    restart_seam: Path | None = None,
+) -> dict:
+    env = dict(os.environ)
+    if install_seam is not None:
+        env["AETHER_PROMO_INSTALL_CMD"] = str(install_seam)
+    if health_seam is not None:
+        env["AETHER_PROMO_HEALTH_CMD"] = str(health_seam)
+    if service_seam is not None:
+        env["AETHER_PROMO_SERVICE_CMD"] = str(service_seam)
+    if restart_seam is not None:
+        env["AETHER_PROMO_RESTART_CMD"] = str(restart_seam)
+    return env
+
+
+def _promote_cmd(
+    repo: Path, aether_home: Path, releases: Path, sha: str, with_start: bool = True
+) -> list[str]:
+    cmd = [
         POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", str(WINDOWS / "promote-aether-release.ps1"),
         "-RepoPath", str(repo),
@@ -665,10 +835,53 @@ def _promote_cmd(repo: Path, aether_home: Path, releases: Path, sha: str) -> lis
         "-ExpectedTargetSha", sha,
         "-AllowNonElevated",
         "-SkipAclCheck",
-        "-Start",
         "-HealthAttempts", "1",
         "-HealthTimeoutSeconds", "1",
     ]
+    if with_start:
+        cmd.append("-Start")
+    return cmd
+
+
+def _run_promotion(tmp_path: Path, mode: str, *, fail_target: bool = False,
+                   old_release: str | None = None, with_start: bool = True,
+                   restart_fail_target: bool = False) -> subprocess.CompletedProcess:
+    repo, sha = _make_promotion_repo(tmp_path)
+    aether_home = tmp_path / "aether-home"
+    aether_home.mkdir()
+    releases = tmp_path / "releases"
+    _make_rollback_release(releases)
+
+    health_file = tmp_path / "health.txt"
+    if mode in ("health-fail", "manifest-mismatch"):
+        health_file.write_text("false", encoding="utf-8")
+    else:
+        health_file.write_text("true", encoding="utf-8")
+    install_seam = _write_install_seam(tmp_path, mode, tmp_path / "install.log", health_file)
+    health_seam = _write_health_seam(health_file)
+    service_seam = _write_service_seam(
+        tmp_path, str(releases / sha), fail_target=fail_target, old_release=old_release
+    )
+    restart_seam = _write_restart_seam(tmp_path, str(releases / sha), fail_target=restart_fail_target)
+
+    result = subprocess.run(
+        _promote_cmd(repo, aether_home, releases, sha, with_start=with_start),
+        capture_output=True, text=True, timeout=120,
+        env=_promotion_env(install_seam, health_seam, service_seam, restart_seam),
+    )
+    result._aether_home = aether_home  # type: ignore[attr-defined]
+    result._releases = releases  # type: ignore[attr-defined]
+    result._sha = sha  # type: ignore[attr-defined]
+    return result
+
+
+def _read_promotion_receipt(result) -> dict:
+    aether_home = result._aether_home  # type: ignore[attr-defined]
+    for name in ("release-promotion-failure.json", "release-promotion.json"):
+        path = aether_home / "services" / name
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+    raise AssertionError("no promotion receipt written")
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
@@ -720,33 +933,18 @@ def test_release_promotion_requires_expected_target_sha(tmp_path: Path):
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
 def test_release_promotion_success_publishes_and_proves(tmp_path: Path):
-    repo, sha = _make_promotion_repo(tmp_path)
-    aether_home = tmp_path / "aether-home"
-    aether_home.mkdir()
-    releases = tmp_path / "releases"
-    _make_rollback_release(releases)
-
-    health_file = tmp_path / "health.txt"
-    health_file.write_text("true", encoding="utf-8")
-    install_seam = _write_install_seam(tmp_path, "ok", tmp_path / "install.log", health_file)
-    health_seam = _write_health_seam(health_file)
-    service_seam = _write_service_seam(tmp_path, str(releases / sha), fail_target=False)
-
-    result = subprocess.run(
-        _promote_cmd(repo, aether_home, releases, sha),
-        capture_output=True, text=True, timeout=120,
-        env=_promotion_env(install_seam, health_seam, service_seam),
-    )
+    result = _run_promotion(tmp_path, mode="ok")
     assert result.returncode == 0, result.stderr
 
-    receipt = json.loads((aether_home / "services" / "release-promotion.json").read_text(encoding="utf-8-sig"))
+    receipt = _read_promotion_receipt(result)
     assert receipt["success"] is True
-    assert receipt["target_sha"] == sha
+    assert receipt["target_sha"] == result._sha  # type: ignore[attr-defined]
     assert receipt["published_this_run"] is True
     assert receipt["running_paths_proven"] is True
+    assert receipt["restart_proven"] is True
     assert receipt["reconciled"] == ["AetherGateway", "AetherWatchdog"]
     # Target release was published and never removed.
-    assert (releases / sha / "AETHER_RELEASE.json").is_file()
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
@@ -769,44 +967,40 @@ def test_release_promotion_reuses_matching_existing_release(tmp_path: Path):
     install_seam = _write_install_seam(tmp_path, "ok", tmp_path / "install.log", health_file)
     health_seam = _write_health_seam(health_file)
     service_seam = _write_service_seam(tmp_path, str(target), fail_target=False)
+    restart_seam = _write_restart_seam(tmp_path, str(target), fail_target=False)
 
     result = subprocess.run(
         _promote_cmd(repo, aether_home, releases, sha),
         capture_output=True, text=True, timeout=120,
-        env=_promotion_env(install_seam, health_seam, service_seam),
+        env=_promotion_env(install_seam, health_seam, service_seam, restart_seam),
     )
     assert result.returncode == 0, result.stderr
 
-    receipt = json.loads((aether_home / "services" / "release-promotion.json").read_text(encoding="utf-8-sig"))
+    receipt = json.loads(
+        (aether_home / "services" / "release-promotion.json").read_text(encoding="utf-8-sig")
+    )
     assert receipt["success"] is True
     assert receipt["reused_existing"] is True
     assert receipt["published_this_run"] is False
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_release_promotion_requires_start_fails_before_mutation(tmp_path: Path):
+    result = _run_promotion(tmp_path, mode="ok", with_start=False)
+    assert result.returncode != 0
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "requires -Start" in combined
+    # No release was published and no receipt was written (failed before mutation).
+    assert not (result._releases / result._sha).exists()  # type: ignore[attr-defined]
+    assert not (result._aether_home / "services" / "release-promotion-failure.json").is_file()  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
 def test_release_promotion_target_installer_failure_universal_rollback(tmp_path: Path):
-    repo, sha = _make_promotion_repo(tmp_path)
-    aether_home = tmp_path / "aether-home"
-    aether_home.mkdir()
-    releases = tmp_path / "releases"
-    _make_rollback_release(releases)
-
-    health_file = tmp_path / "health.txt"
-    install_seam = _write_install_seam(tmp_path, "target-fail", tmp_path / "install.log", health_file)
-    health_seam = _write_health_seam(health_file)
-    service_seam = _write_service_seam(tmp_path, str(releases / sha), fail_target=False)
-
-    result = subprocess.run(
-        _promote_cmd(repo, aether_home, releases, sha),
-        capture_output=True, text=True, timeout=120,
-        env=_promotion_env(install_seam, health_seam, service_seam),
-    )
+    result = _run_promotion(tmp_path, mode="target-fail")
     assert result.returncode != 0
 
-    # The failed promotion triggered a universal rollback that was proven.
-    receipt = json.loads(
-        (aether_home / "services" / "release-promotion-failure.json").read_text(encoding="utf-8-sig")
-    )
+    receipt = _read_promotion_receipt(result)
     assert receipt["success"] is False
     assert receipt["service_mutation_started"] is True
     assert receipt["rollback_triggered"] is True
@@ -815,105 +1009,88 @@ def test_release_promotion_target_installer_failure_universal_rollback(tmp_path:
     assert receipt["rollback_manifest_proven"] is True
     assert receipt["partial_publish_removed"] is False
     # The target release MUST NOT be deleted once services may reference it.
-    assert (releases / sha / "AETHER_RELEASE.json").is_file()
-    # Both phases were attempted by the installer hook.
-    phases = (tmp_path / "install.log").read_text(encoding="utf-8-sig")
-    assert "promote|" in phases
-    assert "rollback|" in phases
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_release_promotion_restart_failure_universal_rollback(tmp_path: Path):
+    result = _run_promotion(tmp_path, mode="ok", restart_fail_target=True)
+    assert result.returncode != 0
+
+    receipt = _read_promotion_receipt(result)
+    assert receipt["service_mutation_started"] is True
+    assert receipt["rollback_triggered"] is True
+    assert receipt["rollback_proven"] is True
+    assert receipt["rollback_running_path_proven"] is True
+    assert receipt["rollback_manifest_proven"] is True
+    assert receipt["rollback_reason"] == "post_mutation_failure"
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_release_promotion_old_live_pid_fails_running_path(tmp_path: Path):
+    # After the binPath change the live process still reports an OLD release in
+    # its command line -> the running-path assertion must fail and roll back.
+    old_release = str(Path("C:\\aether\\releases") / "0000000000000000000000000000000000000000")
+    result = _run_promotion(tmp_path, mode="ok", old_release=old_release)
+    assert result.returncode != 0
+
+    receipt = _read_promotion_receipt(result)
+    assert receipt["running_paths_proven"] is False
+    assert receipt["rollback_triggered"] is True
+    assert receipt["rollback_proven"] is True
+    assert receipt["rollback_reason"] == "post_mutation_failure"
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
 def test_release_promotion_rollback_failure_keeps_target_and_reports_false(tmp_path: Path):
-    repo, sha = _make_promotion_repo(tmp_path)
-    aether_home = tmp_path / "aether-home"
-    aether_home.mkdir()
-    releases = tmp_path / "releases"
-    _make_rollback_release(releases)
-
-    health_file = tmp_path / "health.txt"
-    install_seam = _write_install_seam(tmp_path, "both-fail", tmp_path / "install.log", health_file)
-    health_seam = _write_health_seam(health_file)
-    service_seam = _write_service_seam(tmp_path, str(releases / sha), fail_target=False)
-
-    result = subprocess.run(
-        _promote_cmd(repo, aether_home, releases, sha),
-        capture_output=True, text=True, timeout=120,
-        env=_promotion_env(install_seam, health_seam, service_seam),
-    )
+    result = _run_promotion(tmp_path, mode="both-fail")
     assert result.returncode != 0
 
-    receipt = json.loads(
-        (aether_home / "services" / "release-promotion-failure.json").read_text(encoding="utf-8-sig")
-    )
+    receipt = _read_promotion_receipt(result)
     assert receipt["rollback_triggered"] is True
     assert receipt["rollback_proven"] is False
     assert receipt.get("rollback_error")
     # Never delete the target release after service mutation.
-    assert (releases / sha / "AETHER_RELEASE.json").is_file()
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
 def test_release_promotion_health_failure_rolls_back_proven(tmp_path: Path):
-    repo, sha = _make_promotion_repo(tmp_path)
-    aether_home = tmp_path / "aether-home"
-    aether_home.mkdir()
-    releases = tmp_path / "releases"
-    _make_rollback_release(releases)
-
-    # Installer succeeds on both phases; the health file stays 'false' after
-    # the target install (promote-phase readiness probe fails) and the rollback
-    # install flips it to 'true' so the rollback itself is proven healthy.
-    health_file = tmp_path / "health.txt"
-    health_file.write_text("false", encoding="utf-8")
-    install_seam = _write_install_seam(tmp_path, "ok", tmp_path / "install.log", health_file)
-    health_seam = _write_health_seam(health_file)
-    service_seam = _write_service_seam(tmp_path, str(releases / sha), fail_target=False)
-
-    result = subprocess.run(
-        _promote_cmd(repo, aether_home, releases, sha),
-        capture_output=True, text=True, timeout=120,
-        env=_promotion_env(install_seam, health_seam, service_seam),
-    )
+    result = _run_promotion(tmp_path, mode="health-fail")
     assert result.returncode != 0
 
-    receipt = json.loads(
-        (aether_home / "services" / "release-promotion-failure.json").read_text(encoding="utf-8-sig")
-    )
+    receipt = _read_promotion_receipt(result)
     assert receipt["running_paths_proven"] is True
     assert receipt["rollback_triggered"] is True
     assert receipt["rollback_proven"] is True
     assert receipt["rollback_reason"] == "health_failure_after_promote"
-    assert (releases / sha / "AETHER_RELEASE.json").is_file()
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
 
 
 @pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
 def test_release_promotion_running_path_failure_rolls_back_proven(tmp_path: Path):
-    repo, sha = _make_promotion_repo(tmp_path)
-    aether_home = tmp_path / "aether-home"
-    aether_home.mkdir()
-    releases = tmp_path / "releases"
-    _make_rollback_release(releases)
-
-    health_file = tmp_path / "health.txt"
-    health_file.write_text("true", encoding="utf-8")
-    install_seam = _write_install_seam(tmp_path, "ok", tmp_path / "install.log", health_file)
-    health_seam = _write_health_seam(health_file)
-    # The target running-path assertion fails (services not bound to the target
-    # release), forcing the universal rollback envelope.
-    service_seam = _write_service_seam(tmp_path, str(releases / sha), fail_target=True)
-
-    result = subprocess.run(
-        _promote_cmd(repo, aether_home, releases, sha),
-        capture_output=True, text=True, timeout=120,
-        env=_promotion_env(install_seam, health_seam, service_seam),
-    )
+    result = _run_promotion(tmp_path, mode="ok", fail_target=True)
     assert result.returncode != 0
 
-    receipt = json.loads(
-        (aether_home / "services" / "release-promotion-failure.json").read_text(encoding="utf-8-sig")
-    )
+    receipt = _read_promotion_receipt(result)
     assert receipt["rollback_triggered"] is True
     assert receipt["rollback_proven"] is True
     assert receipt["rollback_running_path_proven"] is True
     assert receipt["rollback_reason"] == "post_mutation_failure"
-    assert (releases / sha / "AETHER_RELEASE.json").is_file()
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_release_promotion_live_manifest_mismatch_reports_unproven(tmp_path: Path):
+    # The rollback reconcile succeeds but writes a service-manifest.json whose
+    # target_sha does NOT match the rollback release -> live provenance is not
+    # proven even though health/running-path recovered.
+    result = _run_promotion(tmp_path, mode="manifest-mismatch")
+    assert result.returncode != 0
+
+    receipt = _read_promotion_receipt(result)
+    assert receipt["rollback_proven"] is True
+    assert receipt["rollback_manifest_proven"] is False
+    assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]

@@ -60,3 +60,7 @@ coverage/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local CodeGraph index (per-project tool state)
+.codegraph/
+

@@ -25,16 +25,24 @@ $ErrorActionPreference = "Stop"
 #   observations as { scm: {name,processId,pathName,state} | null,
 #                     processes: [ {processId,commandLine}, ... ] }.
 #   When set, Get-ConnectorObservation reads it instead of CIM/WMI.
+# AETHER_TUNNEL_STOP_CMD     : path to a .ps1 invoked in place of the governed
+#   SCM stop (Stop-Service + wait) and stale-direct-PID cleanup. It receives
+#   -ScmServiceName <name> -ScmPid <pid> -StalePids <comma-separated>. A
+#   non-zero exit simulates a stop failure and fails the handoff (never
+#   swallowed). It may rewrite the observer JSON to leave a stale governed PID
+#   so recovery's exact-one assertion catches the leftover.
 # AETHER_TUNNEL_START_CMD     : path to a .ps1 invoked in place of
 #   Start-Service/Restart-Service. It may rewrite the observer JSON to
-#   simulate post-start state and throw (non-zero exit) to simulate an SCM
-#   start failure.
+#   simulate post-start state and exit non-zero to simulate an SCM start
+#   failure.
 # AETHER_TUNNEL_READINESS     : "true"/"false" override for the connector
 #   metrics readiness probe (default: real HTTP probe on the metrics port).
 #
 # Default (unset) behaviour always uses the real Windows observation path:
 #   Win32_Service.ProcessId for the SCM PID and Win32_Process.CommandLine
-#   for the exact connector command line.
+#   for the exact connector command line; SCM is stopped with Stop-Service
+#   (never Stop-Process) and stale direct PIDs are stopped only after the SCM
+#   stop is confirmed.
 # ---------------------------------------------------------------------------
 
 function Assert-Administrator {
@@ -162,7 +170,7 @@ New-Item -ItemType Directory -Force -Path $ingressDir | Out-Null
 $receiptPath = Join-Path $ingressDir "shared-tunnel-receipt.json"
 
 $receipt = [ordered]@{
-    schema = "aether.shared-tunnel.v4"
+    schema = "aether.shared-tunnel.v5"
     event = "cloudflare.shared_tunnel.updated"
     observed_at = (Get-Date).ToUniversalTime().ToString("o")
     applied = [bool]$Apply
@@ -297,49 +305,81 @@ function Get-ScmConnectorInfo {
 }
 
 function Stop-GovernedCloudflaredProcesses {
-    # Stops ONLY the SCM PID plus stale direct PIDs that positively match our
-    # tunnel/config/metrics. Unrelated connectors (other tunnels) are preserved.
+    # Governed stop: the SCM service is stopped through Stop-Service (never
+    # Stop-Process) and waited to actually exit; only then are stale direct PIDs
+    # that positively match our tunnel/config/metrics stopped. Stop failures are
+    # never swallowed. Unrelated connectors (other tunnels) are preserved.
     $obs = Get-ConnectorObservation
     if ($null -eq $obs) { return @() }
     $scmPid = 0
     if ($null -ne $obs.scm) {
         try { $scmPid = [int]$obs.scm.processId } catch { $scmPid = 0 }
     }
-    $governed = @()
+    $stale = @()
     $preserved = @()
     foreach ($p in @($obs.processes | Where-Object { $null -ne $_ })) {
         $pidv = [int]$p.processId
-        if ($pidv -eq $scmPid) {
-            $governed += $pidv
-            continue
-        }
+        if ($pidv -eq $scmPid) { continue }
         if (Test-ProcessGoverned -CommandLine ([string]$p.commandLine)) {
-            $governed += $pidv
+            $stale += $pidv
         }
         else {
             $preserved += $pidv
         }
     }
+    $governed = @()
+    if ($scmPid -gt 0) { $governed += $scmPid }
+    $governed += $stale
     $receipt.governed_pids_before = @($governed)
     $receipt.preserved_pids_before = @($preserved)
-    foreach ($pidv in $governed) {
-        try { Stop-Process -Id $pidv -Force -ErrorAction Stop } catch { }
+
+    $stopHook = $env:AETHER_TUNNEL_STOP_CMD
+    if ($stopHook) {
+        if (-not (Test-Path -LiteralPath $stopHook -PathType Leaf)) {
+            throw "AETHER_TUNNEL_STOP_CMD not found: $stopHook"
+        }
+        & $stopHook -ScmServiceName $ConnectorServiceName -ScmPid $scmPid -StalePids ($stale -join ',')
+        if ($LASTEXITCODE -ne 0) {
+            throw "connector governed stop hook failed (exit $LASTEXITCODE)"
+        }
+        return @($governed)
     }
-    if ($governed.Count -gt 0) {
-        Start-Sleep -Seconds 2
+
+    # Real governed stop: Stop-Service then wait until the SCM process exits.
+    $svc = Get-Service -Name $ConnectorServiceName -ErrorAction Stop
+    if ($null -eq $svc) {
+        throw "Connector SCM service '$ConnectorServiceName' missing."
+    }
+    if ($svc.Status -ne "Stopped") {
+        Stop-Service -Name $ConnectorServiceName -Force -ErrorAction Stop | Out-Null
+    }
+    for ($i = 0; $i -lt 20; $i++) {
+        Start-Sleep -Milliseconds 500
+        $obs2 = Get-ConnectorObservation
+        $stillRunning = $false
+        if ($null -ne $obs2 -and $null -ne $obs2.scm) {
+            $pid2 = 0
+            try { $pid2 = [int]$obs2.scm.processId } catch { $pid2 = 0 }
+            if ($pid2 -gt 0) { $stillRunning = $true }
+        }
+        if (-not $stillRunning) { break }
+    }
+    # Only now stop positively matched stale direct PIDs; propagate failures.
+    foreach ($pidv in $stale) {
+        Stop-Process -Id $pidv -Force -ErrorAction Stop
     }
     return @($governed)
 }
 
 function Restart-ScmConnector {
-    # Governed handoff: stop only governed processes (SCM PID + positively
-    # matched stale direct PIDs), then start the single SCM connector.
+    # Governed handoff: stop only governed processes (SCM via Stop-Service,
+    # positively matched stale direct PIDs), then start the single SCM connector.
     $startHook = $env:AETHER_TUNNEL_START_CMD
+    Stop-GovernedCloudflaredProcesses | Out-Null
     if ($startHook) {
         if (-not (Test-Path -LiteralPath $startHook -PathType Leaf)) {
             throw "AETHER_TUNNEL_START_CMD not found: $startHook"
         }
-        Stop-GovernedCloudflaredProcesses | Out-Null
         & $startHook
         if ($LASTEXITCODE -ne 0) {
             throw "connector start hook failed (exit $LASTEXITCODE)"
@@ -348,11 +388,10 @@ function Restart-ScmConnector {
         return Get-ScmConnectorInfo
     }
 
-    $svc = Get-Service -Name $ConnectorServiceName -ErrorAction SilentlyContinue
+    $svc = Get-Service -Name $ConnectorServiceName -ErrorAction Stop
     if ($null -eq $svc) {
         throw "Connector SCM service '$ConnectorServiceName' missing."
     }
-    Stop-GovernedCloudflaredProcesses | Out-Null
     if ($svc.Status -eq "Stopped") {
         Start-Service -Name $ConnectorServiceName -ErrorAction Stop | Out-Null
     }
@@ -431,7 +470,8 @@ $receipt.candidate_sha256 = (Get-FileHash -LiteralPath $candidatePath -Algorithm
 
 function Restore-SharedTunnelState {
     # Restore the live config to its backup and reconcile the connector back to
-    # a single governed SCM process. Never claims recovery unless observed.
+    # exactly one governed SCM process. Never claims recovery unless the
+    # exact-one assertion is observed AND readiness is proven.
     if (Test-Path -LiteralPath $backupPath) {
         Copy-Item -LiteralPath $backupPath -Destination $TunnelConfig -Force
     }
@@ -444,23 +484,26 @@ function Restore-SharedTunnelState {
             $startHook = $env:AETHER_TUNNEL_START_CMD
             if ($startHook -and (Test-Path -LiteralPath $startHook -PathType Leaf)) {
                 & $startHook | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "connector start hook failed during recovery (exit $LASTEXITCODE)"
+                }
             }
             else {
-                $svc = Get-Service -Name $ConnectorServiceName -ErrorAction SilentlyContinue
+                $svc = Get-Service -Name $ConnectorServiceName -ErrorAction Stop
                 if ($null -ne $svc) {
                     if ($svc.Status -eq "Stopped") {
-                        Start-Service -Name $ConnectorServiceName -ErrorAction Stop | Out-Null | Out-Null
+                        Start-Service -Name $ConnectorServiceName -ErrorAction Stop | Out-Null
                     }
                     else {
-                        Restart-Service -Name $ConnectorServiceName -Force -ErrorAction Stop | Out-Null | Out-Null
+                        Restart-Service -Name $ConnectorServiceName -Force -ErrorAction Stop | Out-Null
                     }
                 }
             }
             Start-Sleep -Seconds 2
-            $info = Get-ScmConnectorInfo
-            if ($null -ne $info -and $info.isValid) {
-                $recovered = (Test-ConnectorReadiness)
-            }
+            # Recovery MUST prove exactly one governed connector before it can
+            # be claimed; a leftover stale direct PID fails the assertion.
+            Assert-SingleConnector | Out-Null
+            $recovered = (Test-ConnectorReadiness)
         }
         catch {
             $recovered = $false

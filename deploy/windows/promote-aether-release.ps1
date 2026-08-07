@@ -26,12 +26,19 @@ $ErrorActionPreference = "Stop"
 #   "powershell.exe install-aether-services.ps1". It receives
 #   -ReleasePath <path> -TargetSha <sha> -AetherHome <path>
 #   -HostAddress <addr> -Port <port> -Phase <promote|rollback> and its exit
-#   code decides success/failure. Default: real installer invocation.
+#   code decides success/failure. The real installer writes the live
+#   AETHER_HOME\services\service-manifest.json; the seam must do the same for
+#   the post-rollback live-manifest verification to be meaningful.
+# AETHER_PROMO_RESTART_CMD   : path to a .ps1 invoked instead of the real
+#   Get-Service/Restart-Service loop. It receives -ReleasePath <path> and its
+#   exit code decides restart success/failure. Restart failures are NEVER
+#   swallowed in either path.
 # AETHER_PROMO_HEALTH_CMD    : path to a .ps1 printing True/False as the
 #   health probe result. Default: real HTTP probe on HostAddress:Port/health.
 # AETHER_PROMO_SERVICE_CMD   : path to a .ps1 invoked with -ReleasePath that
-#   prints a JSON array of observed services:
-#   [ { name, running, path }, ... ]. Default: real Win32_Service/CIM lookup.
+#   prints a JSON array of observed services, including the LIVE process:
+#   [ { name, running, path, pid, cmdline }, ... ]. Default: real
+#   Win32_Service.ProcessId correlated with Win32_Process.CommandLine.
 #
 # The default (unset) behaviour is always the real production path.
 # ---------------------------------------------------------------------------
@@ -98,18 +105,6 @@ function Assert-ProtectedAcl {
     }
 }
 
-function Get-ServiceConfigBinPath {
-    param([string]$Name)
-    try {
-        $service = Get-CimInstance Win32_Service -Filter "Name='$Name'"
-        if ($null -eq $service) { return "" }
-        return [string]$service.PathName
-    }
-    catch {
-        return ""
-    }
-}
-
 function Confirm-ServiceBoundToRelease {
     param(
         [string[]]$Names,
@@ -129,14 +124,18 @@ function Confirm-ServiceBoundToRelease {
         $bad = @()
         foreach ($name in $Names) {
             $s = @($states | Where-Object { $_.name -eq $name } | Select-Object -First 1)
-            $running = $false
-            $pathOk = $false
-            if ($s.Count -eq 1) {
-                try { $running = [bool]$s[0].running } catch { $running = $false }
-                $pathOk = ([string]$s[0].path -match [regex]::Escape($ReleasePath))
+            if ($s.Count -ne 1) {
+                $bad += "$name(not observed)"
+                continue
             }
-            if ($s.Count -ne 1 -or -not $running -or -not $pathOk) {
-                $bad += "$name(payload path does not reference $ReleasePath or not Running)"
+            $running = $false
+            try { $running = [bool]$s[0].running } catch { $running = $false }
+            $pathOk = ([string]$s[0].path -match [regex]::Escape($ReleasePath))
+            $pidOk = $false
+            try { $pidOk = ([int]$s[0].pid -gt 0) } catch { $pidOk = $false }
+            $cmdlineOk = ([string]$s[0].cmdline -match [regex]::Escape($ReleasePath))
+            if (-not $running -or -not $pathOk -or -not $pidOk -or -not $cmdlineOk) {
+                $bad += "$name(not running/path/pid/cmdline bound to $ReleasePath)"
             }
         }
         if ($bad.Count -gt 0) {
@@ -147,13 +146,28 @@ function Confirm-ServiceBoundToRelease {
 
     $bad = @()
     foreach ($name in $Names) {
-        $path = Get-ServiceConfigBinPath -Name $name
-        if (-not $path -or $path -notmatch [regex]::Escape($ReleasePath)) {
+        $svc = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction SilentlyContinue
+        if ($null -eq $svc) {
+            $bad += "$name(service missing)"
+            continue
+        }
+        $svcPid = 0
+        try { $svcPid = [int]$svc.ProcessId } catch { $svcPid = 0 }
+        if ([string]$svc.PathName -notmatch [regex]::Escape($ReleasePath)) {
             $bad += "$name(payload path does not reference $ReleasePath)"
         }
-        $svc = Get-Service -Name $name -ErrorAction SilentlyContinue
-        if ($null -eq $svc -or $svc.Status -ne "Running") {
-            $bad += "$name(service not Running)"
+        if ([string]$svc.State -ne "Running" -or $svcPid -le 0) {
+            $bad += "$name(service not Running or no live PID)"
+            continue
+        }
+        # Prove the LIVE process: the SCM PID must exist and its command line
+        # must reference the release we just promoted/rolled back to.
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$svcPid" -ErrorAction SilentlyContinue
+        if ($null -eq $proc) {
+            $bad += "$name(live process missing for PID $svcPid)"
+        }
+        elseif ([string]$proc.CommandLine -notmatch [regex]::Escape($ReleasePath)) {
+            $bad += "$name(live process command line does not reference $ReleasePath)"
         }
     }
     if ($bad.Count -gt 0) {
@@ -202,6 +216,12 @@ if (-not (Test-Path -LiteralPath $AetherHome -PathType Container)) {
     throw "AETHER_HOME not found: $AetherHome"
 }
 New-Item -ItemType Directory -Force -Path (Join-Path $AetherHome "services") | Out-Null
+
+# A mutating promotion always restarts services and runs the running-path and
+# health gates. Refuse to run without -Start BEFORE any SCM mutation.
+if (-not $Start) {
+    throw "Promotion mutates Windows service configuration and therefore requires -Start (restart + running-path + health gates are mandatory)."
+}
 
 # ---- Resolve exact target SHA (source authority) ----------------------------
 $fetchExit = Invoke-Git -GitArgs @("-C", $RepoPath, "fetch", "origin", "main")
@@ -261,7 +281,7 @@ if (-not $SkipAclCheck) {
 }
 
 $receipt = [ordered]@{
-    schema = "aether.release-promotion.v3"
+    schema = "aether.release-promotion.v4"
     event = "aether.release.promoted"
     promoted_at = (Get-Date).ToUniversalTime().ToString("o")
     target_sha = $originMain
@@ -276,6 +296,7 @@ $receipt = [ordered]@{
     reconciled = @()
     running_paths_proven = $false
     service_mutation_started = $false
+    restart_proven = $false
     rollback_triggered = $false
     rollback_reason = $null
     rollback_running_path_proven = $false
@@ -329,6 +350,29 @@ function Invoke-Installer {
     }
 }
 
+function Restart-GatewayServices {
+    # Restart failures are NEVER swallowed. Either the restart hook fails the
+    # run or the real Get-Service/Restart-Service errors propagate.
+    param([Parameter(Mandatory = $true)][string]$ReleasePath)
+
+    $hook = $env:AETHER_PROMO_RESTART_CMD
+    if ($hook -and (Test-Path -LiteralPath $hook -PathType Leaf)) {
+        & $hook -ReleasePath $ReleasePath
+        if ($LASTEXITCODE -ne 0) {
+            throw "service restart hook failed (exit $LASTEXITCODE)"
+        }
+        return
+    }
+    foreach ($name in @("AetherGateway", "AetherWatchdog")) {
+        $svc = Get-Service -Name $name -ErrorAction Stop
+        if ($null -eq $svc) {
+            throw "Service '$name' missing; cannot restart for promotion."
+        }
+        Restart-Service -Name $name -Force -ErrorAction Stop | Out-Null
+    }
+    Start-Sleep -Seconds 2
+}
+
 function Test-Health {
     $hook = $env:AETHER_PROMO_HEALTH_CMD
     if ($hook -and (Test-Path -LiteralPath $hook -PathType Leaf)) {
@@ -350,11 +394,17 @@ function Test-Health {
 }
 
 function Test-RollbackManifest {
-    $metaPath = Join-Path $rollbackPath "AETHER_RELEASE.json"
-    if (-not (Test-Path -LiteralPath $metaPath -PathType Leaf)) { return $false }
+    # Live service provenance after reconcile: the service-manifest written by
+    # the installer must be rebound to the rollback release. The static
+    # AETHER_RELEASE.json of the rollback folder is NOT sufficient evidence.
+    $manifestPath = Join-Path $AetherHome "services\service-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $false }
     try {
-        $meta = Get-Content -LiteralPath $metaPath -Raw | ConvertFrom-Json
-        return ([string]$meta.target_sha -eq $RollbackRelease)
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        return (
+            ([string]$manifest.release_path -eq $rollbackPath) -and
+            ([string]$manifest.target_sha -eq $RollbackRelease)
+        )
     }
     catch {
         return $false
@@ -376,20 +426,8 @@ function Invoke-UniversalRollback {
     }
 
     Invoke-Installer -ReleasePath $rollbackPath -TargetSha $RollbackRelease -Phase "rollback"
-    foreach ($name in @("AetherGateway", "AetherWatchdog")) {
-        try {
-            $svc = Get-Service -Name $name -ErrorAction Stop
-            if ($null -ne $svc) {
-                Restart-Service -Name $name -Force -ErrorAction Stop | Out-Null
-            }
-        }
-        catch {
-            # Service absent on this host; nothing to restart. On Linux pwsh a
-            # missing service raises a terminating error from Get-Service that
-            # -ErrorAction SilentlyContinue cannot suppress.
-        }
-    }
-    Start-Sleep -Seconds 2
+    Restart-GatewayServices -ReleasePath $rollbackPath
+    $receipt.restart_proven = $true
 
     $receipt.rollback_running_path_proven = (Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $rollbackPath)
     $ok = Test-Health
@@ -446,34 +484,20 @@ try {
     Invoke-Installer -ReleasePath $targetRelease -TargetSha $originMain -Phase "promote"
     $receipt.reconciled = @("AetherGateway", "AetherWatchdog")
 
-    # --- Restart in governed order, then prove running paths bind new release. ---
-    if ($Start) {
-        foreach ($name in @("AetherGateway", "AetherWatchdog")) {
-            try {
-                $svc = Get-Service -Name $name -ErrorAction Stop
-                if ($null -ne $svc) {
-                    Restart-Service -Name $name -Force -ErrorAction Stop | Out-Null
-                }
-            }
-            catch {
-                # Service absent on this host; nothing to restart. On Linux pwsh a
-                # missing service raises a terminating error from Get-Service that
-                # -ErrorAction SilentlyContinue cannot suppress.
-            }
-        }
-        Start-Sleep -Seconds 2
+    # --- Restart in governed order, then prove live processes bind the release. ---
+    Restart-GatewayServices -ReleasePath $targetRelease
+    $receipt.restart_proven = $true
 
-        Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $targetRelease | Out-Null
-        $receipt.running_paths_proven = $true
+    Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $targetRelease | Out-Null
+    $receipt.running_paths_proven = $true
 
-        # Health gate against the exact target release.
-        $healthy = Test-Health
-        if (-not $healthy) {
-            # Fail-closed universal rollback: safe installer against rollback
-            # release, restart, running-path proof, health, DACL, manifest.
-            Invoke-UniversalRollback -Reason "health_failure_after_promote" | Out-Null
-            throw "Gateway health failed after promotion; fail-closed rollback proven=$($receipt.rollback_proven)"
-        }
+    # Health gate against the exact target release.
+    $healthy = Test-Health
+    if (-not $healthy) {
+        # Fail-closed universal rollback: safe installer against rollback
+        # release, restart, live running-path proof, health, DACL, manifest.
+        Invoke-UniversalRollback -Reason "health_failure_after_promote" | Out-Null
+        throw "Gateway health failed after promotion; fail-closed rollback proven=$($receipt.rollback_proven)"
     }
 
     # Re-assert the protected AETHER_HOME DACL AFTER reconciliation.

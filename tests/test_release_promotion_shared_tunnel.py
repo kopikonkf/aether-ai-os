@@ -168,6 +168,14 @@ def test_promote_release_asset_present_and_binds_exact_sha():
     assert "rollback_release" in text
     assert "fail-closed rollback" in text
     assert "Confirm-ServiceBoundToRelease" in text
+    # A mutating promotion requires -Start and never swallows restart errors.
+    assert "requires -Start" in text
+    assert "Restart-Service -Name $name -Force -ErrorAction Stop" in text
+    # Running-path proof correlates the live SCM PID with the process command line.
+    assert "Win32_Process" in text
+    # rollback_manifest_proven reads the LIVE service-manifest, not the static
+    # rollback AETHER_RELEASE.json.
+    assert "service-manifest.json" in text
     # Promotion is a service-path reconcile only; it must not run AETHER_HOME
     # migration/cutover or snapshot tooling.
     assert "aether_home_snapshot.py" not in text
