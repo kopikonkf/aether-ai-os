@@ -18,6 +18,7 @@ from aether.contracts import (
     BrowserSenseSession,
     BrowserSenseSessionState,
     BrowserSenseTransport,
+    VisionFrameReceipt,
     browser_sense_session_payload,
     require_browser_sense_action_transition,
     require_browser_sense_v1_runtime_profile,
@@ -129,6 +130,45 @@ def test_bounded_consent_requires_fixed_interval_and_expiry() -> None:
         assert "15-second" in str(exc)
     else:
         raise AssertionError("bounded consent must enforce the frozen interval")
+
+
+def test_vision_receipt_requires_ephemeral_handle_and_proven_deletion() -> None:
+    receipt = VisionFrameReceipt(
+        frame_id="vision-frame.1",
+        session_id="sense-session.1",
+        consent_id="vision-consent.1",
+        source="camera",
+        sequence_number=1,
+        content_hash="a" * 64,
+        byte_count=64,
+        content_type="image/png",
+        width=2,
+        height=3,
+        captured_at="2026-08-08T00:00:00Z",
+        accepted_at="2026-08-08T00:00:00Z",
+        ephemeral_handle="vision-frame.1",
+        prompt_hash="b" * 64,
+        deletion_outcome="deleted",
+        deleted_at="2026-08-08T00:00:01Z",
+        deletion_reason="vision-turn-terminal",
+        turn_id="turn.1",
+        correlation_id="corr.1",
+        outcome="completed",
+    )
+    assert receipt.source is BrowserSenseConsentSource.CAMERA
+    assert not hasattr(receipt, "storage_reference")
+
+    try:
+        VisionFrameReceipt(
+            **{
+                **receipt.__dict__,
+                "ephemeral_handle": "frames/retained.png",
+            }
+        )
+    except ValueError as exc:
+        assert "storage path" in str(exc)
+    else:
+        raise AssertionError("vision evidence must not retain a raw-media path")
 
 
 def test_interruption_receipt_requires_new_generation_and_truthful_cancel() -> None:

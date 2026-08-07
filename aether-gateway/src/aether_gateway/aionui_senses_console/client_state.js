@@ -232,7 +232,9 @@ const EPOCH_BOUND_EVENTS = new Set([
   'CONSENT_PREVIEW_STARTED',
   'CONSENT_ONE_SHOT_GRANTED',
   'CONSENT_BOUNDED_GRANTED',
+  'CONSENT_FRAME_RECEIPTED',
   'CONSENT_REVOKED',
+  'CONSENT_LOCAL_STOPPED',
   'CAPABILITY_RECEIPT',
 ]);
 
@@ -240,7 +242,11 @@ function emptyConsent() {
   return {
     mode: ConsentMode.OFF,
     consentId: null,
+    receiptId: null,
     expiresAt: null,
+    captureIntervalSeconds: null,
+    sequenceNumber: 0,
+    lastCaptureAt: null,
   };
 }
 
@@ -376,9 +382,20 @@ function updateConsent(state, event, mode) {
     if (!String(event.consentId || '').trim()) {
       throw new Error(`${mode} consent requires a consent ID`);
     }
+    if (!String(event.receiptId || '').trim()) {
+      throw new Error(`${mode} consent requires an authoritative receipt`);
+    }
+    if (!String(event.expiresAt || '').trim()) {
+      throw new Error(`${mode} consent requires an expiry`);
+    }
   }
-  if (mode === ConsentMode.BOUNDED && !String(event.expiresAt || '').trim()) {
-    throw new Error('bounded consent requires an expiry');
+  if (mode === ConsentMode.BOUNDED && event.captureIntervalSeconds !== 15) {
+    throw new Error('bounded consent requires the frozen 15-second interval');
+  }
+  if (mode === ConsentMode.OFF && event.type === 'CONSENT_REVOKED') {
+    if (!String(event.receiptId || '').trim()) {
+      throw new Error('server consent revocation requires an authoritative receipt');
+    }
   }
   return {
     ...state,
@@ -387,7 +404,11 @@ function updateConsent(state, event, mode) {
       [event.source]: mode === ConsentMode.OFF ? emptyConsent() : {
         mode,
         consentId: event.consentId || null,
+        receiptId: event.receiptId || null,
         expiresAt: event.expiresAt || null,
+        captureIntervalSeconds: event.captureIntervalSeconds || null,
+        sequenceNumber: 0,
+        lastCaptureAt: null,
       },
     },
     lastEvent: event.type,
@@ -735,7 +756,43 @@ export function reduceClientState(state, event) {
       return updateConsent(state, event, ConsentMode.ONE_SHOT);
     case 'CONSENT_BOUNDED_GRANTED':
       return updateConsent(state, event, ConsentMode.BOUNDED);
+    case 'CONSENT_FRAME_RECEIPTED': {
+      requireActiveSession(state, event.type);
+      if (!['camera', 'screen'].includes(event.source)) {
+        throw new Error('consent source must be camera or screen');
+      }
+      const consent = state.consent[event.source];
+      if (
+        !consent.consentId
+        || consent.consentId !== event.consentId
+        || !String(event.receiptId || '').trim()
+      ) {
+        throw new Error('vision frame receipt does not match active consent');
+      }
+      if (!Number.isInteger(event.sequenceNumber) || event.sequenceNumber <= consent.sequenceNumber) {
+        throw new Error('vision frame receipt sequence is not monotonic');
+      }
+      if (consent.mode === ConsentMode.ONE_SHOT) {
+        return updateConsent(state, {
+          type: 'CONSENT_LOCAL_STOPPED', source: event.source,
+        }, ConsentMode.OFF);
+      }
+      return {
+        ...state,
+        consent: {
+          ...state.consent,
+          [event.source]: {
+            ...consent,
+            sequenceNumber: event.sequenceNumber,
+            lastCaptureAt: event.capturedAt || null,
+          },
+        },
+        lastEvent: event.type,
+      };
+    }
     case 'CONSENT_REVOKED':
+      return updateConsent(state, event, ConsentMode.OFF);
+    case 'CONSENT_LOCAL_STOPPED':
       return updateConsent(state, event, ConsentMode.OFF);
     case 'EXTERNAL_SPEECH_PRIVACY_SET':
       if (!Object.values(ExternalSpeechPrivacy).includes(event.privacy)) {

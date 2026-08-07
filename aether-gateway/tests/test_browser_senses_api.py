@@ -35,12 +35,19 @@ def test_browser_senses_console_and_session_api(tmp_path, monkeypatch):
         turn_module = client.get("/senses/turn_generation.js")
         assert turn_module.status_code == 200
         assert "createTurnGenerationCoordinator" in turn_module.text
+        vision_module = client.get("/senses/vision_capture.js")
+        assert vision_module.status_code == 200
+        assert "createVisionCaptureCoordinator" in vision_module.text
         assert client.get("/senses/client_state.js").status_code == 200
         assert client.get("/senses/styles.css").status_code == 200
         status = client.get("/api/browser-senses/status").json()
         assert status["policy_id"] == "aether.browser-senses.v1"
         assert status["bootstrap"]["policy_id"] == "aether.browser-senses.bootstrap.v1"
         assert status["bootstrap"]["secrets_exposed"] is False
+        assert status["vision"]["consent_lease_seconds"] == 900
+        assert status["vision"]["capture_interval_seconds"] == 15
+        assert status["vision"]["orphan_maximum_age_seconds"] == 300
+        assert status["vision"]["continuous_video_transmission"] is False
 
         denied_preflight = client.options(
             "/api/browser-senses/bootstrap/requests",

@@ -179,7 +179,7 @@ class BrowserSenseStore:
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO browser_vision_frames(frame_id,session_id,payload_json,observed_at) VALUES(?,?,?,?)",
-                (receipt.frame_id, receipt.session_id, self._json(asdict(receipt)), receipt.observed_at),
+                (receipt.frame_id, receipt.session_id, self._json(asdict(receipt)), receipt.accepted_at),
             )
         return receipt
 

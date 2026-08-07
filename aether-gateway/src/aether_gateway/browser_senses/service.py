@@ -23,6 +23,7 @@ from aether.browser_senses import BrowserSenseStore
 from aether.contracts import (
     SENSES_V1_CONTRACT_VERSION,
     BrowserSenseCapability,
+    BrowserSenseConsentSource,
     BrowserSenseInterruptionReason,
     BrowserSenseInterruptionReceipt,
     BrowserSenseLateResultDisposition,
@@ -45,6 +46,16 @@ from aether.utils.time import utc_now
 from aether_gateway.adapters import DirectTextSenseAdapter
 
 from .turns import BrowserSenseTurnLedger, TurnClaim, TurnClaimConflict
+from .vision import (
+    BOUNDED_CAPTURE_INTERVAL_SECONDS,
+    BOUNDED_CONSENT_LEASE_SECONDS,
+    ORPHAN_FRAME_MAX_AGE_SECONDS,
+    VisionConsentError,
+    VisionDeletionError,
+    VisionFrameValidationError,
+    VisionLifecycle,
+    validate_image,
+)
 
 
 class BrowserSenseAuthError(PermissionError):
@@ -185,6 +196,24 @@ class BrowserSenseService:
         self.livekit_issuer = livekit_issuer or LiveKitTokenIssuer()
         self.maximum_frame_bytes = maximum_frame_bytes
         self.default_ttl_seconds = default_ttl_seconds
+        self.vision = VisionLifecycle(
+            root / "vision-lifecycle.sqlite3",
+            self.frames_root,
+            maximum_frame_bytes=maximum_frame_bytes,
+        )
+        self.startup_orphan_frames_swept = self.vision.sweep_orphans(
+            maximum_age_seconds=ORPHAN_FRAME_MAX_AGE_SECONDS - 5,
+        )
+        if self.startup_orphan_frames_swept:
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_VISION_FRAME_SWEPT,
+                actor="aether.browser-senses",
+                payload={
+                    "swept_count": self.startup_orphan_frames_swept,
+                    "maximum_age_seconds": ORPHAN_FRAME_MAX_AGE_SECONDS,
+                },
+                severity="warning",
+            )
 
     @classmethod
     def _safe_identity(cls, value: str, fallback: str) -> str:
@@ -287,7 +316,74 @@ class BrowserSenseService:
             metadata={"close_reason": reason},
         )
         self.event_bus.emit(EventType.BROWSER_SENSE_SESSION_CLOSED, actor="aether.browser-senses", payload={"session_id": closed.session_id, "reason": reason})
+        for consent in self.vision.revoke_session(session.session_id, reason=reason):
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_VISION_CONSENT_REVOKED,
+                actor="aether.browser-senses",
+                payload=consent,
+            )
         return closed
+
+    def grant_vision_consent(
+        self,
+        token: str,
+        *,
+        device_id: str,
+        source: str,
+        mode: str,
+    ) -> dict[str, Any]:
+        session = self.authenticate(token)
+        consent = self.vision.grant_consent(
+            session_id=session.session_id,
+            device_id=device_id,
+            source=source,
+            mode=mode,
+            capabilities=(item.value for item in session.capabilities),
+        )
+        self.event_bus.emit(
+            EventType.BROWSER_SENSE_VISION_CONSENT_GRANTED,
+            actor="aether.browser-senses",
+            payload=consent,
+        )
+        return consent
+
+    def revoke_vision_consent(
+        self,
+        token: str,
+        *,
+        device_id: str,
+        consent_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        session = self.authenticate(token)
+        consent = self.vision.revoke_consent(
+            session_id=session.session_id,
+            device_id=device_id,
+            consent_id=consent_id,
+            reason=reason,
+        )
+        self.event_bus.emit(
+            EventType.BROWSER_SENSE_VISION_CONSENT_REVOKED,
+            actor="aether.browser-senses",
+            payload=consent,
+        )
+        return consent
+
+    def sweep_orphan_frames(self) -> int:
+        swept = self.vision.sweep_orphans(
+            maximum_age_seconds=ORPHAN_FRAME_MAX_AGE_SECONDS - 5,
+        )
+        if swept:
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_VISION_FRAME_SWEPT,
+                actor="aether.browser-senses",
+                payload={
+                    "swept_count": swept,
+                    "maximum_age_seconds": ORPHAN_FRAME_MAX_AGE_SECONDS,
+                },
+                severity="warning",
+            )
+        return swept
 
     def record_track(
         self,
@@ -614,35 +710,60 @@ class BrowserSenseService:
         self,
         token: str,
         *,
+        device_id: str,
+        consent_id: str,
+        source: str,
+        sequence_number: int,
+        captured_at: str,
         data_base64: str,
         content_type: str,
         prompt: str,
-        width: int | None = None,
-        height: int | None = None,
+        width: int,
+        height: int,
         turn_id: str,
         correlation_id: str,
         generation: int = 0,
         retry_of_turn_id: str | None = None,
     ) -> dict[str, Any]:
         session = self.authenticate(token)
-        if BrowserSenseCapability.CAMERA not in session.capabilities:
-            raise BrowserSenseAuthError("camera capability was not granted")
+        required_capability = {
+            "camera": BrowserSenseCapability.CAMERA,
+            "screen": BrowserSenseCapability.SCREEN_SHARE,
+        }.get(source)
+        if required_capability is None:
+            raise VisionConsentError("vision source must be camera or screen")
+        if required_capability not in session.capabilities:
+            raise BrowserSenseAuthError(
+                f"{required_capability.value} capability was not granted"
+            )
+        maximum_encoded_bytes = ((self.maximum_frame_bytes + 2) // 3) * 4
+        if len(data_base64) > maximum_encoded_bytes:
+            raise ValueError(
+                f"encoded vision frame exceeds the {self.maximum_frame_bytes}-byte policy"
+            )
         try:
             raw = base64.b64decode(data_base64, validate=True)
         except Exception as exc:
             raise ValueError("invalid base64 vision frame") from exc
-        if not raw or len(raw) > self.maximum_frame_bytes:
-            raise ValueError(f"vision frame must be 1..{self.maximum_frame_bytes} bytes")
-        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-            raise ValueError("unsupported vision frame content type")
+        actual_width, actual_height = validate_image(
+            raw,
+            content_type=content_type,
+            maximum_frame_bytes=self.maximum_frame_bytes,
+            declared_width=width,
+            declared_height=height,
+        )
         digest = hashlib.sha256(raw).hexdigest()
         normalized_prompt = prompt.strip() or "Describe only what is materially visible in this frame."
         vision_input_hash = hashlib.sha256(json.dumps(
             {
+                "consent_id": consent_id,
+                "source": source,
+                "sequence_number": sequence_number,
+                "captured_at": captured_at,
                 "content_hash": digest,
                 "content_type": content_type,
-                "width": width,
-                "height": height,
+                "width": actual_width,
+                "height": actual_height,
                 "prompt_hash": hashlib.sha256(normalized_prompt.encode("utf-8")).hexdigest(),
             },
             sort_keys=True,
@@ -658,59 +779,135 @@ class BrowserSenseService:
         )
         if not claim.first_claim:
             return {"replayed": True, "turn_status": claim.status}
-        suffix = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}[content_type]
-        frame_id = new_id("vision-frame")
-        session_dir = self.frames_root / session.session_id
-        session_dir.mkdir(parents=True, exist_ok=True)
-        path = session_dir / f"{frame_id}{suffix}"
-        path.write_bytes(raw)
-        receipt = VisionFrameReceipt(
-            frame_id=frame_id, session_id=session.session_id, content_hash=digest,
-            byte_count=len(raw), content_type=content_type, width=width, height=height,
-            observed_at=utc_now(), storage_reference=str(path.relative_to(self.root)),
-            prompt=normalized_prompt,
-            metadata={"transport": BrowserSenseTransport.HTTP_KEYFRAME.value},
+        try:
+            staged = self.vision.accept_frame(
+                session_id=session.session_id,
+                device_id=device_id,
+                consent_id=consent_id,
+                source=source,
+                sequence_number=sequence_number,
+                captured_at=captured_at,
+                content_type=content_type,
+                raw=raw,
+                declared_width=actual_width,
+                declared_height=actual_height,
+                prompt=normalized_prompt,
+                turn_id=turn_id,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            try:
+                self.turn_ledger.fail(
+                    session_id=session.session_id,
+                    turn_id=turn_id,
+                    correlation_id=correlation_id,
+                    generation=generation,
+                    failure_code=type(exc).__name__,
+                )
+            except TurnClaimConflict:
+                pass
+            raise
+        frame_id = staged["frame_id"]
+        self.event_bus.emit(
+            EventType.BROWSER_SENSE_VISION_FRAME_ACCEPTED,
+            actor="aether.browser-senses",
+            payload={
+                key: value
+                for key, value in staged.items()
+                if key != "_working_path"
+            },
+            correlation_id=correlation_id,
         )
-        self.store.record_frame(receipt)
-        self.event_bus.emit(EventType.BROWSER_SENSE_VISION_FRAME_RECORDED, actor="aether.browser-senses", payload={
-            "frame_id": frame_id, "session_id": session.session_id, "content_hash": digest,
-            "byte_count": len(raw), "content_type": content_type,
-        })
         adapter = DirectTextSenseAdapter(adapter_id="sense.browser-vision")
         data_url = f"{content_type};base64,{data_base64}"
-        return await self._execute_claimed_turn(
-            session_id=session.session_id,
-            turn_id=turn_id,
-            correlation_id=correlation_id,
-            generation=generation,
-            adapter=adapter,
-            perception=Perception(
-                modality="image.frame",
-                content={"prompt": receipt.prompt, "image_data_url": f"data:{data_url}"},
-                source=f"browser:{session.session_id}",
-                metadata={
-                    "channel": "browser",
-                    "session_id": f"browser:{session.session_id}",
-                    "response_modality": "text",
-                    "capability": "vision",
-                    "browser_sense_session_id": session.session_id,
-                    "vision_frame_id": frame_id,
-                    "media_content_hash": digest,
-                    "media_byte_count": len(raw),
-                    "media_content_type": content_type,
-                    "turn_id": turn_id,
-                    "turn_generation": generation,
-                },
+        result: dict[str, Any] | None = None
+        outcome = "failed"
+        provider_id: str | None = None
+        model_id: str | None = None
+        try:
+            result = await self._execute_claimed_turn(
+                session_id=session.session_id,
+                turn_id=turn_id,
                 correlation_id=correlation_id,
-            ),
-            input_modality="image.frame",
-            output_modality=None,
-            transcript_hash=None,
-            vision_frame_id=frame_id,
-            actor="aether.browser-senses",
-            metadata={"retry_of_turn_id": retry_of_turn_id},
-            extra_response={"frame": asdict(receipt)},
-        )
+                generation=generation,
+                adapter=adapter,
+                perception=Perception(
+                    modality="image.frame",
+                    content={"prompt": normalized_prompt, "image_data_url": f"data:{data_url}"},
+                    source=f"browser:{session.session_id}",
+                    metadata={
+                        "channel": "browser",
+                        "session_id": f"browser:{session.session_id}",
+                        "response_modality": "text",
+                        "capability": "vision",
+                        "browser_sense_session_id": session.session_id,
+                        "vision_frame_id": frame_id,
+                        "vision_consent_id": consent_id,
+                        "vision_source": source,
+                        "vision_sequence_number": sequence_number,
+                        "media_content_hash": digest,
+                        "media_byte_count": len(raw),
+                        "media_content_type": content_type,
+                        "turn_id": turn_id,
+                        "turn_generation": generation,
+                    },
+                    correlation_id=correlation_id,
+                ),
+                input_modality="image.frame",
+                output_modality=None,
+                transcript_hash=None,
+                vision_frame_id=frame_id,
+                actor="aether.browser-senses",
+                metadata={
+                    "retry_of_turn_id": retry_of_turn_id,
+                    "vision_consent_id": consent_id,
+                    "vision_source": source,
+                    "vision_sequence_number": sequence_number,
+                },
+            )
+            outcome = str(result["turn_status"]["state"])
+            provider_id = result["turn"].get("provider_id")
+            model_id = result["turn"].get("model_id")
+        finally:
+            raw = b""
+            data_base64 = ""
+            deleted = self.vision.delete_frame(frame_id, reason="vision-turn-terminal")
+            receipt = VisionFrameReceipt(
+                frame_id=deleted["frame_id"],
+                session_id=deleted["session_id"],
+                consent_id=deleted["consent_id"],
+                source=BrowserSenseConsentSource(deleted["source"]),
+                sequence_number=deleted["sequence_number"],
+                content_hash=deleted["content_hash"],
+                byte_count=deleted["byte_count"],
+                content_type=deleted["content_type"],
+                width=deleted["width"],
+                height=deleted["height"],
+                captured_at=deleted["captured_at"],
+                accepted_at=deleted["accepted_at"],
+                ephemeral_handle=deleted["ephemeral_handle"],
+                prompt_hash=deleted["prompt_hash"],
+                deletion_outcome=deleted["deletion_outcome"],
+                deleted_at=deleted["deleted_at"],
+                deletion_reason=deleted["deletion_reason"],
+                turn_id=deleted["turn_id"],
+                correlation_id=deleted["correlation_id"],
+                outcome=outcome,
+                provider_id=provider_id,
+                model_id=model_id,
+                metadata={"transport": BrowserSenseTransport.HTTP_KEYFRAME.value},
+            )
+            self.store.record_frame(receipt)
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_VISION_FRAME_DELETED,
+                actor="aether.browser-senses",
+                payload=asdict(receipt),
+                correlation_id=correlation_id,
+            )
+        if result is None:
+            raise RuntimeError("vision turn completed without a result")
+        result["frame"] = asdict(receipt)
+        return result
 
     def turn_status(self, token: str, turn_id: str) -> dict[str, Any]:
         session = self.authenticate(token)
@@ -849,6 +1046,14 @@ class BrowserSenseService:
             "required_runtime_profile": BrowserSenseRuntimeProfile.GOVERNED_PIPELINE.value,
             "livekit": self.livekit_issuer.status(),
             "maximum_frame_bytes": self.maximum_frame_bytes,
+            "vision": {
+                "consent_lease_seconds": BOUNDED_CONSENT_LEASE_SECONDS,
+                "capture_interval_seconds": BOUNDED_CAPTURE_INTERVAL_SECONDS,
+                "orphan_maximum_age_seconds": ORPHAN_FRAME_MAX_AGE_SECONDS,
+                "continuous_video_transmission": False,
+                "startup_orphan_frames_swept": self.startup_orphan_frames_swept,
+                **self.vision.counts(),
+            },
             "default_session_ttl_seconds": self.default_ttl_seconds,
             "store": self.store.status(),
             "turn_ledger": self.turn_ledger.counts(),
