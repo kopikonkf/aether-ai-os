@@ -253,9 +253,14 @@ function emptyConsent() {
 function emptyAction() {
   return {
     state: CapabilityActionState.NONE,
+    receiptId: null,
     actionId: null,
+    capabilityName: null,
     exactActionHash: null,
+    adapterManifestHash: null,
+    approvalRequestId: null,
     authoritativeReceiptId: null,
+    cancelSupported: false,
     progress: null,
     safeSummary: null,
     stale: false,
@@ -439,7 +444,7 @@ function reduceCapabilityReceipt(state, event) {
     }
   }
   const allowed = ACTION_TRANSITIONS.get(current.state);
-  if (!allowed?.has(target)) {
+  if (current.state !== target && !allowed?.has(target)) {
     throw new Error(`invalid capability action transition: ${current.state} -> ${target}`);
   }
   if (TERMINAL_ACTIONS.has(target) && !String(event.authoritativeReceiptId || '').trim()) {
@@ -454,9 +459,14 @@ function reduceCapabilityReceipt(state, event) {
     ...state,
     capabilityAction: {
       state: target,
+      receiptId: event.receiptId || null,
       actionId: event.actionId,
+      capabilityName: event.capabilityName || current.capabilityName,
       exactActionHash: event.exactActionHash,
+      adapterManifestHash: event.adapterManifestHash || current.adapterManifestHash,
+      approvalRequestId: event.approvalRequestId || null,
       authoritativeReceiptId: event.authoritativeReceiptId || null,
+      cancelSupported: event.cancelSupported === true,
       progress: event.progress ?? current.progress,
       safeSummary: event.safeSummary || current.safeSummary,
       stale: false,
