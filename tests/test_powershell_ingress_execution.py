@@ -26,6 +26,7 @@ Windows hosts.
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -54,6 +55,12 @@ def _host_is_windows_admin() -> bool:
 # The elevation gate can only be observed to fail from a non-elevated host; an
 # elevated shell legitimately passes it. On Linux the gate can never pass.
 _WINDOWS_ELEVATED = _host_is_windows_admin()
+
+
+def _strip_ansi(text: str) -> str:
+    # pwsh on Linux colorizes tokens (e.g. -Start) with ANSI escapes that split
+    # the plain-text substring; strip them before asserting on message text.
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def find_powershell() -> str | None:
@@ -988,7 +995,7 @@ def test_release_promotion_reuses_matching_existing_release(tmp_path: Path):
 def test_release_promotion_requires_start_fails_before_mutation(tmp_path: Path):
     result = _run_promotion(tmp_path, mode="ok", with_start=False)
     assert result.returncode != 0
-    combined = (result.stderr or "") + (result.stdout or "")
+    combined = _strip_ansi((result.stderr or "") + (result.stdout or ""))
     assert "requires -Start" in combined
     # No release was published and no receipt was written (failed before mutation).
     assert not (result._releases / result._sha).exists()  # type: ignore[attr-defined]
