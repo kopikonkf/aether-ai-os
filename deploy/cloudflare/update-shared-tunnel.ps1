@@ -268,6 +268,11 @@ try {
     if ($Start) {
         $beforePids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
         $receipt.connector_count_before = $beforePids.Count
+        $receipt.connector_mutation_started = $true
+        
+        # Stop ALL cloudflared processes (direct PID + any SCM) BEFORE starting SCM connector
+        Stop-AllCloudflaredProcesses
+        
         $connectorService = Restart-ScmConnector
         Assert-SingleConnector
         $metricsOk = Test-ConnectorReadiness
