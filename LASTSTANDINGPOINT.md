@@ -74,11 +74,26 @@ Founder approval / release evidence
   boundaries, secret-class suppression, one-attempt quota circuit breaking,
   browser-speech/text fallback, no automatic billing upgrade, and
   `pending_founder_audition` status.
+- Implementation slice 4 is source-present: the Senses shell now derives
+  authentication/session, transport mode, turn, camera/screen consent,
+  capability-action, and external-speech privacy presentation from one
+  deterministic client reducer. Invalid transitions fail closed, stale async
+  events are bound to a session epoch, and the shell no longer uses generic
+  connected/thinking/working presentation booleans.
+- The six axes are visible independently. `Private text-only` persists across
+  turn boundaries and suppresses browser/external speech without disabling
+  Gateway text cognition. External-provider consent cannot become granted
+  without an authoritative consent receipt, and a capability cannot become
+  `SUCCEEDED` without an authoritative execution receipt.
+- Camera enablement in the shell is now local preview only and no longer
+  publishes continuous camera video to LiveKit. This safety correction does
+  not claim bounded-vision conformance: server-side consent leases, keyframe
+  validation, raw-frame deletion, and crash sweeping remain pending.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-3 are source-present. The Gemini adapter is not yet
+  merely because slices 1-4 are source-present. The Gemini adapter is not yet
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
   and AionUi/Telegram presentation, browser/PWA execution, LiveKit grant
   revocation, credentialed provider execution, and Founder host evidence still
@@ -86,9 +101,10 @@ Founder approval / release evidence
 
 ## Next Senses implementation slice
 
-Implement one client state reducer for authentication, transport mode, turn,
-consent, capability action, and external-speech privacy. Remove the generic
-connected/thinking/working booleans without activating a new capability adapter.
+Implement cancellable turn generations, stop LiveKit/browser/provider audio,
+discard late audio/results, and reconcile network-ambiguous turns by stable
+turn/correlation ID without automatically replaying cognition or external
+actions. Do not treat speech interruption as capability-action cancellation.
 
 ## Next operational step
 
