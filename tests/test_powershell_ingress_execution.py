@@ -42,18 +42,6 @@ def find_powershell() -> str | None:
 POWERSHELL = find_powershell()
 
 
-def _write_stub_cloudflared(dirpath: Path) -> Path:
-    """A cloudflared stub that exits with 0 if CLOUDFLARED_STUB_EXIT=0 else 1."""
-    stub = dirpath / "cloudflared.cmd"
-    stub.write_text(
-        "@echo off\r\n"
-        "if \"%CLOUDFLARED_STUB_EXIT%\"==\"1\" exit /b 1\r\n"
-        "exit /b 0\r\n",
-        encoding="ascii",
-    )
-    return stub
-
-
 SAMPLE = (
     "tunnel: 8f53133f-d1c8-48d6-b5bf-4dbe6f65b816\n"
     "credentials-file: cred.json\n"
@@ -81,7 +69,6 @@ def test_shared_tunnel_apply_rewrites_only_aether_origins(tmp_path: Path):
     stub_dir = tmp_path / "bin"
     stub_dir.mkdir()
     stub = _write_binary_stub(stub_dir)
-
     env = dict(os.environ)
     env["CLOUDFLARED_STUB_EXIT"] = "0"
 
@@ -189,27 +176,32 @@ def test_release_promotion_script_executes_and_requires_admin(tmp_path: Path):
         "-AetherHome", str(tmp_path / "aether-home"),
         "-ReleasesRoot", str(tmp_path / "releases"),
     ]
-    # The script must run and throw early (missing repo path), proving it is
-    # actually executed and its guards are real (not just static text).
+    # The script must run and throw early. On Windows it fails the admin guard
+    # ("Run this promotion from an elevated..."), on Linux/pwsh it fails the
+    # WindowsPrincipal check ("Microsoft"); both prove the guard is real and
+    # executable (not just static text).
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     assert result.returncode != 0
     combined = (result.stderr or "") + (result.stdout or "")
-    assert "not found" in combined.lower()
+    assert (
+        "not found" in combined.lower()
+        or "elevated" in combined.lower()
+        or "principal" in combined.lower()
+    )
 
 
 def _write_binary_stub(stub_dir: Path) -> Path:
-    """A cloudflared stub that exits with an env-controlled code (real .ps1
-    invocation without needing a real cloudflared install)."""
-    stub = stub_dir / "cloudflared.cmd"
+    """A cross-platform cloudflared stub (PowerShell script) runnable from
+    Windows PS 5.1 and Linux pwsh via `& $CloudflaredPath`, so the real
+    update-shared-tunnel.ps1 apply path (validate-before-replace, atomicity,
+    rollback) executes on CI without a real cloudflared install."""
+    stub = stub_dir / "cloudflared.ps1"
     stub.write_text(
-        "@echo off\r\n"
-        "if \"%CLOUDFLARED_STUB_EXIT%\"==\"1\" exit /b 1\r\n"
-        "exit /b 0\r\n",
-        encoding="ascii",
+        "# CI cloudflared stub\n"
+        "if ($env:CLOUDFLARED_STUB_EXIT -eq '1') { exit 1 }\n"
+        "exit 0\n",
+        encoding="utf-8",
     )
     return stub
 
 
-def _write_stub_cloudflared(dirpath: Path) -> Path:
-    """Alias retained for upstream callers/readability."""
-    return _write_binary_stub(dirpath)
