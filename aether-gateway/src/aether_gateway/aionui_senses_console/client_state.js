@@ -32,6 +32,17 @@ export const TurnState = values({
   AWAITING_APPROVAL: 'awaiting-approval',
 });
 
+export const TurnDeliveryState = values({
+  NONE: 'none',
+  IN_FLIGHT: 'in-flight',
+  RECONCILING: 'reconciling',
+  COMPLETED: 'completed',
+  INTERRUPTING: 'interrupting',
+  INTERRUPTED: 'interrupted',
+  FAILED: 'failed',
+  NOT_CONFIRMED: 'not-confirmed',
+});
+
 export const ConsentMode = values({
   OFF: 'off',
   PREVIEW_LOCAL: 'preview-local',
@@ -202,6 +213,8 @@ const EPOCH_BOUND_EVENTS = new Set([
   'LISTENING_STARTED',
   'MICROPHONE_MUTED',
   'TEXT_COMMIT_STARTED',
+  'TURN_GENERATION_STARTED',
+  'TURN_GENERATION_ADOPTED',
   'TURN_ACCEPTED',
   'TURN_REJECTED',
   'TEXT_RESPONSE_PRESENTED',
@@ -212,6 +225,10 @@ const EPOCH_BOUND_EVENTS = new Set([
   'INTERRUPT_REQUESTED',
   'INTERRUPT_ACKNOWLEDGED',
   'TURN_RESET',
+  'TURN_NETWORK_AMBIGUOUS',
+  'TURN_RESULT_RECEIVED',
+  'TURN_NOT_CONFIRMED',
+  'TURN_RECONCILED',
   'CONSENT_PREVIEW_STARTED',
   'CONSENT_ONE_SHOT_GRANTED',
   'CONSENT_BOUNDED_GRANTED',
@@ -239,6 +256,17 @@ function emptyAction() {
   };
 }
 
+function emptyTurnGeneration() {
+  return {
+    turnId: null,
+    correlationId: null,
+    generation: 0,
+    delivery: TurnDeliveryState.NONE,
+    retryOfTurnId: null,
+    authoritativeReceiptId: null,
+  };
+}
+
 export function createInitialClientState() {
   return {
     authSession: AuthSessionState.BOOTSTRAP_REQUIRED,
@@ -254,6 +282,7 @@ export function createInitialClientState() {
       consent: ExternalSpeechConsent.MISSING,
       consentReceiptId: null,
     },
+    activeTurn: emptyTurnGeneration(),
     epoch: 0,
     lastEvent: 'INITIALIZED',
   };
@@ -286,6 +315,36 @@ function transitionTurn(state, target, eventType) {
     throw new Error(`invalid turn transition: ${state.turn} -> ${target} (${eventType})`);
   }
   return { ...state, turn: target, lastEvent: eventType };
+}
+
+function requireTurnIdentity(event) {
+  const turnId = String(event.turnId || '').trim();
+  const correlationId = String(event.correlationId || '').trim();
+  if (!turnId || !correlationId) {
+    throw new Error('turn generation requires stable turn and correlation IDs');
+  }
+  if (!Number.isInteger(event.generation) || event.generation < 0) {
+    throw new Error('turn generation must be a non-negative integer');
+  }
+  return { turnId, correlationId };
+}
+
+function eventMatchesActiveTurn(state, event) {
+  if (event.turnId === undefined && event.correlationId === undefined) return true;
+  return Boolean(
+    state.activeTurn.turnId
+    && state.activeTurn.turnId === event.turnId
+    && state.activeTurn.correlationId === event.correlationId
+    && state.activeTurn.generation === event.generation
+  );
+}
+
+function updateActiveTurn(state, values, eventType) {
+  return {
+    ...state,
+    activeTurn: { ...state.activeTurn, ...values },
+    lastEvent: eventType,
+  };
 }
 
 function requireActiveSession(state, eventType) {
@@ -421,6 +480,7 @@ export function reduceClientState(state, event) {
         transportMode: TransportMode.OFFLINE,
         turn: TurnState.IDLE,
         consent: stopConsent(state),
+        activeTurn: emptyTurnGeneration(),
         epoch: state.epoch + 1,
       });
     case 'SESSION_ISSUED':
@@ -464,6 +524,7 @@ export function reduceClientState(state, event) {
         turn: TurnState.IDLE,
         consent: stopConsent(state),
         capabilityAction: staleAction(state.capabilityAction),
+        activeTurn: emptyTurnGeneration(),
         epoch: state.epoch + 1,
       });
     case 'AUTH_REVOKED': {
@@ -474,6 +535,7 @@ export function reduceClientState(state, event) {
         turn: TurnState.IDLE,
         consent: stopConsent(state),
         capabilityAction: staleAction(state.capabilityAction),
+        activeTurn: emptyTurnGeneration(),
         epoch: state.epoch + 1,
         lastEvent: event.type,
       };
@@ -486,29 +548,187 @@ export function reduceClientState(state, event) {
     case 'TEXT_COMMIT_STARTED':
       requireActiveSession(state, event.type);
       return transitionTurn(state, TurnState.COMMITTING, event.type);
-    case 'TURN_ACCEPTED':
+    case 'TURN_GENERATION_STARTED': {
+      requireActiveSession(state, event.type);
+      const identity = requireTurnIdentity(event);
+      if (![TurnState.IDLE, TurnState.LISTENING].includes(state.turn)) {
+        throw new Error('turn generation requires an idle or listening turn');
+      }
+      return {
+        ...transitionTurn(state, TurnState.COMMITTING, event.type),
+        activeTurn: {
+          ...identity,
+          generation: event.generation,
+          delivery: TurnDeliveryState.IN_FLIGHT,
+          retryOfTurnId: event.retryOfTurnId || null,
+          authoritativeReceiptId: null,
+        },
+      };
+    }
+    case 'TURN_GENERATION_ADOPTED': {
+      requireActiveSession(state, event.type);
+      const identity = requireTurnIdentity(event);
+      return {
+        ...state,
+        turn: TurnState.COMMITTING,
+        activeTurn: {
+          ...identity,
+          generation: event.generation,
+          delivery: TurnDeliveryState.IN_FLIGHT,
+          retryOfTurnId: event.retryOfTurnId || null,
+          authoritativeReceiptId: null,
+        },
+        lastEvent: event.type,
+      };
+    }
+    case 'TURN_ACCEPTED': {
+      if (!eventMatchesActiveTurn(state, event)) return state;
       return transitionTurn(state, TurnState.THINKING, event.type);
+    }
     case 'TURN_REJECTED':
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      return {
+        ...transitionTurn(state, TurnState.IDLE, event.type),
+        activeTurn: {
+          ...state.activeTurn,
+          delivery: state.activeTurn.turnId
+            ? TurnDeliveryState.FAILED
+            : TurnDeliveryState.NONE,
+        },
+      };
     case 'TEXT_RESPONSE_PRESENTED':
-      return transitionTurn(state, TurnState.IDLE, event.type);
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      return {
+        ...transitionTurn(state, TurnState.IDLE, event.type),
+        activeTurn: {
+          ...state.activeTurn,
+          delivery: state.activeTurn.turnId
+            ? TurnDeliveryState.COMPLETED
+            : TurnDeliveryState.NONE,
+        },
+      };
     case 'RESPONSE_AUDIO_STARTED':
+      if (!eventMatchesActiveTurn(state, event)) return state;
       return transitionTurn(state, TurnState.SPEAKING, event.type);
     case 'RESPONSE_AUDIO_FINISHED':
-      return transitionTurn(state, TurnState.IDLE, event.type);
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      return {
+        ...transitionTurn(state, TurnState.IDLE, event.type),
+        activeTurn: {
+          ...state.activeTurn,
+          delivery: state.activeTurn.turnId
+            ? TurnDeliveryState.COMPLETED
+            : TurnDeliveryState.NONE,
+        },
+      };
     case 'TURN_AWAITING_APPROVAL':
       return transitionTurn(state, TurnState.AWAITING_APPROVAL, event.type);
     case 'APPROVAL_HANDED_OFF':
       return transitionTurn(state, TurnState.IDLE, event.type);
-    case 'INTERRUPT_REQUESTED':
-      return transitionTurn(state, TurnState.INTERRUPTING, event.type);
-    case 'INTERRUPT_ACKNOWLEDGED':
-      return transitionTurn(
+    case 'INTERRUPT_REQUESTED': {
+      if (state.activeTurn.turnId) {
+        if (
+          state.activeTurn.turnId !== event.turnId
+          || state.activeTurn.correlationId !== event.correlationId
+          || state.activeTurn.generation !== event.previousGeneration
+          || event.nextGeneration !== event.previousGeneration + 1
+        ) return state;
+      }
+      return {
+        ...transitionTurn(state, TurnState.INTERRUPTING, event.type),
+        activeTurn: state.activeTurn.turnId ? {
+          ...state.activeTurn,
+          generation: event.nextGeneration,
+          delivery: TurnDeliveryState.INTERRUPTING,
+        } : state.activeTurn,
+      };
+    }
+    case 'INTERRUPT_ACKNOWLEDGED': {
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      if (state.activeTurn.turnId && !String(event.authoritativeReceiptId || '').trim()) {
+        throw new Error('interruption acknowledgement requires an authoritative receipt');
+      }
+      return {
+        ...transitionTurn(
+          state,
+          event.listening ? TurnState.LISTENING : TurnState.IDLE,
+          event.type,
+        ),
+        activeTurn: state.activeTurn.turnId ? {
+          ...state.activeTurn,
+          delivery: TurnDeliveryState.INTERRUPTED,
+          authoritativeReceiptId: event.authoritativeReceiptId,
+        } : state.activeTurn,
+      };
+    }
+    case 'TURN_RESET':
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      return { ...state, turn: TurnState.IDLE, lastEvent: event.type };
+    case 'TURN_NETWORK_AMBIGUOUS':
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      return updateActiveTurn(
         state,
-        event.listening ? TurnState.LISTENING : TurnState.IDLE,
+        { delivery: TurnDeliveryState.RECONCILING },
         event.type,
       );
-    case 'TURN_RESET':
-      return { ...state, turn: TurnState.IDLE, lastEvent: event.type };
+    case 'TURN_RESULT_RECEIVED':
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      if (!String(event.authoritativeReceiptId || '').trim()) {
+        throw new Error('turn completion requires an authoritative receipt');
+      }
+      return {
+        ...transitionTurn(state, TurnState.IDLE, event.type),
+        activeTurn: {
+          ...state.activeTurn,
+          delivery: TurnDeliveryState.COMPLETED,
+          authoritativeReceiptId: event.authoritativeReceiptId,
+        },
+      };
+    case 'TURN_NOT_CONFIRMED':
+      if (!eventMatchesActiveTurn(state, event)) return state;
+      return {
+        ...state,
+        turn: TurnState.IDLE,
+        activeTurn: {
+          ...state.activeTurn,
+          delivery: TurnDeliveryState.NOT_CONFIRMED,
+        },
+        lastEvent: event.type,
+      };
+    case 'TURN_RECONCILED': {
+      const identity = requireTurnIdentity(event);
+      if (
+        !state.activeTurn.turnId
+        || state.activeTurn.turnId !== identity.turnId
+        || state.activeTurn.correlationId !== identity.correlationId
+        || event.generation < state.activeTurn.generation
+      ) return state;
+      const deliveries = {
+        completed: TurnDeliveryState.COMPLETED,
+        interrupted: TurnDeliveryState.INTERRUPTED,
+        failed: TurnDeliveryState.FAILED,
+        accepted: TurnDeliveryState.RECONCILING,
+      };
+      const delivery = deliveries[event.status];
+      if (!delivery) throw new Error('turn reconciliation returned an unknown state');
+      if (
+        [TurnDeliveryState.COMPLETED, TurnDeliveryState.INTERRUPTED].includes(delivery)
+        && !String(event.authoritativeReceiptId || '').trim()
+      ) {
+        throw new Error('terminal reconciliation requires an authoritative receipt');
+      }
+      return {
+        ...state,
+        turn: delivery === TurnDeliveryState.RECONCILING ? state.turn : TurnState.IDLE,
+        activeTurn: {
+          ...state.activeTurn,
+          generation: event.generation,
+          delivery,
+          authoritativeReceiptId: event.authoritativeReceiptId || null,
+        },
+        lastEvent: event.type,
+      };
+    }
     case 'CONSENT_PREVIEW_STARTED':
       return updateConsent(state, event, ConsentMode.PREVIEW_LOCAL);
     case 'CONSENT_ONE_SHOT_GRANTED':
@@ -592,12 +812,23 @@ export function deriveClientPresentation(state) {
   } else if (state.externalSpeech.consent === ExternalSpeechConsent.REVOKED) {
     externalSpeechLabel = 'EXTERNAL CONSENT REVOKED';
   }
+  let turnLabel = label(state.turn);
+  if (state.activeTurn.delivery === TurnDeliveryState.RECONCILING) {
+    turnLabel = 'RECONCILING';
+  } else if (state.activeTurn.delivery === TurnDeliveryState.NOT_CONFIRMED) {
+    turnLabel = 'NOT CONFIRMED';
+  }
+  const unresolvedTurn = [
+    TurnDeliveryState.RECONCILING,
+    TurnDeliveryState.NOT_CONFIRMED,
+    TurnDeliveryState.INTERRUPTING,
+  ].includes(state.activeTurn.delivery);
   return {
     systemLabel: authLabels[state.authSession],
     systemClass: active ? 'online' : 'offline',
     authLabel: label(state.authSession),
     transportLabel: label(state.transportMode),
-    turnLabel: label(state.turn),
+    turnLabel,
     consentLabel: `CAMERA ${label(state.consent.camera.mode)} · SCREEN ${label(state.consent.screen.mode)}`,
     capabilityActionLabel: (
       `${label(state.capabilityAction.state)}${state.capabilityAction.stale ? ' · LAST KNOWN' : ''}`
@@ -610,7 +841,14 @@ export function deriveClientPresentation(state) {
     canSend: (
       active
       && state.transportMode !== TransportMode.STATUS_ONLY
-      && [TurnState.IDLE, TurnState.LISTENING].includes(state.turn)
+      && [
+        TurnState.IDLE,
+        TurnState.LISTENING,
+        TurnState.COMMITTING,
+        TurnState.THINKING,
+        TurnState.SPEAKING,
+      ].includes(state.turn)
+      && !unresolvedTurn
     ),
     canUseExternalSpeech: (
       !privateTextOnly
@@ -618,6 +856,15 @@ export function deriveClientPresentation(state) {
     ),
     canUseBrowserSpeech: !privateTextOnly && active,
     canUseSensors: active,
+    canStopTurn: (
+      active
+      && state.activeTurn.turnId !== null
+      && [
+        TurnDeliveryState.IN_FLIGHT,
+        TurnDeliveryState.RECONCILING,
+      ].includes(state.activeTurn.delivery)
+    ),
+    canRetryTurn: active && state.activeTurn.delivery === TurnDeliveryState.NOT_CONFIRMED,
   };
 }
 

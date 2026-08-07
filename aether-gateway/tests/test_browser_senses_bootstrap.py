@@ -306,7 +306,12 @@ def test_pairing_cookie_session_csrf_and_revocation(
         after_revoke = client.post(
             "/api/browser-senses/text",
             headers={**BROWSER_HEADERS, "X-Aether-CSRF": csrf},
-            json={"text": "This must not reach cognition"},
+            json={
+                "text": "This must not reach cognition",
+                "turn_id": "turn-after-revoke",
+                "correlation_id": "corr-after-revoke",
+                "generation": 0,
+            },
         )
         assert after_revoke.status_code == 401
 

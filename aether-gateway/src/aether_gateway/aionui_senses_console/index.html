@@ -67,6 +67,7 @@
           <button id="connectButton" class="primary">Connect senses</button>
           <button id="micButton" class="secondary" disabled>Mute microphone</button>
           <button id="fallbackTalk" class="secondary" disabled>Browser STT fallback</button>
+          <button id="stopAether" class="danger" disabled title="Stop the active generation (Escape)">Stop Aether</button>
           <button id="disconnectButton" class="danger" disabled>Disconnect</button>
         </div>
       </article>
@@ -77,7 +78,10 @@
       <div id="messages" class="messages" aria-live="polite"></div>
       <form id="chatForm" class="composer">
         <input id="chatInput" autocomplete="off" placeholder="Speak or type to Aether…" />
-        <button class="primary" type="submit">Send</button>
+        <span>
+          <button id="retryTurn" class="secondary" type="button" hidden>Retry as new turn</button>
+          <button class="primary" type="submit">Send</button>
+        </span>
       </form>
     </section>
 

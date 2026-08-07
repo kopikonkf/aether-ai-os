@@ -89,11 +89,35 @@ Founder approval / release evidence
   publishes continuous camera video to LiveKit. This safety correction does
   not claim bounded-vision conformance: server-side consent leases, keyframe
   validation, raw-frame deletion, and crash sweeping remain pending.
+- Implementation slice 5 is source-present: every browser and LiveKit voice
+  generation has a stable `turn_id`, `correlation_id`, and monotonic generation;
+  an append-only SQLite claim ledger prevents the same ID from authorizing
+  cognition twice; and explicit retries use a new turn ID linked by
+  `retry_of_turn_id`.
+- `Stop Aether`, Escape, user barge-in, competing typed input, disconnect, and
+  Private text-only invalidate the prior generation. Available browser speech,
+  recognition, remote LiveKit audio elements/tracks, AgentSession playout, and
+  provider synthesis are stopped through their owning surfaces. The worker
+  publishes bounded turn-state metadata only—never transcript or response text—
+  so the browser can bind Stop to the exact worker generation.
+- Browser and worker callbacks discard any result whose turn, correlation, or
+  generation no longer matches. Gateway cancels the active cognition task where
+  possible; if an upstream ignores cancellation, the late response is not
+  returned or played and only its hash is appended to a late-result-discarded
+  receipt. Interruption evidence monotonically reconciles browser-audio,
+  LiveKit-control, provider-cancel, and cognition-cancel observations without
+  rewriting prior evidence.
+- A network-ambiguous request is never submitted again automatically. The client
+  queries the session-scoped turn status by stable ID; proven terminal outcomes
+  are receipt-bound, while an unproven outcome is shown as `NOT CONFIRMED`.
+  Only an explicit Retry creates a fresh, linked turn.
+- Conversational interruption remains orthogonal to capability-action state;
+  Stop never implies action cancel, approval, or rejection.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-4 are source-present. The Gemini adapter is not yet
+  merely because slices 1-5 are source-present. The Gemini adapter is not yet
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
   and AionUi/Telegram presentation, browser/PWA execution, LiveKit grant
   revocation, credentialed provider execution, and Founder host evidence still
@@ -101,10 +125,11 @@ Founder approval / release evidence
 
 ## Next Senses implementation slice
 
-Implement cancellable turn generations, stop LiveKit/browser/provider audio,
-discard late audio/results, and reconcile network-ambiguous turns by stable
-turn/correlation ID without automatically replaying cognition or external
-actions. Do not treat speech interruption as capability-action cancellation.
+Implement server-authoritative camera/screen consent leases and bounded
+keyframe transmission, including content validation, raw-frame deletion,
+expiry/revocation enforcement, and crash sweeping. Keep local preview distinct
+from transmission and do not claim vision conformance until raw-media lifecycle
+proof is receipt-backed.
 
 ## Next operational step
 

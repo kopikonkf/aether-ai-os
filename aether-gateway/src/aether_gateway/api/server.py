@@ -97,6 +97,7 @@ from aether_gateway.browser_senses import (
     DeviceCredentialError,
     LiveKitTokenIssuer,
     SessionCredentialError,
+    TurnClaimConflict,
 )
 from aether_gateway.runtime_sdk import (
     CodingRuntimeDispatchAdapter, ExternalStreamingCodingRuntimeAdapter, LocalStructuredCodingRuntimeAdapter, RuntimeAdapterRegistry, RuntimeTelemetryStore,
@@ -522,7 +523,7 @@ async def browser_senses_response_boundary(request: Request, call_next):
     path = request.url.path
     if (
         path.startswith("/api/browser-senses/")
-        and path != "/api/browser-senses/worker/chat"
+        and not path.startswith("/api/browser-senses/worker/")
         and request.method in {"POST", "PUT", "PATCH", "DELETE"}
     ):
         origin = str(request.headers.get("origin") or "").strip().rstrip("/")
@@ -604,11 +605,23 @@ class BrowserSenseTrackRequest(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
-class BrowserSenseTextRequest(BaseModel):
+class BrowserSenseTurnIdentityRequest(BaseModel):
+    turn_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9._:-]+$")
+    correlation_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9._:-]+$")
+    generation: int = Field(default=0, ge=0, le=2_147_483_647)
+    retry_of_turn_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+
+
+class BrowserSenseTextRequest(BrowserSenseTurnIdentityRequest):
     text: str = Field(min_length=1, max_length=20000)
 
 
-class BrowserSenseVisionRequest(BaseModel):
+class BrowserSenseVisionRequest(BrowserSenseTurnIdentityRequest):
     data_base64: str = Field(min_length=1)
     content_type: str = "image/jpeg"
     prompt: str = Field(default="Describe materially relevant objects, people, text, and changes visible in this frame.", max_length=4000)
@@ -616,10 +629,28 @@ class BrowserSenseVisionRequest(BaseModel):
     height: int | None = Field(default=None, ge=1, le=8192)
 
 
-class BrowserSenseWorkerChatRequest(BaseModel):
+class BrowserSenseWorkerChatRequest(BrowserSenseTurnIdentityRequest):
     room_name: str = Field(min_length=1, max_length=200)
     participant_identity: str = Field(min_length=1, max_length=200)
     text: str = Field(min_length=1, max_length=20000)
+
+
+class BrowserSenseInterruptRequest(BaseModel):
+    correlation_id: str = Field(min_length=1, max_length=160, pattern=r"^[A-Za-z0-9._:-]+$")
+    previous_generation: int = Field(ge=0, le=2_147_483_647)
+    next_generation: int = Field(ge=1, le=2_147_483_647)
+    reason: str = Field(
+        pattern=r"^(user_barge_in|explicit_stop|competing_input|disconnect|suspend)$"
+    )
+    delivered_audio_ms: int | None = Field(default=None, ge=0)
+    livekit_control_sent: bool = False
+    browser_audio_stopped: bool = False
+
+
+class BrowserSenseWorkerInterruptRequest(BrowserSenseInterruptRequest):
+    room_name: str = Field(min_length=1, max_length=200)
+    provider_cancel_supported: bool
+    provider_cancelled: bool
 
 
 class DelegateRequest(BaseModel):
@@ -1150,6 +1181,13 @@ def _browser_bearer(authorization: str | None) -> str:
     return authorization[7:].strip()
 
 
+def _authenticate_sense_worker(authorization: str | None) -> None:
+    configured = str(os.environ.get("AETHER_SENSE_WORKER_TOKEN") or "")
+    supplied = _browser_bearer(authorization) if authorization else ""
+    if not configured or not hmac.compare_digest(configured, supplied):
+        raise HTTPException(status_code=401, detail="Invalid sense worker credential")
+
+
 def _require_senses_origin(request: Request) -> None:
     origin = str(request.headers.get("origin") or "").strip().rstrip("/")
     fetch_site = str(request.headers.get("sec-fetch-site") or "").strip().casefold()
@@ -1448,9 +1486,20 @@ async def browser_sense_text(
 ):
     token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
     try:
-        return await browser_sense_service.handle_text(token, req.text)
+        return await browser_sense_service.handle_text(
+            token,
+            req.text,
+            turn_id=req.turn_id,
+            correlation_id=req.correlation_id,
+            generation=req.generation,
+            retry_of_turn_id=req.retry_of_turn_id,
+        )
     except BrowserSenseAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except TurnClaimConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Browser cognition failed: {type(exc).__name__}: {exc}") from exc
 
@@ -1466,9 +1515,13 @@ async def browser_sense_vision(
         return await browser_sense_service.handle_vision(
             token, data_base64=req.data_base64, content_type=req.content_type,
             prompt=req.prompt, width=req.width, height=req.height,
+            turn_id=req.turn_id, correlation_id=req.correlation_id,
+            generation=req.generation, retry_of_turn_id=req.retry_of_turn_id,
         )
     except BrowserSenseAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except TurnClaimConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -1477,16 +1530,88 @@ async def browser_sense_vision(
 
 @app.post("/api/browser-senses/worker/chat")
 async def browser_sense_worker_chat(req: BrowserSenseWorkerChatRequest, authorization: str | None = Header(default=None)):
-    configured = str(os.environ.get("AETHER_SENSE_WORKER_TOKEN") or "")
-    supplied = _browser_bearer(authorization) if authorization else ""
-    if not configured or not hmac.compare_digest(configured, supplied):
-        raise HTTPException(status_code=401, detail="Invalid sense worker credential")
+    _authenticate_sense_worker(authorization)
     try:
         return await browser_sense_service.handle_worker_transcript(
-            room_name=req.room_name, participant_identity=req.participant_identity, text=req.text,
+            room_name=req.room_name,
+            participant_identity=req.participant_identity,
+            text=req.text,
+            turn_id=req.turn_id,
+            correlation_id=req.correlation_id,
+            generation=req.generation,
+            retry_of_turn_id=req.retry_of_turn_id,
         )
+    except TurnClaimConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Voice cognition failed: {type(exc).__name__}: {exc}") from exc
+
+
+@app.post("/api/browser-senses/turns/{turn_id}/status")
+def browser_sense_turn_status(
+    turn_id: str,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
+    try:
+        return browser_sense_service.turn_status(token, turn_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Browser sense turn was not found") from exc
+
+
+@app.post("/api/browser-senses/turns/{turn_id}/interrupt")
+async def interrupt_browser_sense_turn(
+    turn_id: str,
+    req: BrowserSenseInterruptRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
+    try:
+        return browser_sense_service.interrupt_turn(
+            token,
+            turn_id=turn_id,
+            correlation_id=req.correlation_id,
+            previous_generation=req.previous_generation,
+            next_generation=req.next_generation,
+            reason=req.reason,
+            delivered_audio_ms=req.delivered_audio_ms,
+            browser_audio_stopped=req.browser_audio_stopped,
+            livekit_control_sent=req.livekit_control_sent,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Browser sense turn was not found") from exc
+    except (TurnClaimConflict, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/browser-senses/worker/turns/{turn_id}/interrupt")
+async def interrupt_browser_sense_worker_turn(
+    turn_id: str,
+    req: BrowserSenseWorkerInterruptRequest,
+    authorization: str | None = Header(default=None),
+):
+    _authenticate_sense_worker(authorization)
+    try:
+        return browser_sense_service.interrupt_worker_turn(
+            room_name=req.room_name,
+            turn_id=turn_id,
+            correlation_id=req.correlation_id,
+            previous_generation=req.previous_generation,
+            next_generation=req.next_generation,
+            reason=req.reason,
+            delivered_audio_ms=req.delivered_audio_ms,
+            provider_cancel_supported=req.provider_cancel_supported,
+            provider_cancelled=req.provider_cancelled,
+            livekit_control_sent=req.livekit_control_sent,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Browser sense turn was not found") from exc
+    except (TurnClaimConflict, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.get("/senses", response_class=HTMLResponse, include_in_schema=False)
@@ -1497,6 +1622,22 @@ def senses_console():
 @app.get("/senses/app.js", include_in_schema=False)
 def senses_console_js():
     return FileResponse(AIONUI_SENSES_CONSOLE_DIR / "app.js", media_type="application/javascript")
+
+
+@app.get("/senses/client_state.js", include_in_schema=False)
+def senses_console_client_state_js():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "client_state.js",
+        media_type="application/javascript",
+    )
+
+
+@app.get("/senses/turn_generation.js", include_in_schema=False)
+def senses_console_turn_generation_js():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "turn_generation.js",
+        media_type="application/javascript",
+    )
 
 
 @app.get("/senses/styles.css", include_in_schema=False)

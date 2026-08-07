@@ -32,6 +32,10 @@ def test_browser_senses_console_and_session_api(tmp_path, monkeypatch):
         assert "browserToken" not in script.text
         assert "localStorage" not in script.text
         assert "sessionStorage" not in script.text
+        turn_module = client.get("/senses/turn_generation.js")
+        assert turn_module.status_code == 200
+        assert "createTurnGenerationCoordinator" in turn_module.text
+        assert client.get("/senses/client_state.js").status_code == 200
         assert client.get("/senses/styles.css").status_code == 200
         status = client.get("/api/browser-senses/status").json()
         assert status["policy_id"] == "aether.browser-senses.v1"

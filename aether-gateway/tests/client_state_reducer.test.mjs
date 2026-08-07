@@ -9,6 +9,7 @@ import {
   ExternalSpeechConsent,
   ExternalSpeechPrivacy,
   TransportMode,
+  TurnDeliveryState,
   TurnState,
   createInitialClientState,
   deriveClientPresentation,
@@ -353,6 +354,153 @@ test('late async events from a revoked session epoch are ignored', () => {
   assert.equal(afterLateReset, afterLateResult);
 });
 
+test('turn generations bind async results and expose network reconciliation without replay', () => {
+  let state = activeState(TransportMode.TEXT_ONLY);
+  const epoch = state.epoch;
+  state = reduceClientState(state, event('TURN_GENERATION_STARTED', {
+    epoch,
+    turnId: 'turn-1',
+    correlationId: 'corr-1',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('TURN_NETWORK_AMBIGUOUS', {
+    epoch,
+    turnId: 'turn-1',
+    correlationId: 'corr-1',
+    generation: 0,
+  }));
+
+  assert.equal(state.activeTurn.delivery, TurnDeliveryState.RECONCILING);
+  assert.equal(deriveClientPresentation(state).turnLabel, 'RECONCILING');
+  assert.equal(deriveClientPresentation(state).canSend, false);
+
+  const stale = reduceClientState(state, event('TURN_RESULT_RECEIVED', {
+    epoch,
+    turnId: 'turn-1',
+    correlationId: 'corr-1',
+    generation: 1,
+    authoritativeReceiptId: 'turn-receipt-1',
+  }));
+  assert.equal(stale, state);
+});
+
+test('worker turn adoption replaces stale UI identity and terminal status is receipt-bound', () => {
+  let state = activeState();
+  const epoch = state.epoch;
+  state = reduceClientState(state, event('TURN_GENERATION_ADOPTED', {
+    epoch,
+    turnId: 'worker-turn-1',
+    correlationId: 'worker-corr-1',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('TURN_GENERATION_ADOPTED', {
+    epoch,
+    turnId: 'worker-turn-2',
+    correlationId: 'worker-corr-2',
+    generation: 0,
+  }));
+  const stale = reduceClientState(state, event('TURN_RECONCILED', {
+    epoch,
+    turnId: 'worker-turn-1',
+    correlationId: 'worker-corr-1',
+    generation: 0,
+    status: 'completed',
+    authoritativeReceiptId: 'old-receipt',
+  }));
+  assert.equal(stale, state);
+
+  state = reduceClientState(state, event('TURN_RECONCILED', {
+    epoch,
+    turnId: 'worker-turn-2',
+    correlationId: 'worker-corr-2',
+    generation: 1,
+    status: 'interrupted',
+    authoritativeReceiptId: 'interrupt-receipt',
+  }));
+  assert.equal(state.activeTurn.generation, 1);
+  assert.equal(state.activeTurn.delivery, TurnDeliveryState.INTERRUPTED);
+  assert.equal(state.turn, TurnState.IDLE);
+});
+
+test('speech interruption advances turn generation but never cancels a capability action', () => {
+  let state = activeState();
+  const epoch = state.epoch;
+  state = reduceClientState(state, event('CAPABILITY_RECEIPT', {
+    actionId: 'action-voice-independent',
+    actionState: CapabilityActionState.PROPOSED,
+    exactActionHash: 'a'.repeat(64),
+  }));
+  state = reduceClientState(state, event('TURN_GENERATION_STARTED', {
+    epoch,
+    turnId: 'turn-voice',
+    correlationId: 'corr-voice',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('TURN_ACCEPTED', {
+    epoch,
+    turnId: 'turn-voice',
+    correlationId: 'corr-voice',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('RESPONSE_AUDIO_STARTED', {
+    epoch,
+    turnId: 'turn-voice',
+    correlationId: 'corr-voice',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('INTERRUPT_REQUESTED', {
+    epoch,
+    turnId: 'turn-voice',
+    correlationId: 'corr-voice',
+    previousGeneration: 0,
+    nextGeneration: 1,
+  }));
+
+  assert.equal(state.turn, TurnState.INTERRUPTING);
+  assert.equal(state.activeTurn.generation, 1);
+  assert.equal(state.capabilityAction.state, CapabilityActionState.PROPOSED);
+
+  state = reduceClientState(state, event('INTERRUPT_ACKNOWLEDGED', {
+    epoch,
+    turnId: 'turn-voice',
+    correlationId: 'corr-voice',
+    generation: 1,
+    authoritativeReceiptId: 'interrupt-receipt-1',
+  }));
+  assert.equal(state.turn, TurnState.IDLE);
+  assert.equal(state.activeTurn.delivery, TurnDeliveryState.INTERRUPTED);
+  assert.equal(state.capabilityAction.state, CapabilityActionState.PROPOSED);
+});
+
+test('unconfirmed turn enables only an explicit linked retry', () => {
+  let state = activeState(TransportMode.TEXT_ONLY);
+  const epoch = state.epoch;
+  state = reduceClientState(state, event('TURN_GENERATION_STARTED', {
+    epoch,
+    turnId: 'turn-uncertain',
+    correlationId: 'corr-uncertain',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('TURN_NETWORK_AMBIGUOUS', {
+    epoch,
+    turnId: 'turn-uncertain',
+    correlationId: 'corr-uncertain',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('TURN_NOT_CONFIRMED', {
+    epoch,
+    turnId: 'turn-uncertain',
+    correlationId: 'corr-uncertain',
+    generation: 0,
+  }));
+
+  const presentation = deriveClientPresentation(state);
+  assert.equal(state.activeTurn.delivery, TurnDeliveryState.NOT_CONFIRMED);
+  assert.equal(state.turn, TurnState.IDLE);
+  assert.equal(presentation.canRetryTurn, true);
+  assert.equal(presentation.canSend, false);
+});
+
 test('late IndexedDB device-key load cannot replace an in-flight pairing state', () => {
   let state = createInitialClientState();
   state = reduceClientState(state, event('PAIRING_REQUESTED'));
@@ -388,6 +536,8 @@ test('Senses shell renders all reducer axes and a private text-only control', as
     'actionState',
     'externalSpeechState',
     'privateTextOnly',
+    'stopAether',
+    'retryTurn',
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
@@ -400,8 +550,11 @@ test('Senses app is wired only through the reducer presentation boundary', async
   );
 
   assert.match(app, /from '.\/client_state\.js'/);
+  assert.match(app, /from '.\/turn_generation\.js'/);
   assert.match(app, /clientStore\.dispatch/);
   assert.match(app, /deriveClientPresentation/);
+  assert.match(app, /reconcileAmbiguousTurn/);
+  assert.match(app, /interruptActiveTurn/);
   assert.doesNotMatch(app, /function setState\s*\(/);
   assert.doesNotMatch(app, /state\.paired/);
   assert.doesNotMatch(app, /\bconnected\s*:/);
@@ -409,14 +562,16 @@ test('Senses app is wired only through the reducer presentation boundary', async
   assert.doesNotMatch(app, /\bworking\s*:/);
 });
 
-test('canonical handoff records slice four boundaries and the next slice', async () => {
+test('canonical handoff records slice five boundaries and the next slice', async () => {
   const handoff = await readFile(
     new URL('../../LASTSTANDINGPOINT.md', import.meta.url),
     'utf8',
   );
 
-  assert.match(handoff, /Implementation slice 4 is source-present/);
-  assert.match(handoff, /merely because slices 1-4 are source-present/);
-  assert.match(handoff, /Implement cancellable turn generations/);
-  assert.match(handoff, /Do not treat speech interruption as capability-action cancellation/);
+  assert.match(handoff, /Implementation slice 5 is source-present/);
+  assert.match(handoff, /merely because slices 1-5 are source-present/);
+  assert.match(handoff, /late-result-discarded/);
+  assert.match(handoff, /never submitted again automatically/);
+  assert.match(handoff, /server-authoritative camera\/screen consent leases/);
+  assert.match(handoff, /Conversational interruption remains orthogonal/);
 });
