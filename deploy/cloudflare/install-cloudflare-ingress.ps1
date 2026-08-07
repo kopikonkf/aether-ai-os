@@ -9,7 +9,7 @@ param(
     [string]$CaddyfileSource = "",
     [string]$LocalOrigin = "http://127.0.0.1:8080",
     [string]$FounderUsername = "founder",
-    [string]$FounderBcryptHash = "",
+    [string]$FounderAuthFile = "",
     [switch]$Start
 )
 
@@ -74,7 +74,9 @@ if (-not $homeExistedBefore) {
     if ($LASTEXITCODE -ne 0) {
         throw "ACL hardening failed for AETHER_HOME with exit code $LASTEXITCODE"
     }
+}
 
+function Assert-AetherHomeProtected {
     $homeAcl = Get-Acl -LiteralPath $AetherHome
     $requiredRules = @{
         "S-1-5-18" = $false
@@ -133,17 +135,61 @@ if (-not (Test-Path -LiteralPath $CaddyfileSource -PathType Leaf)) {
 Copy-Item -LiteralPath $CaddyfileSource -Destination $caddyfilePath -Force
 
 $authFragmentPath = Join-Path $caddyDir "founder-auth.caddy"
-if ($FounderBcryptHash) {
+
+if ($FounderUsername -notmatch '^[a-zA-Z0-9_-]{1,64}$') {
+    throw "Founder username must be a safe fixed identifier: $FounderUsername"
+}
+
+if ($FounderAuthFile) {
+    if (-not (Test-Path -LiteralPath $FounderAuthFile -PathType Leaf)) {
+        throw "Founder auth hash file not found: $FounderAuthFile"
+    }
+    $authHashValue = (Get-Content -LiteralPath $FounderAuthFile -Raw).Trim()
+    if ($authHashValue -match " " -or $authHashValue -match "`t") {
+        throw "Founder auth file must contain only a single bcrypt hash"
+    }
+    if ($authHashValue -notmatch '^[$]2[aby]\$14\$[./A-Za-z0-9]{53}$') {
+        throw "Founder auth hash is not a valid cost-14 bcrypt hash"
+    }
+
     $authFragment = @"
 basic_auth bcrypt "Aether Founder Alpha" {
-    $FounderUsername $FounderBcryptHash
+    $FounderUsername $authHashValue
 }
 "@
     $authFragment | Set-Content -LiteralPath $authFragmentPath -Encoding UTF8
 }
 elseif (-not (Test-Path -LiteralPath $authFragmentPath -PathType Leaf)) {
-    throw "Founder auth fragment missing and -FounderBcryptHash not provided: $authFragmentPath"
+    throw "Founder auth fragment missing and -FounderAuthFile not provided: $authFragmentPath"
 }
+
+& icacls $authFragmentPath /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "ACL hardening failed for $authFragmentPath"
+}
+$fragAcl = Get-Acl -LiteralPath $authFragmentPath
+$fragViolations = @()
+if (-not $fragAcl.AreAccessRulesProtected) {
+    $fragViolations += "inheritance_not_disabled"
+}
+foreach ($rule in $fragAcl.Access) {
+    try {
+        $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    }
+    catch {
+        $sid = [string]$rule.IdentityReference
+    }
+    if ($sid -notin @("S-1-5-18", "S-1-5-32-544") -or $rule.AccessControlType -ne "Allow") {
+        $fragViolations += "unexpected_rule:${sid}:$($rule.AccessControlType)"
+    }
+}
+if ($fragViolations.Count -gt 0) {
+    throw "ACL postcondition failed for ${authFragmentPath}: $($fragViolations -join ', ')"
+}
+
+# The auth fragment is secret-bearing. Fail closed unless the (possibly
+# pre-existing) AETHER_HOME root is itself protected SYSTEM/Administrators.
+Assert-AetherHomeProtected
 
 & $CaddyPath validate --config $caddyfilePath --adapter caddyfile | Out-Null
 if ($LASTEXITCODE -ne 0) {

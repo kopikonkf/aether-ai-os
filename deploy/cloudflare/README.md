@@ -51,7 +51,7 @@ PowerShell:
   -TunnelId "<cloudflare-tunnel-id>" `
   -CredentialsFile "C:\ProgramData\Aether\cloudflare\<cloudflare-tunnel-id>.json" `
   -CaddyPath "C:\Program Files\Caddy\caddy.exe" `
-  -FounderBcryptHash "<bcrypt-hash>" `
+  -FounderAuthFile "C:\ProgramData\Aether\caddy\founder-bcrypt.env" `
   -Start
 ```
 
@@ -77,7 +77,7 @@ headers, the founder username, or the bcrypt hash to receipts.
 # authenticated: expect 2xx on every route
 .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
   -BaseUrl "https://aether.example.com" `
-  -AuthMode "CaddyBasic" -BasicUsername "founder" -BasicPassword "<password>"
+  -AuthMode "CaddyBasic" -Credential (Get-Credential)
 ```
 
 Receipts:

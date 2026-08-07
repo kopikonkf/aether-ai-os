@@ -7,13 +7,21 @@ param(
     [ValidateSet("None", "Access", "CaddyBasic")]
     [string]$AuthMode = "None",
     [string]$AccessCookie = "",
-    [string]$BasicUsername = "",
-    [string]$BasicPassword = "",
+    [System.Management.Automation.PSCredential]$Credential = $null,
+    [System.Management.Automation.PSCredential]$WrongCredential = $null,
+    [string]$CaddyAdminUrl = "http://127.0.0.1:2019",
     [switch]$ExpectAccessEnforcement
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($AuthMode -eq "CaddyBasic" -and $ExpectAccessEnforcement) {
+    throw "ExpectAccessEnforcement is Access-only; reject conflicting flags for CaddyBasic."
+}
+if ($AuthMode -eq "None" -and ($AccessCookie -or $Credential -or $ExpectAccessEnforcement)) {
+    throw "AuthMode=None rejects credential/access flags; they cannot be combined."
+}
 
 $requiredRoutes = @("/health", "/aether/api/status", "/api/browser-senses/status", "/senses")
 $runtimeDir = Join-Path $AetherHome "runtime"
@@ -24,12 +32,6 @@ $logPath = Join-Path $ingressDir "cloudflare-probes.jsonl"
 
 $base = $BaseUrl.TrimEnd("/")
 
-# Cloudflare Access redirects unauthenticated clients to its own login host
-# (https://<team-name>.cloudflareaccess.com/cdn-cgi/access/login/...) or, in
-# some configurations, to a /.cloudflareaccess.com subdomain. A redirect is
-# only accepted as proof of Access enforcement when the Location header points
-# at that Cloudflare Access surface. Any other 3xx (an application redirect)
-# is NOT proof that Access enforced anything.
 function Test-AetherAccessProtected {
     param(
         [int]$StatusCode = 0,
@@ -72,24 +74,23 @@ function Invoke-AetherProbeRoute {
     param(
         [Parameter(Mandatory = $true)][string]$Route,
         [string]$Cookie = "",
-        [string]$BasicUsername = "",
-        [string]$BasicPassword = ""
+        [System.Management.Automation.PSCredential]$Cred = $null
     )
 
     $started = Get-Date
     $statusCode = $null
     $ok = $false
     $redirected = $false
-    $denied = $false
     $err = $null
     $location = $null
+    $wwwAuthenticate = $null
 
     $headers = @{}
     if ($Cookie) {
         $headers["Cookie"] = "CF_Authorization=$Cookie"
     }
-    if ($BasicUsername) {
-        $pair = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${BasicUsername}:${BasicPassword}"))
+    if ($null -ne $Cred) {
+        $pair = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$($Cred.UserName):$($Cred.GetNetworkCredential().Password)"))
         $headers["Authorization"] = "Basic $pair"
     }
 
@@ -97,6 +98,9 @@ function Invoke-AetherProbeRoute {
         $response = Invoke-WebRequest -Uri "$base$Route" -TimeoutSec $TimeoutSeconds -UseBasicParsing -MaximumRedirection 0 -Headers $headers
         $statusCode = [int]$response.StatusCode
         $ok = ($statusCode -ge 200 -and $statusCode -lt 300)
+        if ($response.Headers["WWW-Authenticate"]) {
+            $wwwAuthenticate = $response.Headers["WWW-Authenticate"]
+        }
     }
     catch {
         $statusCode = $null
@@ -105,12 +109,18 @@ function Invoke-AetherProbeRoute {
         }
         if ($_.Exception.Response -and $_.Exception.Response.Headers) {
             $location = $_.Exception.Response.Headers["Location"]
+            $wwwAuthenticate = $_.Exception.Response.Headers["WWW-Authenticate"]
         }
         $err = $_.Exception.GetType().Name
     }
 
     $redirected = @(301, 302, 303, 307, 308) -contains $statusCode
     $denied = @(401, 403) -contains $statusCode
+    $basicChallenge = (
+        $statusCode -eq 401 -and
+        $wwwAuthenticate -and
+        $wwwAuthenticate -match "(?i)basic"
+    )
     $accessProtected = Test-AetherAccessProtected -StatusCode $statusCode -Location $location
     $latencyMs = [math]::Round(((Get-Date) - $started).TotalMilliseconds, 1)
 
@@ -120,6 +130,8 @@ function Invoke-AetherProbeRoute {
         ok = $ok
         redirected = $redirected
         denied = $denied
+        basic_challenge = $basicChallenge
+        www_authenticate = $wwwAuthenticate
         access_protected = $accessProtected
         redirect_location = $location
         latency_ms = $latencyMs
@@ -131,8 +143,6 @@ $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 $serviceStatus = if ($null -eq $service) { "missing" } else { $service.Status.ToString() }
 $publicHttps = $base.StartsWith("https://")
 
-# Unauthenticated probe (no credentials). Expect the auth surface to deny all
-# routes. For Access this is a redirect/401/403; for CaddyBasic it must be 401.
 $unauthenticatedRoutes = @(
     foreach ($route in $requiredRoutes) {
         Invoke-AetherProbeRoute -Route $route
@@ -140,17 +150,16 @@ $unauthenticatedRoutes = @(
 )
 
 if ($AuthMode -eq "CaddyBasic") {
-    $unauthenticatedAllProtected = (
-        ($unauthenticatedRoutes | Where-Object { -not $_.denied }).Count -eq 0
+    $unauthenticatedAllDenied = (
+        ($unauthenticatedRoutes | Where-Object { -not $_.basic_challenge }).Count -eq 0
     )
 }
 else {
-    $unauthenticatedAllProtected = (
+    $unauthenticatedAllDenied = (
         ($unauthenticatedRoutes | Where-Object { -not $_.access_protected }).Count -eq 0
     )
 }
 
-# Authenticated probe: real credentials must return the Aether app (2xx).
 $authenticatedRoutes = @()
 if ($AuthMode -eq "Access" -and $AccessCookie) {
     $authenticatedRoutes = @(
@@ -159,10 +168,10 @@ if ($AuthMode -eq "Access" -and $AccessCookie) {
         }
     )
 }
-elseif ($AuthMode -eq "CaddyBasic" -and $BasicUsername) {
+elseif ($AuthMode -eq "CaddyBasic" -and $null -ne $Credential) {
     $authenticatedRoutes = @(
         foreach ($route in $requiredRoutes) {
-            Invoke-AetherProbeRoute -Route $route -BasicUsername $BasicUsername -BasicPassword $BasicPassword
+            Invoke-AetherProbeRoute -Route $route -Cred $Credential
         }
     )
 }
@@ -171,24 +180,62 @@ $authenticatedAllOk = (
     ($authenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
 )
 
-$requiredOk = if ($ExpectAccessEnforcement) {
-    $unauthenticatedAllProtected
+$invalidRoutes = @()
+if ($AuthMode -eq "CaddyBasic" -and $null -ne $WrongCredential) {
+    $invalidRoutes = @(
+        foreach ($route in $requiredRoutes) {
+            Invoke-AetherProbeRoute -Route $route -Cred $WrongCredential
+        }
+    )
 }
-elseif ($AuthMode -eq "CaddyBasic") {
-    $unauthenticatedAllProtected -and $authenticatedAllOk
+$invalidCredentialsAllDenied = (
+    $invalidRoutes.Count -gt 0 -and
+    ($invalidRoutes | Where-Object { -not $_.basic_challenge }).Count -eq 0
+)
+
+$headerStripped = $false
+$caddyConfigChecked = $false
+try {
+    $cfg = Invoke-RestMethod -Uri "$CaddyAdminUrl/config/" -TimeoutSec 8
+    $cfgJson = $cfg | ConvertTo-Json -Depth 20
+    $headerStripped = (
+        $cfgJson -match '"-Authorization"' -or
+        $cfgJson -match "header_up" -and $cfgJson -match "Authorization"
+    )
+    $caddyConfigChecked = $true
 }
-elseif ($AccessCookie) {
-    $authenticatedAllOk
+catch {
+    $caddyConfigChecked = $false
 }
-else {
-    $unauthenticatedAllProtected
+
+$requiredOk = switch ($AuthMode) {
+    "CaddyBasic" {
+        $unauthenticatedAllDenied -and
+        $authenticatedAllOk -and
+        $invalidCredentialsAllDenied
+    }
+    "Access" {
+        if ($ExpectAccessEnforcement) {
+            $unauthenticatedAllDenied
+        }
+        elseif ($AccessCookie) {
+            $authenticatedAllOk
+        }
+        else {
+            $unauthenticatedAllDenied
+        }
+    }
+    default {
+        ($unauthenticatedRoutes | Where-Object { -not $_.ok }).Count -eq 0
+    }
 }
 
 $status = if (
     $requiredOk -and
     $publicHttps -and
     $serviceStatus -eq "Running" -and
-    -not ($AuthMode -eq "CaddyBasic" -and -not $unauthenticatedAllProtected)
+    $caddyConfigChecked -and
+    $headerStripped
 ) {
     "ok"
 }
@@ -207,18 +254,21 @@ $receipt = [ordered]@{
     cloudflared_service_status = $serviceStatus
     auth_mode = $AuthMode
     auth_scope = "all_paths"
-    mode = if ($AuthMode -eq "CaddyBasic") { "caddy-basic" } elseif ($ExpectAccessEnforcement) { "access-enforcement" } elseif ($AccessCookie) { "authenticated" } else { "unauthenticated" }
+    mode = if ($AuthMode -eq "CaddyBasic") { "caddy-basic" } elseif ($ExpectAccessEnforcement) { "access-enforcement" } else { $AuthMode.ToLower() }
     required_routes = $requiredRoutes
     required_routes_ok = $requiredOk
     unauthenticated_routes = $unauthenticatedRoutes
-    unauthenticated_all_denied = $unauthenticatedAllProtected
+    unauthenticated_all_denied = $unauthenticatedAllDenied
     authenticated_routes = $authenticatedRoutes
     authenticated_all_ok = $authenticatedAllOk
-    authorization_forwarded_to_upstream = $false
+    invalid_credentials_routes = $invalidRoutes
+    invalid_credentials_all_denied = $invalidCredentialsAllDenied
+    authorization_forwarded_to_upstream = (-not $headerStripped)
+    caddy_config_checked = $caddyConfigChecked
     secret_values_exposed = $false
 }
 
-$json = $receipt | ConvertTo-Json -Depth 8 -Compress
+$json = $receipt | ConvertTo-Json -Depth 10 -Compress
 $json | Set-Content -LiteralPath $latestPath -Encoding UTF8
 Add-Content -LiteralPath $logPath -Value $json -Encoding UTF8
-$receipt | ConvertTo-Json -Depth 8
+$receipt | ConvertTo-Json -Depth 10

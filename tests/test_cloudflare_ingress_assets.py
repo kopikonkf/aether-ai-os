@@ -59,17 +59,23 @@ def test_cloudflare_ingress_probe_supports_access_enforcement_and_authenticated_
     assert "-MaximumRedirection 0" in probe
     assert "AuthMode" in probe
     assert '"CaddyBasic"' in probe or "'CaddyBasic'" in probe
-    assert "BasicUsername" in probe
+    assert "Credential" in probe
+    assert "WrongCredential" in probe
     assert "unauthenticated_all_denied" in probe
+    assert "invalid_credentials_all_denied" in probe
     assert "authorization_forwarded_to_upstream" in probe
+    assert "WWW-Authenticate" in probe or "www_authenticate" in probe
 
 
 def test_install_writes_auth_fragment_and_never_records_hash():
     install = _read(CLOUDFLARE_DIR / "install-cloudflare-ingress.ps1")
-    assert "FounderBcryptHash" in install
+    assert "FounderAuthFile" in install
+    assert "FounderBcryptHash" not in install
     assert "founder-auth.caddy" in install
     assert 'basic_auth bcrypt "Aether Founder Alpha"' in install
     assert "auth_hash_recorded" in install
+    assert r"$2[aby]$14$" in install or r"2[aby]\$14\$" in install
+    assert "FounderUsername" in install
 
 
 def test_caddyfile_imports_auth_fragment_and_strips_authorization():
@@ -100,7 +106,7 @@ def test_probe_access_protection_covers_redirect_and_denial():
     assert "/cdn-cgi/access/" in probe
     assert "401, 403" in probe
     assert "access_protected" in probe
-    assert re.search(r"unauthenticatedAllProtected.*access_protected", probe, re.S)
+    assert re.search(r"unauthenticatedAllDenied.*basic_challenge", probe, re.S)
 
 
 def test_install_checks_icacls_exit_code_and_acl_postcondition():

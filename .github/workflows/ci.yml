@@ -50,7 +50,7 @@ jobs:
           PY
       - name: Validate Cloudflare ingress assets
         run: |
-          python -m pytest -q tests/test_cloudflare_ingress_assets.py
+          python -m pytest -q tests/test_cloudflare_ingress_assets.py tests/test_cloudflare_probe_modes.py
       - name: Validate Caddyfile with Caddy
         run: |
           mkdir -p caddy-validate
@@ -58,7 +58,11 @@ jobs:
           # Point the import at a committed stub fragment so the template can be
           # validated on Linux without the real (never in repo) founder secret.
           sed -i 's|C:/ProgramData/Aether/caddy/founder-auth.caddy|founder-auth.caddy|' caddy-validate/Caddyfile
-          printf 'basic_auth bcrypt "Aether Founder Alpha" {\n    founder \\$2a\\$14\\$stub\n}\n' > caddy-validate/founder-auth.caddy
+          # Generate a real, valid cost-14 bcrypt hash inside the Caddy image for a
+          # throwaway test password, then write the fragment and validate.
+          # Password "ci-only-guard" is never used in production.
+          CI_HASH="$(docker run --rm caddy:2.11.3 caddy hash-password --algorithm bcrypt --bcrypt-cost 14 --plaintext 'ci-only-guard')"
+          printf 'basic_auth bcrypt "Aether Founder Alpha" {\n    founder %s\n}\n' "founder $CI_HASH" > caddy-validate/founder-auth.caddy
           docker run --rm -v "${{ github.workspace }}/caddy-validate:/config" \
             caddy:2.11.3 caddy validate --config /config/Caddyfile --adapter caddyfile
       - name: Upload Gateway test receipt

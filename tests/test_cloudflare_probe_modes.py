@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+# Mirror of the probe-cloudflare-ingress.ps1 decision semantics so they can be
+# executed (not string-scanned) on a plain Python CI runner.
+
+
+def basic_challenge(status_code: int | None, www_authenticate: str | None) -> bool:
+    return status_code == 401 and bool(www_authenticate) and "basic" in www_authenticate.lower()
+
+
+def access_protected(status_code: int | None, location: str | None) -> bool:
+    if status_code in (401, 403):
+        return True
+    if not (status_code and 300 <= status_code <= 399):
+        return False
+    if not location:
+        return False
+    try:
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(location).hostname or "").lower()
+    except Exception:
+        return False
+    return host.endswith(".cloudflareaccess.com") or "cdn-cgi/access/" in location.lower()
+
+
+def required_denied(results: list[dict], auth_mode: str) -> bool:
+    if auth_mode == "CaddyBasic":
+        return all(r["basic_challenge"] for r in results)
+    return all(r["access_protected"] for r in results)
+
+
+def routes_ok(results: list[dict]) -> bool:
+    return len(results) > 0 and all(r["ok"] for r in results)
+
+
+def validate_flags(auth_mode: str, access_cookie: bool, credential: bool, enforce: bool) -> list[str]:
+    errs = []
+    if auth_mode == "CaddyBasic" and enforce:
+        errs.append("ExpectAccessEnforcement is Access-only")
+    if auth_mode == "None" and (access_cookie or credential or enforce):
+        errs.append("AuthMode=None rejects credential/access flags")
+    return errs
+
+
+def result(status_code: int | None, ok: bool, www: str | None = None, location: str | None = None) -> dict:
+    return {
+        "status_code": status_code,
+        "ok": ok,
+        "www_authenticate": www,
+        "basic_challenge": basic_challenge(status_code, www),
+        "access_protected": access_protected(status_code, location),
+    }
+
+
+RN = result  # alias
+
+
+def test_unauth_caddybasic_requires_exact_401_and_basic_challenge():
+    # 403 without a Basic challenge must NOT count as denied for CaddyBasic.
+    routes = [
+        result(401, ok=False, www="Basic realm=\"Aether Founder Alpha\""),
+        result(401, ok=False, www="Basic"),
+        result(403, ok=False),
+        result(200, ok=True),
+    ]
+    assert not required_denied(routes, "CaddyBasic")
+
+    # Even a 403 would be accepted by Access mode, but not by CaddyBasic.
+    access_mixed = [result(403, ok=False), result(401, ok=False, www="Basic")]
+    assert required_denied(access_mixed, "Access")
+    assert not required_denied(access_mixed, "CaddyBasic")
+
+
+def test_unauth_caddybasic_all_401_basic_passes():
+    routes = [
+        result(401, ok=False, www="Basic realm=\"Auth\""),
+        result(401, ok=False, www="Basic"),
+        result(401, ok=False, www="Basic"),
+        result(401, ok=False, www="basic"),
+    ]
+    assert required_denied(routes, "CaddyBasic")
+
+
+def test_authenticated_requires_2xx():
+    routes = [result(200, ok=True), result(201, ok=True), result(204, ok=True), result(200, ok=True)]
+    assert routes_ok(routes)
+    mixed = [result(200, ok=True), result(401, ok=False, www="Basic")]
+    assert not routes_ok(mixed)
+
+
+def test_incompatible_flags_rejected():
+    assert validate_flags("CaddyBasic", False, False, True)  # enforce + caddy
+    assert validate_flags("None", True, True, False)  # creds + none
+    assert validate_flags("None", False, False, False) == []
+    assert validate_flags("CaddyBasic", False, True, False) == []
+
+
+def test_access_protected_rejects_unrelated_redirect_and_accepts_cf_redirect():
+    assert access_protected(302, "https://aether-team.cloudflareaccess.com/cdn-cgi/access/login") is True
+    assert access_protected(302, "https://app.aethers.my.id/x") is False
+    assert access_protected(307, "https://example.org/x") is False
+    assert access_protected(401, None) is True
+    assert access_protected(403, None) is True
+    assert access_protected(200, None) is False
