@@ -33,6 +33,12 @@ class VoiceProviderManifest:
     streaming: bool = False
     data_policy_tags: frozenset[str] = frozenset({"hosted"})
     cost_class: str = "metered"
+    billing_tier: str = "unspecified"
+    quota_class: str = "unspecified"
+    data_use_classification: str = "unspecified"
+    preview: bool = False
+    terms_snapshot_date: str = ""
+    audition_state: str = "unreviewed"
 
     def public_dict(self) -> dict[str, object]:
         value = asdict(self)
@@ -48,10 +54,39 @@ class VoiceSynthesisRequest:
     correlation_id: str
     speaking_rate: float = 1.0
     pitch: float = 0.0
+    delivery_instruction: str = ""
+    delivery_preset_id: str = "neutral"
+    expressive_cue_id: str | None = None
+    voice_profile_sha256: str = ""
+    compiler_sha256: str = ""
+    pronunciation_lexicon_version: str = "none"
+    precision_critical: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.text.strip():
+            raise ValueError("voice synthesis text must not be empty")
+        if "\x00" in self.text:
+            raise ValueError("voice synthesis text must not contain NUL")
+        if len(self.delivery_instruction) > 1_200:
+            raise ValueError("voice delivery instruction exceeds the 1200-character bound")
 
     @property
     def input_sha256(self) -> str:
         return sha256_bytes(self.text.encode("utf-8"))
+
+    @property
+    def delivery_instruction_sha256(self) -> str:
+        return sha256_bytes(self.delivery_instruction.encode("utf-8"))
+
+    @property
+    def exact_text_provider_input(self) -> str:
+        if not self.delivery_instruction:
+            return self.text
+        return (
+            f"{self.delivery_instruction}\n\n"
+            "TRANSCRIPT — RECITE VERBATIM\n"
+            f"{self.text}"
+        )
 
 
 @dataclass(frozen=True)
