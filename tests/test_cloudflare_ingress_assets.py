@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -71,3 +72,22 @@ def test_cloudflare_ingress_assets_do_not_embed_secrets_or_direct_gateway_exposu
     ]
     offenders = [item for item in prohibited if item in combined]
     assert offenders == []
+
+
+def test_probe_access_protection_covers_redirect_and_denial():
+    probe = _read(CLOUDFLARE_DIR / "probe-cloudflare-ingress.ps1")
+    assert "(300 -and" in probe or "$statusCode -le 399" in probe
+    assert "401, 403" in probe
+    assert "access_protected" in probe
+    assert "access_protected" in probe  # used in post-processing
+    assert re.search(r"unauthenticatedAllProtected.*access_protected", probe, re.S)
+
+
+def test_install_checks_icacls_exit_code_and_acl_postcondition():
+    install = _read(CLOUDFLARE_DIR / "install-cloudflare-ingress.ps1")
+    assert "if ($LASTEXITCODE -ne 0)" in install
+    assert "ACL hardening failed" in install
+    assert "ACL postcondition verification failed" in install
+    assert "AreAccessRulesProtected" in install
+    assert "S-1-5-18" in install
+    assert "S-1-5-32-544" in install

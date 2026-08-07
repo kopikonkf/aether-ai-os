@@ -68,7 +68,31 @@ $homeExistedBefore = Test-Path -LiteralPath $AetherHome -PathType Container
 New-Item -ItemType Directory -Force -Path $AetherHome, $cloudflareDir, $caddyDir, $runtimeDir, $ingressDir | Out-Null
 
 if (-not $homeExistedBefore) {
-    icacls $AetherHome /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
+    & icacls $AetherHome /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "ACL hardening failed for AETHER_HOME with exit code $LASTEXITCODE"
+    }
+
+    $homeAcl = Get-Acl -LiteralPath $AetherHome
+    $allowedSids = @("S-1-5-18", "S-1-5-32-544")
+    $aclViolations = @()
+    if (-not $homeAcl.AreAccessRulesProtected) {
+        $aclViolations += "inheritance_not_disabled"
+    }
+    foreach ($rule in $homeAcl.Access) {
+        try {
+            $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        }
+        catch {
+            $sid = [string]$rule.IdentityReference
+        }
+        if ($sid -notin $allowedSids -or $rule.AccessControlType -ne "Allow") {
+            $aclViolations += "unexpected_rule:${sid}:$($rule.AccessControlType)"
+        }
+    }
+    if ($aclViolations.Count -gt 0) {
+        throw "ACL postcondition verification failed for AETHER_HOME: $($aclViolations -join ', ')"
+    }
 }
 
 if (-not (Test-Path -LiteralPath $CaddyPath -PathType Leaf)) {

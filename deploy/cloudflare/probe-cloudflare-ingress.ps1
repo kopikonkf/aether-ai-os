@@ -55,6 +55,11 @@ function Invoke-AetherProbeRoute {
     }
 
     $redirected = @(301, 302, 303, 307, 308) -contains $statusCode
+    $denial = @(401, 403) -contains $statusCode
+    $accessProtected = (
+        ($statusCode -ge 300 -and $statusCode -le 399) -or
+        $denial
+    )
     $latencyMs = [math]::Round(((Get-Date) - $started).TotalMilliseconds, 1)
 
     return [ordered]@{
@@ -62,6 +67,8 @@ function Invoke-AetherProbeRoute {
         status_code = $statusCode
         ok = $ok
         redirected = $redirected
+        denied = $denial
+        access_protected = $accessProtected
         redirect_location = $location
         latency_ms = $latencyMs
         error = $err
@@ -80,7 +87,7 @@ $unauthenticatedRoutes = @(
     }
 )
 $unauthenticatedAllProtected = (
-    ($unauthenticatedRoutes | Where-Object { -not $_.redirected }).Count -eq 0
+    ($unauthenticatedRoutes | Where-Object { -not $_.access_protected }).Count -eq 0
 )
 
 # Mode 2: authenticated probe (Access session cookie). Routes must return the
