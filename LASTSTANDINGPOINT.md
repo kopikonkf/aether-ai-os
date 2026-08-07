@@ -109,3 +109,40 @@ actions. Do not treat speech interruption as capability-action cancellation.
 ## Next operational step
 
 Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed those receipts into Founder acceptance, then run the first governed private experiment, capture the impact brief, promote it publicly, measure demand, and feed the result back into portfolio reallocation and CEE learning.
+
+## Cloudflare ingress PR #34 (round-3, 2026-08-07)
+
+- **Head:** `ef6766d` (branch `agent/founder-auth-0053`), rebased onto exact main
+  `53f75c218` (incl. #36 Senses bootstrap + #37 Senses voice). `mergeable_state=clean`,
+  `mergeable=true`.
+- **6 review corrections from ChatGPT all addressed:**
+  1. Rebase to exact main (done, no conflicts).
+  2. Secret-safe credential interface: `-CredentialPassword`/`-WrongCredentialPassword`
+     plaintext params removed; passwords only via `PSCredential` (`-Credential`) or stdin
+     (`-CredentialPasswordStdin`). README updated.
+  3. Partial parameters rejected (`Resolve-CredentialPair`): username-only, password-only,
+     wrong-*-only, cross-AuthMode fail-closed.
+  4. Receipt `authorization_forwarded_to_upstream` derived from echo upstream response
+     body (what upstream actually received via `-EchoRoute`); `CaddyAdminUrl`/config
+     inspection and `caddy_config_checked` removed.
+  5. Real probe now exercises valid flow for None, Access, and CaddyBasic (was only
+     CaddyBasic; None/Access were Python mirror).
+  6. CI: new step installs pwsh 7.4.6 + Caddy v2.11.3 (linux) and runs the boundary test
+     with `AETHER_INGRESS_INTEGRATION=1`; run `31171319788` (synthetic merge on `ef6766d`)
+     = **success**, `Real ingress boundary proof` = `6 passed in 18.29s` (NOT skipped).
+  7. VPS/DNS/tunnel/Cloudflare untouched.
+- Probe also made cross-platform: `-AetherHome` passed by integration tests; service
+  status check gated to Windows (`Get-Service` absent on pwsh/Linux -> reports `n/a`);
+  .NET `HttpWebRequest` with `AllowAutoRedirect=$false` replaces `Invoke-WebRequest`
+  (reliable 3xx/401/403 + Location/echo body across PS versions).
+- **Local:** 26/26 cloudflare tests pass (assets/probe_modes/probe_behavior/integration)
+  on Windows PS 5.1 + Caddy 2.11.3.
+- **Report posted:** https://github.com/kopikonkf/aether-ai-os/pull/34#issuecomment-5216087416
+- **Waiting:** ChatGPT to merge PR #34. After merge: stage exact main -> generate bcrypt
+  hash interactively -> `aether_migration_<sha>.ps1` cutover -> validate receipt
+  `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` -> production install (AetherService +
+  Watchdog, no sense-worker) -> ACL -> local auth proof -> reuse tunnel `8f53133` + DNS
+  cutover `:8080` -> public proof + recovery receipts CONFORMED.
+- NOTE: `tests/test_state_snapshot.py::...canonical.sqlite3` fails locally with
+  `PermissionError WinError 32` (sqlite handle lock during tmp cleanup) - pre-existing,
+  unrelated to ingress; passes on ubuntu CI.
