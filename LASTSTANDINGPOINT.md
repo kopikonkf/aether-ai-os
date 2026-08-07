@@ -157,26 +157,50 @@ Founder approval / release evidence
   or online remains `SUSPENDED` until `Resume senses` is pressed. Resume creates
   a fresh session epoch and never revives a prior turn or sensor lease. A waiting
   service-worker update is activated only by an explicit safe-update gesture.
+- Implementation slice 8 is source-present: Browser Senses now reconstructs
+  `PROPOSED`, `AWAITING_APPROVAL`, `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`,
+  `REJECTED`, and `UNAVAILABLE` presentation from the canonical governed-action
+  event journal. The session-scoped status route returns ordered receipts only;
+  terminal presentation requires the originating execution/governance event ID,
+  and registered capability metadata or the bounded governed-route metadata for
+  intentionally hidden skill/coding bodies supplies a deterministic manifest
+  hash. That route hash does not activate or claim conformance for an external
+  adapter. Raw arguments, action output, secrets, and operator credentials are
+  not projected into Senses.
+- Senses exposes a safe action card, exact action SHA-256, receipt ID, progress,
+  and a presentation-only handoff. It has no approval decision route or control;
+  spoken or typed `yes` is explicitly non-authoritative. Pending actions link to
+  the AionUi Approval Inbox by approval ID plus full expected action hash, or to
+  Telegram `/approvals`.
+- AionUi validates the handoff's full expected hash against the main-process
+  inbox projection before selecting the action. Telegram `/approvals` renders
+  the same shared inbox as exact-hash-bound inline cards; callback signatures
+  now bind decision, approval ID, and full action hash. Browser-origin callbacks
+  fail closed outside the allowlisted Founder's private chat, and their result
+  remains on the originating Senses receipt channel instead of being copied as
+  raw output into Telegram.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-7 are source-present. The Gemini adapter is not yet
+  merely because slices 1-8 are source-present. The Gemini adapter is not yet
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
-  and receipt-driven AionUi/Telegram capability presentation, real browser/PWA
-  installation and launch evidence, LiveKit grant revocation, credentialed
-  provider execution, and Founder host evidence still require their own wiring
-  and proof.
+  real browser/PWA installation and launch evidence, capability cancellation
+  and network-ambiguous reconciliation receipts, LiveKit grant revocation,
+  credentialed provider execution, and Founder host evidence still require
+  their own wiring and proof. Slice 8 does not activate a new capability adapter
+  or raise any named capability to `ACTIVE` or `FOUNDER-PROVEN`.
 
 ## Next Senses implementation slice
 
-Wire receipt-driven capability-action presentation and trusted approval handoff
-across AionUi/Senses and Telegram without activating a new capability adapter.
-Separately, after slice 7 is merged and deployed, run the Tier-1 Windows Chromium
-and Android installed-PWA matrix for install, cold/warm launch, foreground
-suspension, update activation, and Cache Storage inspection. Keep Senses
-source-present and do not claim mobile, host, or capability conformance before
-the corresponding real-browser and authoritative-receipt evidence exists.
+Complete the remaining capability cancellation and network-ambiguous
+reconciliation receipts against already conformed test capabilities; do not
+activate a new external adapter. Separately, after slice 8 is merged and
+deployed, run the Tier-1 Windows Chromium and Android installed-PWA matrix for
+install, cold/warm launch, foreground suspension, update activation, and Cache
+Storage inspection. Keep Senses source-present and do not claim mobile, host,
+or capability conformance before the corresponding real-browser and
+authoritative-receipt evidence exists.
 
 ## Next operational step
 
