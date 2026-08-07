@@ -4,7 +4,13 @@ import asyncio
 import base64
 from pathlib import Path
 
-from aether.contracts import BrowserSenseCapability, Expression, Perception, MediaTrackKind
+from aether.contracts import (
+    BrowserSenseCapability,
+    BrowserSenseRuntimeProfile,
+    Expression,
+    MediaTrackKind,
+    Perception,
+)
 from aether.events import EventBus
 from aether.senses import SenseEventPath
 from aether_gateway.browser_senses import BrowserSenseService, BrowserSessionTokenCodec, LiveKitTokenIssuer
@@ -38,6 +44,20 @@ def test_browser_session_text_and_bounded_vision(tmp_path: Path, monkeypatch) ->
     token = issued["browser_session_token"]
     assert issued["livekit"]["ready"] is False
     assert "token_hash" not in issued["session"]
+    assert issued["session"]["runtime_profile"] == "GOVERNED_PIPELINE"
+    assert service.status()["contract_version"] == "aether.senses.interaction.v1"
+
+    try:
+        service.issue_session(
+            principal="founder",
+            display_name="Founder",
+            capabilities=(BrowserSenseCapability.TEXT,),
+            runtime_profile=BrowserSenseRuntimeProfile.NATIVE_AUDIO_EXPERIMENTAL,
+        )
+    except ValueError as exc:
+        assert "GOVERNED_PIPELINE" in str(exc)
+    else:
+        raise AssertionError("native audio must not enter the v1 session path")
 
     track = service.record_track(token, track_sid="mic-1", kind=MediaTrackKind.AUDIO, source="microphone", muted=False)
     assert track.kind is MediaTrackKind.AUDIO
