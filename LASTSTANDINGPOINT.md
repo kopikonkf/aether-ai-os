@@ -220,7 +220,8 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
   (PR #40) is fail-closed, so Fase A (exact ACL setter + tree-wide postcondition)
   MUST run before any promote.
 - **Ingress host mutation is awaiting the release-promotion / shared-tunnel
-  source PR (`agent/release-promotion-shared-tunnel`, currently round-6 review):**
+  source PR (`agent/release-promotion-shared-tunnel`, round-6 fixes pushed at
+  head `815acdf`, CI green, awaiting re-review):**
   - `install-aether-services.ps1`: removed `/inheritance:e`; `Ensure-ProtectedAetherHome`
     (new=apply protected exact, existing=assert only); `-TargetSha` bound to manifest.
   - `promote-aether-release.ps1`: `-ExpectedTargetSha` is mandatory (provenance guard);
