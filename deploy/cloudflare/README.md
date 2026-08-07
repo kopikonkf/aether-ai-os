@@ -69,16 +69,32 @@ headers, the founder username, or the bcrypt hash to receipts.
 
 ## Probe
 
+Passwords are never accepted on the command line. Supply credentials either as
+an in-memory `PSCredential` object or by reading the password from stdin.
+
 ```powershell
 # unauthenticated: expect 401 on every route
 .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
-  -BaseUrl "https://aether.example.com" -AuthMode "CaddyBasic"
+  -BaseUrl "https://aether.example.com" -AuthMode "CaddyBasic" `
+  -EchoRoute "/__echo" -Credential $cred
 
-# authenticated: expect 2xx on every route
+# authenticated (password from a PSCredential object; nothing on the CLI):
+$secure = Read-Host -AsSecureString "Founder password"
+$cred = [pscredential]::new("founder", $secure)
 .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
   -BaseUrl "https://aether.example.com" `
-  -AuthMode "CaddyBasic" -CredentialUsername "founder" -CredentialPassword "<password>"
+  -AuthMode "CaddyBasic" -Credential $cred -EchoRoute "/__echo"
+
+# authenticated (password from stdin, e.g. "s3cr3t" | script.ps1 ...)
+"s3cr3t" | .\deploy\cloudflare\probe-cloudflare-ingress.ps1 `
+  -BaseUrl "https://aether.example.com" `
+  -AuthMode "CaddyBasic" -CredentialUsername "founder" -CredentialPasswordStdin -EchoRoute "/__echo"
 ```
+
+Credential surfaces are rejected unless complete: a username without a password
+source, or a password source without a username, is refused before any request.
+Wrong-credential probes use `-WrongCredential` / `-WrongCredentialUsername`
+with `-WrongCredentialPasswordStdin`.
 
 Receipts:
 

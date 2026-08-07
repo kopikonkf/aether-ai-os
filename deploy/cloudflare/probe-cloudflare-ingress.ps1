@@ -7,22 +7,112 @@ param(
     [ValidateSet("None", "Access", "CaddyBasic")]
     [string]$AuthMode = "None",
     [string]$AccessCookie = "",
+    # Echo upstream route used to observe the actual headers the upstream
+    # receives. When set in CaddyBasic mode the probe sends an authenticated
+    # request through Caddy to this route and derives
+    # `authorization_forwarded_to_upstream` from the JSON body the echo
+    # upstream returns (its own received headers) - never from Caddy `/config/`.
+    [string]$EchoRoute = "",
+    # Credential source: an in-memory PSCredential (recommended, default) OR a
+    # username whose password is read from stdin. Passwords are never accepted
+    # as a command-line argument.
+    [System.Management.Automation.PSCredential]$Credential,
     [string]$CredentialUsername = "",
-    [string]$CredentialPassword = "",
+    [switch]$CredentialPasswordStdin,
+    [System.Management.Automation.PSCredential]$WrongCredential,
     [string]$WrongCredentialUsername = "",
-    [string]$WrongCredentialPassword = "",
-    [string]$CaddyAdminUrl = "http://127.0.0.1:2019",
+    [switch]$WrongCredentialPasswordStdin,
     [switch]$ExpectAccessEnforcement
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$hasCredential = [bool]$CredentialUsername
-$hasWrongCredential = [bool]$WrongCredentialUsername
+function Read-LineFromStdin {
+    if ([Console]::IsInputRedirected) {
+        $line = [Console]::In.ReadLine()
+        if ($null -eq $line) { return "" }
+        return $line
+    }
+    return ""
+}
+
+function Convert-SecureStringToPlain {
+    param(
+        [Parameter(Mandatory = $true)][System.Security.SecureString]$SecureString
+    )
+    $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+    try {
+        return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    }
+    finally {
+        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+}
+
+# ---- Credential resolution (secret-safe) -------------------------------------
+# Both a correct and an optional wrong credential surface may be supplied.
+# Each resolves to a plaintext password at runtime from a PSCredential object or
+# from stdin. A command-line password parameter does not exist.
+
+function Resolve-CredentialPair {
+    param(
+        [string]$Label,
+        [System.Management.Automation.PSCredential]$Object,
+        [string]$Username,
+        [switch]$FromStdin
+    )
+
+    if ($null -ne $Object) {
+        if ($Username) {
+            throw "Invalid $Label credential: supply -${Label} and -${Label}Username, not both."
+        }
+        if ($FromStdin) {
+            throw "Invalid $Label credential: supply -${Label} (object) and -${Label}PasswordStdin, not both."
+        }
+        return [ordered]@{
+            username = $Object.UserName
+            password = (Convert-SecureStringToPlain $Object.Password)
+            present  = $true
+        }
+    }
+
+    $pwGiven = $false
+    if ($Label -eq "Credential") {
+        $pwGiven = [bool]$CredentialPasswordStdin
+    }
+    elseif ($Label -eq "WrongCredential") {
+        $pwGiven = [bool]$WrongCredentialPasswordStdin
+    }
+
+    if ($Username -and -not $pwGiven) {
+        throw "Invalid $Label source: -${Label}Username given without a password source. Use -${Label}PasswordStdin or -${Label} (PSCredential)."
+    }
+    if ($pwGiven -and -not $Username) {
+        throw "Invalid $Label source: password-only given. Use -${Label}Username to name the account."
+    }
+    if (-not $Username -and -not $pwGiven) {
+        return [ordered]@{ username = ""; password = $null; present = $false }
+    }
+
+    $password = Read-LineFromStdin
+    return [ordered]@{
+        username = $Username
+        password = $password
+        present  = $true
+    }
+}
+
+$credentialState = Resolve-CredentialPair -Label "Credential" -Object $Credential -Username $CredentialUsername -FromStdin:$CredentialPasswordStdin
+$wrongState = Resolve-CredentialPair -Label "WrongCredential" -Object $WrongCredential -Username $WrongCredentialUsername -FromStdin:$WrongCredentialPasswordStdin
+
+$hasCredential = [bool]$credentialState.present
+$hasWrongCredential = [bool]$wrongState.present
 
 # Fail-closed parameter matrix. Each AuthMode accepts only its own credential
-# surface; cross-mode or conflicting flags are rejected.
+# surface; cross-mode or conflicting flags are rejected. Partial credential
+# surfaces (username without a password source, or a password source without a
+# username) have already been rejected above.
 $conflicts = @()
 if ($AuthMode -eq "None" -and ($AccessCookie -or $hasCredential -or $hasWrongCredential -or $ExpectAccessEnforcement)) {
     $conflicts += "AuthMode=None rejects all credential/access flags"
@@ -38,6 +128,12 @@ if ($AuthMode -eq "Access" -and ($hasCredential -or $hasWrongCredential)) {
 }
 if ($AuthMode -eq "Access" -and $ExpectAccessEnforcement -and $AccessCookie) {
     $conflicts += "ExpectAccessEnforcement expects no AccessCookie (unauthenticated proof)"
+}
+if ($AuthMode -eq "Access" -and $EchoRoute) {
+    $conflicts += "EchoRoute is CaddyBasic-only (header-strip observation)"
+}
+if ($AuthMode -eq "None" -and $EchoRoute) {
+    $conflicts += "EchoRoute is CaddyBasic-only (header-strip observation)"
 }
 if ($conflicts.Count -gt 0) {
     throw "Invalid probe flag combination: $($conflicts -join '; ')"
@@ -105,34 +201,55 @@ function Invoke-AetherProbeRoute {
     $err = $null
     $location = $null
     $wwwAuthenticate = $null
+    $echoBody = $null
 
-    $headers = @{}
+    $uri = New-Object System.Uri "$base$Route"
+    $req = [System.Net.HttpWebRequest]::Create($uri)
+    $req.Method = "GET"
+    $req.AllowAutoRedirect = $false
+    $req.Timeout = ($TimeoutSeconds * 1000)
+    try { $req.Proxy = $null } catch { }
+    try { $req.Credentials = $null } catch { }
     if ($Cookie) {
-        $headers["Cookie"] = "CF_Authorization=$Cookie"
+        try { $req.Headers.Add("Cookie", "CF_Authorization=$Cookie") } catch { }
     }
     if ($Username) {
         $pair = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${Username}:${Password}"))
-        $headers["Authorization"] = "Basic $pair"
+        $req.Headers["Authorization"] = "Basic $pair"
     }
 
+    $resp = $null
     try {
-        $response = Invoke-WebRequest -Uri "$base$Route" -TimeoutSec $TimeoutSeconds -UseBasicParsing -MaximumRedirection 0 -Headers $headers
-        $statusCode = [int]$response.StatusCode
-        $ok = ($statusCode -ge 200 -and $statusCode -lt 300)
-        if ($response.Headers["WWW-Authenticate"]) {
-            $wwwAuthenticate = $response.Headers["WWW-Authenticate"]
-        }
+        $resp = $req.GetResponse()
+    }
+    catch [System.Net.WebException] {
+        $resp = $_.Exception.Response
+        $err = $_.Exception.GetType().Name
     }
     catch {
-        $statusCode = $null
-        if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
-            $statusCode = [int]$_.Exception.Response.StatusCode
-        }
-        if ($_.Exception.Response -and $_.Exception.Response.Headers) {
-            $location = $_.Exception.Response.Headers["Location"]
-            $wwwAuthenticate = $_.Exception.Response.Headers["WWW-Authenticate"]
-        }
         $err = $_.Exception.GetType().Name
+        $resp = $null
+    }
+
+    if ($null -ne $resp) {
+        try { $statusCode = [int]$resp.StatusCode } catch { $statusCode = $null }
+        try { $location = [string]$resp.Headers["Location"] } catch { $location = $null }
+        try { $wwwAuthenticate = [string]$resp.Headers["WWW-Authenticate"] } catch { $wwwAuthenticate = $null }
+
+        if ($Route -eq $EchoRoute) {
+            try {
+                $stream = $resp.GetResponseStream()
+                if ($null -ne $stream) {
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    $echoBody = $reader.ReadToEnd()
+                    $reader.Close()
+                }
+            }
+            catch { $echoBody = $null }
+        }
+
+        $ok = ($statusCode -ge 200 -and $statusCode -lt 300)
+        try { $resp.Close() } catch { }
     }
 
     $redirected = @(301, 302, 303, 307, 308) -contains $statusCode
@@ -157,6 +274,7 @@ function Invoke-AetherProbeRoute {
         redirect_location = $location
         latency_ms = $latencyMs
         error = $err
+        echo_body = $echoBody
     }
 }
 
@@ -192,7 +310,7 @@ if ($AuthMode -eq "Access" -and $AccessCookie) {
 elseif ($AuthMode -eq "CaddyBasic" -and $hasCredential) {
     $authenticatedRoutes = @(
         foreach ($route in $requiredRoutes) {
-            Invoke-AetherProbeRoute -Route $route -Username $CredentialUsername -Password $CredentialPassword
+            Invoke-AetherProbeRoute -Route $route -Username $credentialState.username -Password $credentialState.password
         }
     )
 }
@@ -205,7 +323,7 @@ $invalidRoutes = @()
 if ($AuthMode -eq "CaddyBasic" -and $hasWrongCredential) {
     $invalidRoutes = @(
         foreach ($route in $requiredRoutes) {
-            Invoke-AetherProbeRoute -Route $route -Username $WrongCredentialUsername -Password $WrongCredentialPassword
+            Invoke-AetherProbeRoute -Route $route -Username $wrongState.username -Password $wrongState.password
         }
     )
 }
@@ -214,19 +332,28 @@ $invalidCredentialsAllDenied = (
     @($invalidRoutes | Where-Object { -not $_.basic_challenge }).Count -eq 0
 )
 
-$headerStripped = $false
-$caddyConfigChecked = $false
-try {
-    $cfg = Invoke-RestMethod -Uri "$CaddyAdminUrl/config/" -TimeoutSec 8
-    $cfgJson = $cfg | ConvertTo-Json -Depth 20
-    $headerStripped = (
-        $cfgJson -match '"-Authorization"' -or
-        $cfgJson -match "header_up" -and $cfgJson -match "Authorization"
-    )
-    $caddyConfigChecked = $true
-}
-catch {
-    $caddyConfigChecked = $false
+# Header-strip observation derived from the echo upstream: send an
+# authenticated (Basic) request through Caddy to the echo route. The echo
+# upstream returns the set of headers IT actually received as JSON. If
+# "authorization" is absent there, Caddy stripped it before forwarding. This is
+# an observation of the upstream boundary, never an inspection of Caddy
+# /config/.
+$headerStripObserved = $false
+$authorizationForwardedToUpstream = $null
+if ($AuthMode -eq "CaddyBasic" -and $hasCredential -and $EchoRoute) {
+    $echoProbe = Invoke-AetherProbeRoute -Route $EchoRoute -Username $credentialState.username -Password $credentialState.password
+    if ($echoProbe.echo_body -and ($echoProbe.status_code -ge 200 -and $echoProbe.status_code -lt 300)) {
+        try {
+            $echoHeaders = ($echoProbe.echo_body | ConvertFrom-Json)
+            $echoProps = @($echoHeaders.PSObject.Properties.Name | ForEach-Object { $_.ToString().ToLowerInvariant() })
+            $authorizationForwardedToUpstream = ($echoProps -contains "authorization")
+            $headerStripObserved = $true
+        }
+        catch {
+            $headerStripObserved = $false
+            $authorizationForwardedToUpstream = $null
+        }
+    }
 }
 
 $requiredOk = switch ($AuthMode) {
@@ -251,12 +378,18 @@ $requiredOk = switch ($AuthMode) {
     }
 }
 
+$headerStripOk = if ($AuthMode -eq "CaddyBasic") {
+    $headerStripObserved -and -not $authorizationForwardedToUpstream
+}
+else {
+    $true
+}
+
 $status = if (
     $requiredOk -and
     $publicHttps -and
     $serviceStatus -eq "Running" -and
-    $caddyConfigChecked -and
-    $headerStripped
+    $headerStripOk
 ) {
     "ok"
 }
@@ -284,8 +417,8 @@ $receipt = [ordered]@{
     authenticated_all_ok = $authenticatedAllOk
     invalid_credentials_routes = $invalidRoutes
     invalid_credentials_all_denied = $invalidCredentialsAllDenied
-    authorization_forwarded_to_upstream = (-not $headerStripped)
-    caddy_config_checked = $caddyConfigChecked
+    header_strip_observed = $headerStripObserved
+    authorization_forwarded_to_upstream = $authorizationForwardedToUpstream
     secret_values_exposed = $false
 }
 

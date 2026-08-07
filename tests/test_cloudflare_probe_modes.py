@@ -34,8 +34,25 @@ def routes_ok(results: list[dict]) -> bool:
     return len(results) > 0 and all(r["ok"] for r in results)
 
 
-def validate_flags(auth_mode: str, access_cookie: bool, credential: bool, enforce: bool, wrong_cred: bool = False) -> list[str]:
+def validate_flags(
+    auth_mode: str,
+    access_cookie: bool,
+    credential: bool,
+    enforce: bool,
+    wrong_cred: bool = False,
+    echo_route: bool = False,
+    credential_partial: bool = False,
+    wrong_credential_partial: bool = False,
+) -> list[str]:
+    """Mirror of the probe's fail-closed flag validation.
+
+    `credential` means a complete credential surface (username + password
+    source). `credential_partial` means a username OR password source without
+    the other, which the real probe rejects before making any request.
+    """
     errs = []
+    if credential_partial or wrong_credential_partial:
+        errs.append("partial credential surface rejected")
     if auth_mode == "None" and (access_cookie or credential or wrong_cred or enforce):
         errs.append("AuthMode=None rejects credential/access flags")
     if auth_mode == "CaddyBasic" and enforce:
@@ -46,6 +63,8 @@ def validate_flags(auth_mode: str, access_cookie: bool, credential: bool, enforc
         errs.append("Credential/WrongCredential are CaddyBasic-only; cannot combine with Access")
     if auth_mode == "Access" and enforce and access_cookie:
         errs.append("ExpectAccessEnforcement expects no AccessCookie")
+    if auth_mode != "CaddyBasic" and echo_route:
+        errs.append("EchoRoute is CaddyBasic-only (header-strip observation)")
     return errs
 
 
@@ -106,6 +125,24 @@ def test_incompatible_flags_rejected():
     assert validate_flags("None", False, False, False) == []
     assert validate_flags("CaddyBasic", False, True, False) == []
     assert validate_flags("Access", True, False, False) == []
+
+
+def test_partial_credential_surfaces_rejected():
+    # username without a password source, or password-only, in any mode.
+    assert validate_flags("CaddyBasic", False, False, False, credential_partial=True)
+    assert validate_flags("CaddyBasic", False, False, False, wrong_credential_partial=True)
+    assert validate_flags("CaddyBasic", False, False, False, credential_partial=True, wrong_credential_partial=True)
+    assert validate_flags("None", False, False, False, credential_partial=True)
+    assert validate_flags("Access", False, False, False, wrong_credential_partial=True)
+    # complete surfaces are fine for their own mode
+    assert validate_flags("CaddyBasic", False, True, False) == []
+    assert validate_flags("CaddyBasic", False, False, False, wrong_cred=True) == []
+
+
+def test_echo_route_only_for_caddybasic():
+    assert validate_flags("Access", False, False, False, echo_route=True)
+    assert validate_flags("None", False, False, False, echo_route=True)
+    assert validate_flags("CaddyBasic", False, True, False, echo_route=True) == []
 
 
 def test_access_protected_rejects_unrelated_redirect_and_accepts_cf_redirect():

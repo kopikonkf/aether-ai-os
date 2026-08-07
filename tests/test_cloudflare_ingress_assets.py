@@ -56,7 +56,7 @@ def test_cloudflare_ingress_probe_supports_access_enforcement_and_authenticated_
     assert "ExpectAccessEnforcement" in probe
     assert "CF_Authorization" in probe
     assert "authenticated_all_ok" in probe
-    assert "-MaximumRedirection 0" in probe
+    assert "AllowAutoRedirect" in probe
     assert "AuthMode" in probe
     assert '"CaddyBasic"' in probe or "'CaddyBasic'" in probe
     assert "Credential" in probe
@@ -64,7 +64,24 @@ def test_cloudflare_ingress_probe_supports_access_enforcement_and_authenticated_
     assert "unauthenticated_all_denied" in probe
     assert "invalid_credentials_all_denied" in probe
     assert "authorization_forwarded_to_upstream" in probe
+    assert "header_strip_observed" in probe
+    assert "EchoRoute" in probe
     assert "WWW-Authenticate" in probe or "www_authenticate" in probe
+
+
+def test_probe_uses_secret_safe_credential_surface():
+    probe = _read(CLOUDFLARE_DIR / "probe-cloudflare-ingress.ps1")
+    # No plaintext password parameter may exist: passwords come from a
+    # PSCredential object or stdin only.
+    assert "CredentialPasswordStdin" in probe
+    assert "[string]$CredentialPassword" not in probe
+    assert "[string]$WrongCredentialPassword" not in probe
+    assert "CredentialPassword" not in re.sub(r"PasswordStdin", "", probe)
+    # The header-strip conclusion must come from the echo upstream observation,
+    # never from an inspection of Caddy /config/.
+    assert "CaddyAdminUrl" not in probe
+    assert "caddy_config_checked" not in probe
+    assert ".json" in probe or "-Authorization" in probe
 
 
 def test_install_writes_auth_fragment_and_never_records_hash():

@@ -50,7 +50,27 @@ jobs:
           PY
       - name: Validate Cloudflare ingress assets
         run: |
-          python -m pytest -q tests/test_cloudflare_ingress_assets.py tests/test_cloudflare_probe_modes.py tests/test_cloudflare_ingress_integration.py
+          python -m pytest -q tests/test_cloudflare_ingress_assets.py tests/test_cloudflare_probe_modes.py tests/test_cloudflare_ingress_integration.py -p no:cacheprovider
+      - name: Real ingress boundary proof (Caddy + echo + real probe, not skipped)
+        run: |
+          # Install PowerShell (pwsh) from the official release so the probe
+          # script can be executed for real.
+          sudo mkdir -p /opt/microsoft/powershell/7
+          curl -fsSL -o /tmp/pwsh.tar.gz "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-x64.tar.gz"
+          sudo tar zxf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7
+          sudo chmod +x /opt/microsoft/powershell/7/pwsh
+          sudo ln -sf /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+          # Install Caddy so the boundary proof uses the real router, not a mirror.
+          cd /tmp
+          curl -fsSL -o caddy.tar.gz "https://github.com/caddyserver/caddy/releases/download/v2.11.3/caddy_2.11.3_linux_amd64.tar.gz"
+          tar -xzf caddy.tar.gz caddy
+          sudo mv caddy /usr/local/bin/caddy
+          caddy version
+          cd "${{ github.workspace }}"
+          AETHER_INGRESS_INTEGRATION=1 python -m pytest -q tests/test_cloudflare_ingress_integration.py -p no:cacheprovider
+        env:
+          AETHER_INGRESS_INTEGRATION: "1"
       - name: Validate Caddyfile with Caddy
         run: |
           mkdir -p caddy-validate
