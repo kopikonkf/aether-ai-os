@@ -52,11 +52,29 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import json
+          import subprocess
           import yaml
-          for path in Path('.').rglob('*.json'):
-              json.loads(path.read_text('utf-8'))
-          for path in [*Path('.').rglob('*.yaml'), *Path('.').rglob('*.yml')]:
-              yaml.safe_load(path.read_text('utf-8'))
+
+          tracked_assets = subprocess.check_output(
+              [
+                  'git',
+                  'ls-files',
+                  '-z',
+                  '--',
+                  '*.json',
+                  '*.webmanifest',
+                  '*.yaml',
+                  '*.yml',
+              ]
+          ).decode('utf-8').split('\0')
+
+          for raw_path in filter(None, tracked_assets):
+              path = Path(raw_path)
+              content = path.read_text('utf-8')
+              if path.suffix in {'.json', '.webmanifest'}:
+                  json.loads(content)
+              else:
+                  yaml.safe_load(content)
           PY
       - name: Validate Cloudflare ingress assets
         run: |
