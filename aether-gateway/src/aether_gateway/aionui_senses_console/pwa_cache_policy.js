@@ -1,4 +1,4 @@
-export const PWA_BUILD_ID = 'senses-v1-slice-7-20260808-1';
+export const PWA_BUILD_ID = 'senses-v1-slice-8-20260808-1';
 export const CACHE_PREFIX = 'aether-senses-shell-';
 export const CACHE_NAME = `${CACHE_PREFIX}${PWA_BUILD_ID}`;
 export const SHELL_NAVIGATION_URL = '/senses';
@@ -9,6 +9,7 @@ export const VERSIONED_STATIC_ASSETS = Object.freeze([
   versioned('/senses/styles.css'),
   versioned('/senses/app.js'),
   versioned('/senses/client_state.js'),
+  versioned('/senses/capability_actions.js'),
   versioned('/senses/turn_generation.js'),
   versioned('/senses/vision_capture.js'),
   versioned('/senses/pwa_runtime.js'),
