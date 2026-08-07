@@ -198,3 +198,40 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
   + Watchdog, no sense-worker) -> ACL -> local auth proof (production Caddyfile +
   proof echo) -> reuse tunnel `8f53133` + DNS cutover `:8080` -> public proof +
   recovery receipts CONFORMED.
+
+## Host state (2026-08-07) — migration COMPLETE; ingress blocked by source patch
+
+- **AETHER_HOME migration: COMPLETE**, do not re-run. Receipt
+  `C:\aether\migration-evidence\20260806T221720Z\aether-quiescent-migration-20260806T221720Z.json`
+  verdict `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` (source `C:\aether\home` ->
+  rollback preserved; canonical target `C:\ProgramData\Aether`, 20/20 DB,
+  mismatches 0, ACL protected SYSTEM+Administrators). `C:\aether\home` no longer
+  exists (moved to `C:\aether\home.rollback-20260806T221720Z`).
+- **Active release on VPS: `81582f70c0ccd3d7b32d364b2be6784cff5ffc31`**
+  (immutable). Production services running: `AetherGateway` (:8000, health ok),
+  `AetherWatchdog`, `AetherCaddy` (:8080). `AetherSenseWorker` and
+  `AetherCloudflareTunnel` absent (per design: no sense-worker; shared tunnel).
+- **`main` = `a14aac7d0bc3954919665da1d6c17ca88f1b904d`** (after PR #39). Repo
+  HEAD asserted exact.
+- **Founder ingress host: NOT CONFORMED.** `https://aethers.my.id` currently
+  serves IIS welcome page (tunnel config maps `aethers`/`www` -> `localhost:80`);
+  Caddy :8080 has no basic auth yet; `founder-auth.caddy` absent.
+- **Ingress is BLOCKED by a release-promotion / shared-tunnel source patch**
+  (PR `agent/release-promotion-shared-tunnel`):
+  - `install-aether-services.ps1` previously ran `icacls /inheritance:e` which
+    can re-enable inheritance and weaken the AETHER_HOME DACL — now uses governed
+    `Ensure-ProtectedAetherHome` (new=apply protected exact, existing=assert only).
+  - `promote-aether-release.ps1` adds governed promotion: stage exact clean main
+    SHA to a new immutable release, reconcile Gateway/Watchdog only (no AETHER_HOME
+    migration), manifest binds exact target SHA, auto-rollback to `81582f70` on
+    health failure.
+  - `update-shared-tunnel.ps1` adds shared-tunnel mode: preserves
+    `oc -> :3000`, `jarvis -> :8010`, `http_status:404`; only rewrites
+    `aethers`/`www` origins `localhost:80 -> localhost:8080`; no second connector;
+    validate + backup + automatic rollback; secret-safe before/after config SHA
+    receipt. (No DNS CNAME change needed — cutover is origin mapping.)
+  - Persistent tunnel: single SCM-managed `cloudflared` connector.
+- **Next (after this PR reviews + merges):** stage exact latest `main`, promote
+  services to the new release (no migration), local auth proof, then Dee
+  authorizes the public origin cutover (`:80 -> :8080`), public proof, and
+  recovery receipts.
