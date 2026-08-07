@@ -28,6 +28,7 @@ from aether.contracts.senses import Expression, Perception, SenseAdapter
 from aether.senses import SenseEventPath, SensePathResult
 from aether_gateway.approvals import (
     ApprovalCoordinator,
+    ApprovalInboxService,
     TelegramApprovalCallbackCodec,
     approval_card_text,
     format_pending,
@@ -66,6 +67,7 @@ class TelegramSenseAdapter(SenseAdapter):
         speech_renderer: SpeechRenderer | None = None,
         session_reset: SessionReset | None = None,
         approval_coordinator: ApprovalCoordinator | None = None,
+        approval_inbox: ApprovalInboxService | None = None,
         command_registry: TelegramCommandRegistry | None = None,
         approval_callback_codec: TelegramApprovalCallbackCodec | None = None,
         token: str | None = None,
@@ -80,6 +82,11 @@ class TelegramSenseAdapter(SenseAdapter):
         self._speech_renderer = speech_renderer
         self._session_reset = session_reset
         self._approval_coordinator = approval_coordinator
+        self._approval_inbox = approval_inbox or (
+            ApprovalInboxService(approval_coordinator)
+            if approval_coordinator is not None
+            else None
+        )
         self._command_registry = command_registry or default_telegram_command_registry()
         callback_secret = (
             os.environ.get("AETHER_TELEGRAM_CALLBACK_SECRET")
@@ -239,30 +246,14 @@ class TelegramSenseAdapter(SenseAdapter):
             or InlineKeyboardButton is None
             or InlineKeyboardMarkup is None
             or self._approval_callback_codec is None
-            or self._approval_coordinator is None
+            or self._approval_inbox is None
             or not approval_id
         ):
             await self._send_text(chat_id, str(expression.content))
             return
         try:
-            pending = self._approval_coordinator.inbox.get(approval_id)
-            callback = self._approval_callback_codec
-            keyboard = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "✅ Approve once",
-                        callback_data=callback.encode("approve", approval_id),
-                    ),
-                    InlineKeyboardButton(
-                        "❌ Reject",
-                        callback_data=callback.encode("reject", approval_id),
-                    ),
-                ],
-                [InlineKeyboardButton(
-                    "🔍 Details",
-                    callback_data=callback.encode("details", approval_id),
-                )],
-            ])
+            pending = self._approval_inbox.get(approval_id)
+            keyboard = self._approval_keyboard(pending)
             await self._bot.send_message(
                 chat_id=chat_id,
                 text=approval_card_text(pending),
@@ -271,6 +262,37 @@ class TelegramSenseAdapter(SenseAdapter):
         except Exception:
             log.exception("Failed to render Telegram approval card; using text fallback")
             await self._send_text(chat_id, str(expression.content))
+
+    def _approval_keyboard(self, pending: Any) -> Any:
+        if (
+            InlineKeyboardButton is None
+            or InlineKeyboardMarkup is None
+            or self._approval_callback_codec is None
+        ):
+            raise RuntimeError("Telegram inline approval controls are unavailable")
+        callback = self._approval_callback_codec
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "✅ Approve once",
+                    callback_data=callback.encode(
+                        "approve", pending.approval_id, pending.action_hash
+                    ),
+                ),
+                InlineKeyboardButton(
+                    "❌ Reject",
+                    callback_data=callback.encode(
+                        "reject", pending.approval_id, pending.action_hash
+                    ),
+                ),
+            ],
+            [InlineKeyboardButton(
+                "🔍 Details",
+                callback_data=callback.encode(
+                    "details", pending.approval_id, pending.action_hash
+                ),
+            )],
+        ])
 
     async def _send_voice(self, chat_id: int, audio: bytes) -> None:
         if self._voice_sender:
@@ -320,8 +342,8 @@ class TelegramSenseAdapter(SenseAdapter):
             return
         events = self.sense_path.event_bus.replay()
         pending_count = 0
-        if self._approval_coordinator is not None:
-            pending_count = len(self._approval_coordinator.inbox.list())
+        if self._approval_inbox is not None:
+            pending_count = len(self._approval_inbox.list())
         await update.message.reply_text(
             f"Aether Sense Path online. Durable events: {len(events)}. "
             f"Pending approvals: {pending_count}. "
@@ -335,21 +357,45 @@ class TelegramSenseAdapter(SenseAdapter):
                 "Trusted approval commands require TELEGRAM_ALLOWED_USER_IDS to include your user ID."
             )
             return
-        if self._approval_coordinator is None:
+        if self._approval_inbox is None:
             await update.message.reply_text("Approval inbox belum dikonfigurasi.")
             return
-        pending = self._approval_coordinator.inbox.list()
+        pending = [
+            item
+            for item in self._approval_inbox.list()
+            if self._callback_chat_matches(
+                item,
+                callback_chat_id=update.effective_chat.id,
+                user_id=user_id,
+            )
+        ]
         if not pending:
             await update.message.reply_text("Tidak ada pending approval.")
             return
-        body = "Pending Aether approvals:\n\n" + "\n\n".join(format_pending(item) for item in pending[:10])
-        await update.message.reply_text(body)
+        if (
+            self._approval_callback_codec is None
+            or InlineKeyboardButton is None
+            or InlineKeyboardMarkup is None
+        ):
+            body = "Pending Aether approvals:\n\n" + "\n\n".join(
+                format_pending(item) for item in pending[:10]
+            )
+            await update.message.reply_text(body)
+            return
+        await update.message.reply_text(
+            "Pending Aether approvals. Each control is single-use and bound to the exact action hash."
+        )
+        for item in pending[:10]:
+            await update.message.reply_text(
+                approval_card_text(item),
+                reply_markup=self._approval_keyboard(item),
+            )
 
     def _pending_for_chat(self, chat_id: int) -> list[Any]:
-        if self._approval_coordinator is None:
+        if self._approval_inbox is None:
             return []
         rows = []
-        for pending in self._approval_coordinator.inbox.list():
+        for pending in self._approval_inbox.list():
             candidate = pending.proposal.metadata.get("chat_id")
             try:
                 if candidate is not None and int(candidate) == int(chat_id):
@@ -365,7 +411,7 @@ class TelegramSenseAdapter(SenseAdapter):
                 "Trusted approval commands require an explicit Telegram operator allowlist."
             )
             return
-        if self._approval_coordinator is None:
+        if self._approval_inbox is None:
             await update.message.reply_text("Approval inbox belum dikonfigurasi.")
             return
 
@@ -394,12 +440,23 @@ class TelegramSenseAdapter(SenseAdapter):
                 else "Founder rejected once via trusted Telegram session"
             )
         try:
-            outcome = await self._approval_coordinator.decide(
+            pending_record = self._approval_inbox.get(approval_id)
+            if not self._callback_chat_matches(
+                pending_record,
+                callback_chat_id=update.effective_chat.id,
+                user_id=user_id,
+            ):
+                await update.message.reply_text(
+                    "This approval is not authorized in the current Telegram chat."
+                )
+                return
+            outcome = await self._approval_inbox.decide(
                 approval_id,
                 approved=approved,
                 principal=f"telegram:{user_id}",
                 reason=reason,
                 channel="telegram",
+                expected_action_hash=pending_record.action_hash,
             )
         except Exception as exc:
             await update.message.reply_text(f"Approval gagal: {type(exc).__name__}: {exc}")
@@ -422,13 +479,52 @@ class TelegramSenseAdapter(SenseAdapter):
                 "action tidak dijalankan ulang."
             )
         if outcome.expression is not None:
-            return str(outcome.expression.content)
+            if self._expression_targets_telegram(outcome.expression):
+                return str(outcome.expression.content)
+            return (
+                f"Approval {approval_id} consumed exactly once. "
+                "The originating Senses surface will reconcile from the authoritative receipt."
+            )
         result = outcome.approval.result
         status = result.status if result else pending.status.value
         detail = f"Approval {approval_id} consumed exactly once. Status: {status}."
         if result is not None and not result.ok and result.error:
             detail += f"\nError: {result.error}\nAutomatic retry: disabled."
         return detail
+
+    @staticmethod
+    def _expression_targets_telegram(expression: Any) -> bool:
+        return (
+            expression.metadata.get("chat_id") is not None
+            or str(expression.target).startswith("telegram:")
+        )
+
+    @staticmethod
+    def _callback_chat_matches(
+        pending: Any,
+        *,
+        callback_chat_id: Any,
+        user_id: int,
+    ) -> bool:
+        metadata = pending.proposal.metadata
+        request_channel = str(
+            pending.request_channel or metadata.get("channel") or ""
+        ).casefold()
+        session_id = str(metadata.get("session_id") or "")
+        try:
+            callback_chat = int(callback_chat_id)
+        except (TypeError, ValueError):
+            return False
+        if request_channel == "telegram":
+            try:
+                return callback_chat == int(metadata.get("chat_id"))
+            except (TypeError, ValueError):
+                return False
+        if request_channel in {"browser", "livekit"} or session_id.startswith("browser:"):
+            # Cross-channel handoff is accepted only in the trusted operator's
+            # private chat, never in a group or a forwarded callback context.
+            return callback_chat == int(user_id)
+        return False
 
     async def approval_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
@@ -438,23 +534,26 @@ class TelegramSenseAdapter(SenseAdapter):
         if not self._is_trusted_operator(user_id):
             await query.answer("Trusted Founder access required.", show_alert=True)
             return
-        if self._approval_coordinator is None or self._approval_callback_codec is None:
+        if self._approval_inbox is None or self._approval_callback_codec is None:
             await query.answer("Approval inbox is unavailable.", show_alert=True)
             return
         try:
-            callback = self._approval_callback_codec.decode(query.data or "")
-            pending = self._approval_coordinator.inbox.get(callback.approval_id)
+            approval_id = self._approval_callback_codec.peek_approval_id(query.data or "")
+            pending = self._approval_inbox.get(approval_id)
+            callback = self._approval_callback_codec.decode(
+                query.data or "", pending.action_hash
+            )
         except Exception as exc:
             await query.answer(f"Invalid or expired approval control: {type(exc).__name__}", show_alert=True)
             return
 
         message = query.message
         callback_chat_id = getattr(getattr(message, "chat", None), "id", None)
-        expected_chat_id = pending.proposal.metadata.get("chat_id")
-        try:
-            chat_matches = callback_chat_id is not None and int(callback_chat_id) == int(expected_chat_id)
-        except (TypeError, ValueError):
-            chat_matches = False
+        chat_matches = self._callback_chat_matches(
+            pending,
+            callback_chat_id=callback_chat_id,
+            user_id=user_id,
+        )
         if not chat_matches:
             await query.answer("This approval belongs to a different chat.", show_alert=True)
             return
@@ -469,7 +568,7 @@ class TelegramSenseAdapter(SenseAdapter):
         await query.answer("Executing…" if approved else "Rejected")
         outcome = None
         try:
-            outcome = await self._approval_coordinator.decide(
+            outcome = await self._approval_inbox.decide(
                 callback.approval_id,
                 approved=approved,
                 principal=f"telegram:{user_id}",
@@ -479,6 +578,7 @@ class TelegramSenseAdapter(SenseAdapter):
                     else "Founder rejected once via Telegram inline control"
                 ),
                 channel="telegram-inline",
+                expected_action_hash=pending.action_hash,
             )
         except Exception as exc:
             if query.message is not None:
@@ -492,7 +592,10 @@ class TelegramSenseAdapter(SenseAdapter):
         if outcome is not None and _should_send_followup(
             approved=approved,
             replayed=bool(outcome.approval.replayed),
-            has_expression=outcome.expression is not None,
+            has_expression=(
+                outcome.expression is not None
+                and self._expression_targets_telegram(outcome.expression)
+            ),
         ):
             delivery_error: Exception | None = None
             try:
