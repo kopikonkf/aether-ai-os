@@ -5,12 +5,22 @@ import {
   TurnState,
   createClientStore,
   deriveClientPresentation,
-} from './client_state.js';
+} from './client_state.js?v=senses-v1-slice-7-20260808-1';
 import {
   createTurnGenerationCoordinator,
   stopTurnAudio,
-} from './turn_generation.js';
-import { createVisionCaptureCoordinator } from './vision_capture.js';
+} from './turn_generation.js?v=senses-v1-slice-7-20260808-1';
+import { createVisionCaptureCoordinator } from './vision_capture.js?v=senses-v1-slice-7-20260808-1';
+import {
+  CACHE_PREFIX,
+  PWA_BUILD_ID,
+} from './pwa_cache_policy.js?v=senses-v1-slice-7-20260808-1';
+import {
+  PwaLifecycleState,
+  createInitialPwaRuntime,
+  derivePwaPresentation,
+  reducePwaRuntime,
+} from './pwa_runtime.js?v=senses-v1-slice-7-20260808-1';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -43,6 +53,10 @@ const state = {
     pitch: 1.12,
     volume: 1,
   },
+  installPrompt: null,
+  updateRegistration: null,
+  reloadForUpdate: false,
+  suspendClosePromise: null,
 };
 const API = '';
 const TURN_STATE_TOPIC = 'aether.senses.turn-state.v1';
@@ -50,6 +64,11 @@ const TURN_REQUEST_TIMEOUT_MS = 30000;
 const RECONCILIATION_DELAYS_MS = Object.freeze([0, 1000, 3000]);
 const turnCoordinator = createTurnGenerationCoordinator();
 const visionCoordinator = createVisionCaptureCoordinator();
+let pwaRuntime = createInitialPwaRuntime({
+  online: navigator.onLine,
+  visible: document.visibilityState === 'visible',
+  controlled: Boolean(navigator.serviceWorker?.controller),
+});
 
 function message(role, text) {
   const node = document.createElement('div');
@@ -65,8 +84,16 @@ function setTransportMessage(text) {
 
 function renderClientState(clientState) {
   const presentation = deriveClientPresentation(clientState);
-  $('systemState').className = `pill ${presentation.systemClass}`;
-  $('systemState').textContent = presentation.systemLabel;
+  const pwa = derivePwaPresentation(pwaRuntime);
+  const foreground = pwaRuntime.lifecycle === PwaLifecycleState.FOREGROUND;
+  $('systemState').className = `pill ${pwa.aetherAvailable ? presentation.systemClass : 'offline'}`;
+  $('systemState').textContent = pwa.aetherAvailable
+    ? presentation.systemLabel
+    : pwa.label;
+  $('pwaRuntimeState').textContent = pwa.label;
+  $('pwaRuntimeBanner').classList.toggle('offline', !pwaRuntime.online);
+  $('pwaRuntimeBanner').classList.toggle('suspended', pwa.resumeRequired);
+  $('resumeSenses').hidden = !pwa.resumeRequired;
   $('authState').textContent = presentation.authLabel;
   $('transportModeState').textContent = presentation.transportLabel;
   $('turnState').textContent = presentation.turnLabel;
@@ -77,8 +104,9 @@ function renderClientState(clientState) {
 
   $('pairButton').disabled = (
     clientState.authSession === AuthSessionState.BOOTSTRAP_PENDING
+    || !foreground
   );
-  $('connectButton').disabled = !presentation.canConnect || !state.deviceKey;
+  $('connectButton').disabled = !presentation.canConnect || !state.deviceKey || !foreground;
   $('disconnectButton').disabled = ![
     AuthSessionState.CONNECTING,
     AuthSessionState.ACTIVE_REALTIME,
@@ -86,17 +114,27 @@ function renderClientState(clientState) {
     AuthSessionState.RECONNECTING,
     AuthSessionState.SUSPENDED,
   ].includes(clientState.authSession);
-  $('fallbackTalk').disabled = !presentation.canSend;
-  $('cameraButton').disabled = !presentation.canUseSensors && !state.cameraEnabled;
-  $('visionButton').disabled = !presentation.canUseSensors || !state.cameraEnabled;
-  $('screenButton').disabled = !presentation.canUseSensors && !state.screenEnabled;
-  $('screenVisionButton').disabled = !presentation.canUseSensors || !state.screenEnabled;
-  $('chatInput').disabled = !presentation.canSend;
-  $('chatForm').querySelector('button[type="submit"]').disabled = !presentation.canSend;
+  $('fallbackTalk').disabled = !presentation.canSend || !pwa.canSend;
+  $('cameraButton').disabled = (
+    (!presentation.canUseSensors || !pwa.sensorsAllowed) && !state.cameraEnabled
+  );
+  $('visionButton').disabled = (
+    !presentation.canUseSensors || !pwa.sensorsAllowed || !state.cameraEnabled
+  );
+  $('screenButton').disabled = (
+    (!presentation.canUseSensors || !pwa.sensorsAllowed) && !state.screenEnabled
+  );
+  $('screenVisionButton').disabled = (
+    !presentation.canUseSensors || !pwa.sensorsAllowed || !state.screenEnabled
+  );
+  $('chatInput').disabled = !presentation.canSend || !pwa.canSend;
+  $('chatForm').querySelector('button[type="submit"]').disabled = (
+    !presentation.canSend || !pwa.canSend
+  );
   $('stopAether').disabled = !presentation.canStopTurn;
   $('retryTurn').hidden = !(presentation.canRetryTurn && state.lastUnconfirmedInput);
   $('retryTurn').disabled = !(presentation.canRetryTurn && state.lastUnconfirmedInput);
-  $('previewVoice').disabled = !presentation.canUseBrowserSpeech;
+  $('previewVoice').disabled = !presentation.canUseBrowserSpeech || !pwa.sensorsAllowed;
   $('privateTextOnly').checked = (
     clientState.externalSpeech.privacy === ExternalSpeechPrivacy.PRIVATE_TEXT_ONLY
   );
@@ -106,6 +144,20 @@ const clientStore = createClientStore(renderClientState);
 
 function dispatch(type, values = {}) {
   return clientStore.dispatch({ type, ...values });
+}
+
+function dispatchPwa(type, values = {}) {
+  pwaRuntime = reducePwaRuntime(pwaRuntime, { type, ...values });
+  renderClientState(clientStore.getState());
+  return pwaRuntime;
+}
+
+function markAetherAvailable() {
+  dispatchPwa('AETHER_VERIFIED_AVAILABLE');
+}
+
+function markAetherUnavailable() {
+  if (pwaRuntime.aetherVerified) dispatchPwa('AETHER_UNAVAILABLE');
 }
 
 function dispatchForEpoch(type, epoch, values = {}) {
@@ -230,8 +282,40 @@ function clearSessionRuntime() {
   $('sessionLabel').textContent = 'no session';
 }
 
+async function clearManagedPwaCaches() {
+  navigator.serviceWorker?.controller?.postMessage({ type: 'AETHER_CLEAR_CACHES' });
+  if (!('caches' in window)) return;
+  const names = await caches.keys();
+  await Promise.all(
+    names
+      .filter((name) => name.startsWith(CACHE_PREFIX))
+      .map((name) => caches.delete(name)),
+  );
+}
+
+function closeSessionBestEffort(reason) {
+  if (!state.session || !state.csrfNonce || !navigator.onLine) {
+    return null;
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1500);
+  return fetch(`${API}/api/browser-senses/session/close`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    keepalive: true,
+    signal: controller.signal,
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+    },
+    body: JSON.stringify({ reason }),
+  }).catch(() => {}).finally(() => clearTimeout(timeout));
+}
+
 function expireLocalSession(text) {
   clearSessionRuntime();
+  markAetherUnavailable();
+  clearManagedPwaCaches().catch(() => {});
   if ([
     AuthSessionState.CONNECTING,
     AuthSessionState.ACTIVE_REALTIME,
@@ -247,6 +331,8 @@ function expireLocalSession(text) {
 
 function invalidatePairedDevice(text) {
   clearSessionRuntime();
+  markAetherUnavailable();
+  clearManagedPwaCaches().catch(() => {});
   state.deviceKey = null;
   removeDeviceKey().catch(() => {});
   dispatch('AUTH_REVOKED');
@@ -733,7 +819,9 @@ async function connectLiveKit(epoch) {
   if (!state.livekit?.ready) {
     throw new Error(state.livekit?.error || 'LiveKit transport is not ready.');
   }
-  const livekit = await import('https://cdn.jsdelivr.net/npm/livekit-client@2.17.2/+esm');
+  const livekit = await import(
+    `./vendor/livekit-client-2.17.2.esm.js?v=${PWA_BUILD_ID}`
+  );
   const room = new livekit.Room({ adaptiveStream: true, dynacast: true });
   room.on(livekit.RoomEvent.TrackSubscribed, (track) => {
     if (track.kind === livekit.Track.Kind.Audio) {
@@ -820,6 +908,7 @@ async function connectLiveKit(epoch) {
     if (clientStore.getEpoch() !== epoch) return;
     if (clientStore.getState().authSession === AuthSessionState.ACTIVE_REALTIME) {
       dispatchForEpoch('TRANSPORT_LOST', epoch);
+      markAetherUnavailable();
       setTransportMessage(
         'LiveKit disconnected. No uncertain turn will be replayed automatically.',
       );
@@ -836,6 +925,7 @@ async function connectLiveKit(epoch) {
     body: JSON.stringify({ transport: 'livekit' }),
   });
   dispatchForEpoch('REALTIME_VERIFIED', epoch);
+  markAetherAvailable();
   dispatchForEpoch('LISTENING_STARTED', epoch);
   $('micButton').disabled = false;
   $('voiceState').textContent = 'LiveKit voice active';
@@ -852,22 +942,31 @@ function verifiedFallbackMode() {
   return TransportMode.TEXT_ONLY;
 }
 
+async function verifyIssuedTransport(epoch) {
+  if (state.livekit?.ready) {
+    await connectLiveKit(epoch);
+    return;
+  }
+  const mode = verifiedFallbackMode();
+  dispatchForEpoch('DEGRADED_VERIFIED', epoch, { mode });
+  markAetherAvailable();
+  setTransportMessage(
+    `Aether session verified in ${mode.replaceAll('-', ' ')} mode; `
+    + 'LiveKit is unavailable.',
+  );
+}
+
 async function connect() {
   try {
+    if (!derivePwaPresentation(pwaRuntime).sensorsAllowed) {
+      throw new Error('Resume the visible online PWA before connecting Senses.');
+    }
     dispatch('CONNECT_REQUESTED');
     const epoch = clientStore.getEpoch();
     await issueSession(epoch);
-    if (state.livekit?.ready) {
-      await connectLiveKit(epoch);
-      return;
-    }
-    const mode = verifiedFallbackMode();
-    dispatchForEpoch('DEGRADED_VERIFIED', epoch, { mode });
-    setTransportMessage(
-      `Aether session verified in ${mode.replaceAll('-', ' ')} mode; `
-      + 'LiveKit is unavailable.',
-    );
+    await verifyIssuedTransport(epoch);
   } catch (error) {
+    markAetherUnavailable();
     message('system', `Connect failed: ${error.message}`);
     setTransportMessage(error.message);
     if (
@@ -881,7 +980,10 @@ async function connect() {
 
 async function ensureCamera() {
   if (state.cameraEnabled) return;
-  if (!deriveClientPresentation(clientStore.getState()).canUseSensors) {
+  if (
+    !deriveClientPresentation(clientStore.getState()).canUseSensors
+    || !derivePwaPresentation(pwaRuntime).sensorsAllowed
+  ) {
     throw new Error('Connect a verified browser session before enabling camera preview.');
   }
   const stream = await navigator.mediaDevices.getUserMedia({
@@ -921,7 +1023,10 @@ async function toggleCamera() {
 
 async function ensureScreen() {
   if (state.screenEnabled) return;
-  if (!deriveClientPresentation(clientStore.getState()).canUseSensors) {
+  if (
+    !deriveClientPresentation(clientStore.getState()).canUseSensors
+    || !derivePwaPresentation(pwaRuntime).sensorsAllowed
+  ) {
     throw new Error('Connect a verified browser session before enabling screen preview.');
   }
   const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -1189,6 +1294,9 @@ async function beginBrowserTurn({ retry = false } = {}) {
 
 async function askVision(source = 'camera', silent = false) {
   if (!state.session) throw new Error('Connect a browser session first.');
+  if (!derivePwaPresentation(pwaRuntime).canSend) {
+    throw new Error('Aether is offline or Senses requires an explicit resume.');
+  }
   const enabled = source === 'camera' ? state.cameraEnabled : state.screenEnabled;
   if (!enabled) throw new Error(`Enable ${source} local preview before transmission.`);
   let lease = visionCoordinator.snapshot()[source];
@@ -1282,6 +1390,9 @@ async function toggleAutoVision(source = 'camera') {
 
 async function sendText(text, { retry = false } = {}) {
   if (!state.session) throw new Error('Connect a browser session first.');
+  if (!derivePwaPresentation(pwaRuntime).canSend) {
+    throw new Error('Aether is offline or Senses requires an explicit resume.');
+  }
   const epoch = clientStore.getEpoch();
   const turn = await beginBrowserTurn({ retry });
   dispatchForEpoch('TURN_GENERATION_STARTED', epoch, turnEvent(turn, {
@@ -1299,6 +1410,10 @@ async function sendText(text, { retry = false } = {}) {
 }
 
 function fallbackSTT() {
+  if (!derivePwaPresentation(pwaRuntime).canSend) {
+    message('system', 'Resume the online Senses session before browser speech input.');
+    return;
+  }
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
     message('system', 'Browser SpeechRecognition is unavailable. Use text input.');
@@ -1478,6 +1593,76 @@ function setPrivateTextOnly(enabled) {
   }
 }
 
+function showPwaUpdate(registration) {
+  state.updateRegistration = registration;
+  $('activatePwaUpdate').hidden = false;
+  setTransportMessage('A versioned Senses shell update is ready. Apply it when no turn is active.');
+}
+
+async function registerPwaShell() {
+  if (!('serviceWorker' in navigator) || !window.isSecureContext) return;
+  const registration = await navigator.serviceWorker.register(
+    `/senses/sw.js?v=${PWA_BUILD_ID}`,
+    { scope: '/senses', type: 'module', updateViaCache: 'none' },
+  );
+  if (registration.waiting && navigator.serviceWorker.controller) {
+    showPwaUpdate(registration);
+  }
+  registration.addEventListener('updatefound', () => {
+    const installing = registration.installing;
+    if (!installing) return;
+    installing.addEventListener('statechange', () => {
+      if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+        showPwaUpdate(registration);
+      }
+    });
+  });
+}
+
+async function activatePwaUpdate() {
+  const registration = state.updateRegistration;
+  if (!registration?.waiting) return;
+  await suspendSenses('PAGE_FROZEN', 'pwa-update');
+  state.reloadForUpdate = true;
+  $('activatePwaUpdate').disabled = true;
+  registration.waiting.postMessage({ type: 'AETHER_ACTIVATE_UPDATE' });
+}
+
+async function promptPwaInstall() {
+  if (!state.installPrompt) return;
+  const prompt = state.installPrompt;
+  state.installPrompt = null;
+  $('installPwa').hidden = true;
+  await prompt.prompt();
+  await prompt.userChoice;
+}
+
+async function resumeSenses() {
+  try {
+    dispatchPwa('RESUME_BY_GESTURE');
+    await state.suspendClosePromise;
+    state.suspendClosePromise = null;
+    const auth = clientStore.getState().authSession;
+    if (auth !== AuthSessionState.SUSPENDED) {
+      setTransportMessage('Foreground restored. Sensors remain off until explicitly enabled.');
+      message('system', 'Senses resumed. No microphone, camera, or screen source restarted.');
+      return;
+    }
+    dispatch('RESUME_REQUESTED');
+    const epoch = clientStore.getEpoch();
+    await issueSession(epoch);
+    await verifyIssuedTransport(epoch);
+    message('system', 'Senses resumed with a newly verified session. Sensors remain off.');
+  } catch (error) {
+    markAetherUnavailable();
+    setTransportMessage(`Resume failed: ${error.message}`);
+    message('system', `Resume failed: ${error.message}`);
+    if (clientStore.getState().authSession === AuthSessionState.CONNECTING) {
+      dispatch('SESSION_CLOSED');
+    }
+  }
+}
+
 loadVoiceProfile();
 $('voiceRate').value = state.voiceProfile.rate;
 $('voicePitch').value = state.voiceProfile.pitch;
@@ -1507,6 +1692,9 @@ $('previewVoice').addEventListener('click', previewVoice);
 $('pairButton').addEventListener('click', () => {
   requestPairing().catch((error) => pairingFailed(error.message));
 });
+$('resumeSenses').addEventListener('click', resumeSenses);
+$('installPwa').addEventListener('click', promptPwaInstall);
+$('activatePwaUpdate').addEventListener('click', activatePwaUpdate);
 $('connectButton').addEventListener('click', connect);
 $('disconnectButton').addEventListener('click', disconnect);
 $('stopAether').addEventListener('click', () => {
@@ -1557,15 +1745,68 @@ async function stopBackgroundSensors(reason) {
   if (state.screenEnabled) stops.push(stopVisionSource('screen', reason));
   await Promise.allSettled(stops);
 }
+
+async function suspendSenses(runtimeEvent, reason) {
+  dispatchPwa(runtimeEvent, { reason });
+  const auth = clientStore.getState().authSession;
+  const epoch = clientStore.getEpoch();
+  state.activeRequestController?.abort();
+  state.fallbackRecognition?.abort?.();
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  state.room?.localParticipant?.setMicrophoneEnabled(false).catch(() => {});
+  state.room?.disconnect();
+  state.micEnabled = false;
+  const stoppingSensors = stopBackgroundSensors(reason);
+  const closePromise = closeSessionBestEffort(reason);
+  if (closePromise) state.suspendClosePromise = closePromise;
+  if ([
+    AuthSessionState.ACTIVE_REALTIME,
+    AuthSessionState.ACTIVE_DEGRADED,
+    AuthSessionState.RECONNECTING,
+  ].includes(auth)) {
+    dispatchForEpoch('APP_SUSPENDED', epoch);
+  } else if (auth === AuthSessionState.CONNECTING) {
+    dispatch('SESSION_CLOSED');
+  }
+  clearSessionRuntime();
+  setTransportMessage(`${derivePwaPresentation(pwaRuntime).label}. Sensors stopped.`);
+  await stoppingSensors;
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'hidden') return;
-  stopBackgroundSensors('browser-backgrounded').catch(() => null);
+  if (document.visibilityState === 'hidden') {
+    suspendSenses('PAGE_HIDDEN', 'browser-backgrounded').catch(() => null);
+  } else if (!pwaRuntime.visible) {
+    dispatchPwa('PAGE_VISIBLE');
+  }
 });
 window.addEventListener('pagehide', () => {
-  stopBackgroundSensors('page-hidden').catch(() => null);
+  suspendSenses('PAGE_HIDDEN', 'page-hidden').catch(() => null);
 });
 document.addEventListener('freeze', () => {
-  stopBackgroundSensors('page-frozen').catch(() => null);
+  suspendSenses('PAGE_FROZEN', 'page-frozen').catch(() => null);
+});
+window.addEventListener('offline', () => {
+  suspendSenses('NETWORK_OFFLINE', 'network-offline').catch(() => null);
+});
+window.addEventListener('online', () => {
+  if (!pwaRuntime.online) dispatchPwa('NETWORK_ONLINE');
+});
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault();
+  state.installPrompt = event;
+  $('installPwa').hidden = false;
+});
+window.addEventListener('appinstalled', () => {
+  state.installPrompt = null;
+  $('installPwa').hidden = true;
+});
+navigator.serviceWorker?.addEventListener('controllerchange', () => {
+  if (state.reloadForUpdate) {
+    window.location.reload();
+    return;
+  }
+  if (!pwaRuntime.controlled) dispatchPwa('SERVICE_WORKER_CONTROLLING');
 });
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape' || $('stopAether').disabled) return;
@@ -1575,6 +1816,9 @@ window.addEventListener('keydown', (event) => {
 });
 
 renderClientState(clientStore.getState());
+registerPwaShell().catch((error) => {
+  message('system', `PWA shell registration failed: ${error.message}`);
+});
 loadDeviceKey().then((key) => {
   if (
     !key

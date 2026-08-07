@@ -553,13 +553,17 @@ async def browser_senses_response_boundary(request: Request, call_next):
                 headers={"Cache-Control": "no-store"},
             )
     response = await call_next(request)
-    if path == "/senses" or path.startswith((
-        "/senses/", "/api/browser-senses/bootstrap/", "/api/browser-senses/session",
-    )):
+    if (
+        path == "/health"
+        or path == "/senses"
+        or path.startswith(("/senses/", "/api/", "/aether/api/"))
+    ):
         response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
     if path == "/senses" or path.startswith("/senses/"):
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; style-src 'self'; "
+            "default-src 'self'; script-src 'self'; style-src 'self'; worker-src 'self'; "
+            "manifest-src 'self'; "
             "connect-src 'self' https://*.livekit.cloud wss://*.livekit.cloud; "
             "img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; "
             "base-uri 'none'; form-action 'self'; frame-ancestors 'self'"
@@ -1727,14 +1731,72 @@ def senses_console_vision_capture_js():
     )
 
 
+@app.get("/senses/pwa_runtime.js", include_in_schema=False)
+def senses_console_pwa_runtime_js():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "pwa_runtime.js",
+        media_type="application/javascript",
+    )
+
+
+@app.get("/senses/pwa_cache_policy.js", include_in_schema=False)
+def senses_console_pwa_cache_policy_js():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "pwa_cache_policy.js",
+        media_type="application/javascript",
+    )
+
+
 @app.get("/senses/styles.css", include_in_schema=False)
 def senses_console_css():
     return FileResponse(AIONUI_SENSES_CONSOLE_DIR / "styles.css", media_type="text/css")
 
 
-@app.get("/senses/manifest.json", include_in_schema=False)
+@app.get("/senses/sw.js", include_in_schema=False)
+def senses_console_service_worker():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "sw.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/senses"},
+    )
+
+
+@app.get("/senses/manifest.webmanifest", include_in_schema=False)
 def senses_console_manifest():
-    return FileResponse(AIONUI_SENSES_CONSOLE_DIR / "manifest.json", media_type="application/json")
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+    )
+
+
+@app.get("/senses/manifest.json", include_in_schema=False)
+def senses_console_manifest_compatibility_alias():
+    return senses_console_manifest()
+
+
+@app.get("/senses/vendor/livekit-client-2.17.2.esm.js", include_in_schema=False)
+def senses_console_livekit_bundle():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "vendor" / "livekit-client-2.17.2.esm.js",
+        media_type="application/javascript",
+    )
+
+
+_SENSES_PWA_ICONS = frozenset({
+    "aether-senses-192-v1.png",
+    "aether-senses-512-v1.png",
+    "aether-senses-maskable-512-v1.png",
+})
+
+
+@app.get("/senses/icons/{icon_name}", include_in_schema=False)
+def senses_console_icon(icon_name: str):
+    if icon_name not in _SENSES_PWA_ICONS:
+        raise HTTPException(status_code=404, detail="Unknown Senses PWA icon")
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "icons" / icon_name,
+        media_type="image/png",
+    )
 
 
 @app.get("/api/security/status")

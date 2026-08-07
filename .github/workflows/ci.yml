@@ -21,6 +21,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: aether-gateway/browser/package-lock.json
+      - name: Install locked Senses browser dependencies
+        working-directory: aether-gateway/browser
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Rebuild and verify the committed Senses browser bundle
+        working-directory: aether-gateway/browser
+        run: |
+          npm run bundle:senses
+          git diff --exit-code -- ../src/aether_gateway/aionui_senses_console/vendor/livekit-client-2.17.2.esm.js
       - name: Install source packages
         run: |
           python -m pip install --upgrade pip
@@ -28,7 +38,7 @@ jobs:
       - name: Compile source
         run: python -m compileall -q aether-core/src aether-tools/src aether-gateway/src scripts deploy/windows
       - name: Senses client reducer tests
-        run: node --test aether-gateway/tests/client_state_reducer.test.mjs aether-gateway/tests/turn_generation.test.mjs aether-gateway/tests/vision_capture.test.mjs
+        run: node --test aether-gateway/tests/client_state_reducer.test.mjs aether-gateway/tests/turn_generation.test.mjs aether-gateway/tests/vision_capture.test.mjs aether-gateway/tests/pwa_cache_policy.test.mjs aether-gateway/tests/pwa_runtime.test.mjs
       - name: Core tests
         run: python -m pytest -q aether-core/tests
       - name: Tools tests

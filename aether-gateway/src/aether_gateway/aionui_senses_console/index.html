@@ -4,8 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#080c14" />
+  <meta name="application-name" content="Aether Senses" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Aether — Unified Browser Senses</title>
-  <link rel="stylesheet" href="/senses/styles.css" />
+  <link rel="manifest" href="/senses/manifest.webmanifest" />
+  <link rel="icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-7-20260808-1" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-7-20260808-1" />
+  <link rel="stylesheet" href="/senses/styles.css?v=senses-v1-slice-7-20260808-1" />
 </head>
 <body>
   <main class="shell">
@@ -15,8 +22,20 @@
         <h1>See. Hear. Speak.</h1>
         <p class="sub">Browser media is transport. Aether remains the mind, memory, and governance authority.</p>
       </div>
-      <div id="systemState" class="pill offline">OFFLINE</div>
+      <div id="systemState" class="pill offline">OFFLINE — Aether unavailable</div>
     </header>
+
+    <section id="pwaRuntimeBanner" class="pwa-runtime" role="status" aria-live="polite">
+      <div>
+        <span>PWA runtime</span>
+        <strong id="pwaRuntimeState">OFFLINE — Aether unavailable</strong>
+      </div>
+      <div class="pwa-actions">
+        <button id="resumeSenses" class="primary" type="button" hidden>Resume senses</button>
+        <button id="installPwa" class="secondary" type="button" hidden>Install Senses</button>
+        <button id="activatePwaUpdate" class="secondary" type="button" hidden>Apply safe update</button>
+      </div>
+    </section>
 
     <section id="pairingPanel" class="panel pairing-panel">
       <div class="panel-head"><h2>Device pairing</h2><span id="pairingState">BOOTSTRAP REQUIRED</span></div>
@@ -116,6 +135,6 @@
 
     <footer><span id="transportStatus">Transport not initialized.</span></footer>
   </main>
-  <script type="module" src="/senses/app.js"></script>
+  <script type="module" src="/senses/app.js?v=senses-v1-slice-7-20260808-1"></script>
 </body>
 </html>

@@ -154,6 +154,25 @@ test('camera and screen consent are independent and suspension revokes both', ()
   assert.equal(state.turn, TurnState.IDLE);
 });
 
+test('foreground resume creates a fresh epoch and cannot revive an old turn or sensor lease', () => {
+  let state = activeState();
+  state = reduceClientState(state, event('TURN_GENERATION_STARTED', {
+    turnId: 'turn-before-suspend',
+    correlationId: 'corr-before-suspend',
+    generation: 0,
+  }));
+  state = reduceClientState(state, event('CONSENT_PREVIEW_STARTED', { source: 'camera' }));
+  state = reduceClientState(state, event('APP_SUSPENDED'));
+  const suspendedEpoch = state.epoch;
+  state = reduceClientState(state, event('RESUME_REQUESTED'));
+
+  assert.equal(state.authSession, AuthSessionState.CONNECTING);
+  assert.equal(state.epoch, suspendedEpoch + 1);
+  assert.equal(state.activeTurn.turnId, null);
+  assert.equal(state.consent.camera.mode, ConsentMode.OFF);
+  assert.equal(state.turn, TurnState.IDLE);
+});
+
 test('capability success requires the exact authoritative receipt', () => {
   let state = activeState();
   state = reduceClientState(state, event('CAPABILITY_RECEIPT', {
@@ -575,6 +594,7 @@ test('Senses shell renders all reducer axes and a private text-only control', as
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
+  assert.match(html, /OFFLINE — Aether unavailable/);
 });
 
 test('Senses app is wired only through the reducer presentation boundary', async () => {
@@ -583,20 +603,25 @@ test('Senses app is wired only through the reducer presentation boundary', async
     'utf8',
   );
 
-  assert.match(app, /from '.\/client_state\.js'/);
-  assert.match(app, /from '.\/turn_generation\.js'/);
+  assert.match(app, /from '.\/client_state\.js\?v=[^']+'/);
+  assert.match(app, /from '.\/turn_generation\.js\?v=[^']+'/);
+  assert.match(app, /from '.\/pwa_runtime\.js\?v=[^']+'/);
+  assert.match(app, /\.\/vendor\/livekit-client-2\.17\.2\.esm\.js/);
   assert.match(app, /clientStore\.dispatch/);
   assert.match(app, /deriveClientPresentation/);
   assert.match(app, /reconcileAmbiguousTurn/);
   assert.match(app, /interruptActiveTurn/);
+  assert.match(app, /suspendClosePromise/);
+  assert.match(app, /await state\.suspendClosePromise/);
   assert.doesNotMatch(app, /function setState\s*\(/);
   assert.doesNotMatch(app, /state\.paired/);
   assert.doesNotMatch(app, /\bconnected\s*:/);
   assert.doesNotMatch(app, /\bthinking\s*:/);
   assert.doesNotMatch(app, /\bworking\s*:/);
+  assert.doesNotMatch(app, /cdn\.jsdelivr\.net|unpkg\.com|esm\.sh/);
 });
 
-test('canonical handoff records slice six boundaries and the next slice', async () => {
+test('canonical handoff records slice seven boundaries and the next slice', async () => {
   const handoff = await readFile(
     new URL('../../LASTSTANDINGPOINT.md', import.meta.url),
     'utf8',
@@ -604,11 +629,14 @@ test('canonical handoff records slice six boundaries and the next slice', async 
 
   assert.match(handoff, /Implementation slice 5 is source-present/);
   assert.match(handoff, /Implementation slice 6 is source-present/);
-  assert.match(handoff, /merely because slices 1-6 are source-present/);
+  assert.match(handoff, /Implementation slice 7 is source-present/);
+  assert.match(handoff, /merely because slices 1-7 are source-present/);
   assert.match(handoff, /late-result-discarded/);
   assert.match(handoff, /never submitted again automatically/);
   assert.match(handoff, /server-authoritative consent leases/);
   assert.match(handoff, /VisionFrameReceipt` no longer requires/);
-  assert.match(handoff, /Bundle browser dependencies/);
+  assert.match(handoff, /module service worker owns only an exact build-versioned/);
+  assert.match(handoff, /Wire receipt-driven capability-action presentation/);
+  assert.match(handoff, /Tier-1 Windows Chromium/);
   assert.match(handoff, /Conversational interruption remains orthogonal/);
 });
