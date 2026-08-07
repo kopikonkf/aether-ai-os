@@ -48,6 +48,9 @@ def test_browser_senses_console_and_session_api(tmp_path, monkeypatch):
         assert vision_module.status_code == 200
         assert "createVisionCaptureCoordinator" in vision_module.text
         assert client.get("/senses/client_state.js").status_code == 200
+        capability_module = client.get("/senses/capability_actions.js")
+        assert capability_module.status_code == 200
+        assert "Senses approval handoff must remain presentation-only" in capability_module.text
         assert client.get("/senses/styles.css").status_code == 200
         assert client.get("/senses/pwa_runtime.js").status_code == 200
         policy = client.get("/senses/pwa_cache_policy.js")
@@ -97,6 +100,13 @@ def test_browser_senses_console_and_session_api(tmp_path, monkeypatch):
         assert status["vision"]["continuous_video_transmission"] is False
         assert client.get("/api/browser-senses/status").headers["cache-control"] == "no-store"
         assert client.get("/health").headers["cache-control"] == "no-store"
+        api_paths = client.get("/openapi.json").json()["paths"]
+        assert "/api/browser-senses/actions/{action_id}/status" in api_paths
+        assert all(
+            not path.startswith("/api/browser-senses/actions/")
+            or path.endswith("/status")
+            for path in api_paths
+        )
 
         denied_preflight = client.options(
             "/api/browser-senses/bootstrap/requests",
