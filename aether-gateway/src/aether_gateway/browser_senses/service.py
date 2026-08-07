@@ -21,7 +21,9 @@ from typing import Any, Mapping, Sequence
 
 from aether.browser_senses import BrowserSenseStore
 from aether.contracts import (
+    SENSES_V1_CONTRACT_VERSION,
     BrowserSenseCapability,
+    BrowserSenseRuntimeProfile,
     BrowserSenseSession,
     BrowserSenseSessionState,
     BrowserSenseTransport,
@@ -31,6 +33,7 @@ from aether.contracts import (
     EventType,
     Perception,
     VisionFrameReceipt,
+    require_browser_sense_v1_runtime_profile,
 )
 from aether.events import EventBus
 from aether.senses import SenseEventPath
@@ -189,7 +192,9 @@ class BrowserSenseService:
         capabilities: Sequence[BrowserSenseCapability],
         ttl_seconds: int | None = None,
         metadata: Mapping[str, Any] | None = None,
+        runtime_profile: BrowserSenseRuntimeProfile | str = BrowserSenseRuntimeProfile.GOVERNED_PIPELINE,
     ) -> dict[str, Any]:
+        profile = require_browser_sense_v1_runtime_profile(runtime_profile)
         ttl = max(300, min(int(ttl_seconds or self.default_ttl_seconds), 86_400))
         now = datetime.now(timezone.utc).replace(microsecond=0)
         expires = now + timedelta(seconds=ttl)
@@ -221,7 +226,12 @@ class BrowserSenseService:
             expires_at=expires_at,
             token_hash=hashlib.sha256(browser_token.encode("utf-8")).hexdigest(),
             principal=principal,
-            metadata={**dict(metadata or {}), "livekit_ready": bool(livekit.get("ready"))},
+            runtime_profile=profile,
+            metadata={
+                **dict(metadata or {}),
+                "contract_version": SENSES_V1_CONTRACT_VERSION,
+                "livekit_ready": bool(livekit.get("ready")),
+            },
         )
         self.store.record_session(session)
         self.event_bus.emit(EventType.BROWSER_SENSE_SESSION_ISSUED, actor="aether.browser-senses", payload={
@@ -230,6 +240,7 @@ class BrowserSenseService:
             "capabilities": [item.value for item in session.capabilities],
             "transports": [item.value for item in session.transports],
             "expires_at": session.expires_at,
+            "runtime_profile": profile.value,
             "livekit_ready": bool(livekit.get("ready")),
             "fingerprint": session.fingerprint,
         })
@@ -449,6 +460,8 @@ class BrowserSenseService:
     def status(self) -> dict[str, Any]:
         return {
             "policy_id": "aether.browser-senses.v1",
+            "contract_version": SENSES_V1_CONTRACT_VERSION,
+            "required_runtime_profile": BrowserSenseRuntimeProfile.GOVERNED_PIPELINE.value,
             "livekit": self.livekit_issuer.status(),
             "maximum_frame_bytes": self.maximum_frame_bytes,
             "default_session_ttl_seconds": self.default_ttl_seconds,
@@ -463,5 +476,6 @@ class BrowserSenseService:
         data["capabilities"] = [item.value for item in session.capabilities]
         data["transports"] = [item.value for item in session.transports]
         data["state"] = session.state.value
+        data["runtime_profile"] = session.runtime_profile.value if session.runtime_profile else None
         data.pop("token_hash", None)
         return data
