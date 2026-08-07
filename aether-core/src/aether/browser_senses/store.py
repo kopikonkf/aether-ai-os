@@ -10,6 +10,7 @@ from typing import Any
 from aether.contracts.browser_senses import (
     BrowserMediaTrackReceipt,
     BrowserSenseCapability,
+    BrowserSenseRuntimeProfile,
     BrowserSenseSession,
     BrowserSenseSessionState,
     BrowserSenseTransport,
@@ -124,7 +125,9 @@ class BrowserSenseStore:
             capabilities=tuple(BrowserSenseCapability(item) for item in data["capabilities"]),
             transports=tuple(BrowserSenseTransport(item) for item in data["transports"]),
             state=BrowserSenseSessionState(data["state"]), issued_at=data["issued_at"], expires_at=data["expires_at"],
-            token_hash=data["token_hash"], principal=data["principal"], metadata=data.get("metadata") or {},
+            token_hash=data["token_hash"], principal=data["principal"],
+            runtime_profile=BrowserSenseRuntimeProfile(data["runtime_profile"]) if data.get("runtime_profile") else None,
+            metadata=data.get("metadata") or {},
             fingerprint=data.get("fingerprint") or "",
         )
 
@@ -158,7 +161,9 @@ class BrowserSenseStore:
             capabilities=tuple(BrowserSenseCapability(item) for item in data["capabilities"]),
             transports=tuple(BrowserSenseTransport(item) for item in data["transports"]),
             state=BrowserSenseSessionState(data["state"]), issued_at=data["issued_at"], expires_at=data["expires_at"],
-            token_hash=data["token_hash"], principal=data["principal"], metadata=data.get("metadata") or {},
+            token_hash=data["token_hash"], principal=data["principal"],
+            runtime_profile=BrowserSenseRuntimeProfile(data["runtime_profile"]) if data.get("runtime_profile") else None,
+            metadata=data.get("metadata") or {},
             fingerprint=data.get("fingerprint") or "",
         )
 
