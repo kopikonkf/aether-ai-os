@@ -20,6 +20,50 @@ $logPath = Join-Path $ingressDir "cloudflare-probes.jsonl"
 
 $base = $BaseUrl.TrimEnd("/")
 
+# Cloudflare Access redirects unauthenticated clients to its own login host
+# (https://<team-name>.cloudflareaccess.com/cdn-cgi/access/login/...) or, in
+# some configurations, to a /.cloudflareaccess.com subdomain. A redirect is
+# only accepted as proof of Access enforcement when the Location header points
+# at that Cloudflare Access surface. Any other 3xx (an application redirect)
+# is NOT proof that Access enforced anything.
+function Test-AetherAccessProtected {
+    param(
+        [int]$StatusCode = 0,
+        [string]$Location = ""
+    )
+
+    $denial = @(401, 403) -contains $StatusCode
+    if ($denial) {
+        return $true
+    }
+
+    if (-not ($StatusCode -ge 300 -and $StatusCode -le 399)) {
+        return $false
+    }
+
+    if (-not $Location) {
+        return $false
+    }
+
+    $locationHost = $null
+    try {
+        $locationHost = [Uri]$Location
+    }
+    catch {
+        return $false
+    }
+    if ($null -eq $locationHost -or -not $locationHost.IsAbsoluteUri) {
+        return $false
+    }
+
+    $hostName = $locationHost.Host.ToLowerInvariant()
+    return (
+        $hostName.EndsWith(".cloudflareaccess.com") -or
+        $hostName -eq "cloudflareaccess.com" -or
+        $locationHost.AbsolutePath.ToLowerInvariant().Contains("/cdn-cgi/access/")
+    )
+}
+
 function Invoke-AetherProbeRoute {
     param(
         [Parameter(Mandatory = $true)][string]$Route,
@@ -56,10 +100,7 @@ function Invoke-AetherProbeRoute {
 
     $redirected = @(301, 302, 303, 307, 308) -contains $statusCode
     $denial = @(401, 403) -contains $statusCode
-    $accessProtected = (
-        ($statusCode -ge 300 -and $statusCode -le 399) -or
-        $denial
-    )
+    $accessProtected = Test-AetherAccessProtected -StatusCode $statusCode -Location $location
     $latencyMs = [math]::Round(((Get-Date) - $started).TotalMilliseconds, 1)
 
     return [ordered]@{

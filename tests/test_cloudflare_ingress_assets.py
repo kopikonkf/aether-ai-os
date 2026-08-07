@@ -76,10 +76,11 @@ def test_cloudflare_ingress_assets_do_not_embed_secrets_or_direct_gateway_exposu
 
 def test_probe_access_protection_covers_redirect_and_denial():
     probe = _read(CLOUDFLARE_DIR / "probe-cloudflare-ingress.ps1")
-    assert "(300 -and" in probe or "$statusCode -le 399" in probe
+    assert "Test-AetherAccessProtected" in probe
+    assert ".cloudflareaccess.com" in probe
+    assert "/cdn-cgi/access/" in probe
     assert "401, 403" in probe
     assert "access_protected" in probe
-    assert "access_protected" in probe  # used in post-processing
     assert re.search(r"unauthenticatedAllProtected.*access_protected", probe, re.S)
 
 
@@ -89,5 +90,9 @@ def test_install_checks_icacls_exit_code_and_acl_postcondition():
     assert "ACL hardening failed" in install
     assert "ACL postcondition verification failed" in install
     assert "AreAccessRulesProtected" in install
+    assert "required_sid_missing" in install
+    assert "required_rule_incomplete" in install
+    assert "ContainerInherit" in install
+    assert "ObjectInherit" in install
     assert "S-1-5-18" in install
     assert "S-1-5-32-544" in install

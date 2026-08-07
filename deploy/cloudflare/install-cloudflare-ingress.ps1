@@ -74,11 +74,16 @@ if (-not $homeExistedBefore) {
     }
 
     $homeAcl = Get-Acl -LiteralPath $AetherHome
-    $allowedSids = @("S-1-5-18", "S-1-5-32-544")
+    $requiredRules = @{
+        "S-1-5-18" = $false
+        "S-1-5-32-544" = $false
+    }
     $aclViolations = @()
     if (-not $homeAcl.AreAccessRulesProtected) {
         $aclViolations += "inheritance_not_disabled"
     }
+    $hasContainerInherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
+    $hasObjectInherit = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
     foreach ($rule in $homeAcl.Access) {
         try {
             $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
@@ -86,8 +91,25 @@ if (-not $homeExistedBefore) {
         catch {
             $sid = [string]$rule.IdentityReference
         }
-        if ($sid -notin $allowedSids -or $rule.AccessControlType -ne "Allow") {
+        if ($sid -notin @($requiredRules.Keys)) {
             $aclViolations += "unexpected_rule:${sid}:$($rule.AccessControlType)"
+            continue
+        }
+        $ruleIsFullControlAllow = (
+            $rule.AccessControlType -eq "Allow" -and
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl
+        )
+        $inherits = ([bool]($rule.InheritanceFlags -band $hasContainerInherit) -and [bool]($rule.InheritanceFlags -band $hasObjectInherit))
+        if (-not ($ruleIsFullControlAllow -and $inherits)) {
+            $aclViolations += "required_rule_incomplete:${sid}:rights=$($rule.FileSystemRights):inherit=$($rule.InheritanceFlags)"
+        }
+        else {
+            $requiredRules[$sid] = $true
+        }
+    }
+    foreach ($sid in @($requiredRules.Keys)) {
+        if (-not $requiredRules[$sid]) {
+            $aclViolations += "required_sid_missing:${sid}"
         }
     }
     if ($aclViolations.Count -gt 0) {
