@@ -158,6 +158,37 @@ function Stop-AllCloudflaredProcesses {
     Start-Sleep -Seconds 2
 }
 
+function Get-ScmConnectorInfo {
+    # Returns the SCM connector process info if it matches our tunnel config
+    $svc = Get-Service -Name $ConnectorServiceName -ErrorAction SilentlyContinue
+    if ($null -eq $svc) { return $null }
+    
+    $pids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Where-Object { $_.Id -eq $svc.Id })
+    if ($pids.Count -ne 1) { return $null }
+    
+    $proc = $pids[0]
+    $cmdline = $proc.CommandLine
+    $matchesConfig = $cmdline -match [regex]::Escape($TunnelConfig)
+    $matchesTunnel = $cmdline -match '8f53133'
+    $matchesMetrics = $cmdline -match [regex]::Escape("--metrics $ConnectorMetricsPort") -or $cmdline -match [regex]::Escape("--metrics=127.0.0.1:$ConnectorMetricsPort")
+    
+    return [ordered]@{
+        pid = $proc.Id
+        cmdline = $cmdline
+        matchesConfig = $matchesConfig
+        matchesTunnel = $matchesTunnel
+        matchesMetrics = $matchesMetrics
+        isValid = $matchesConfig -and $matchesTunnel -and $matchesMetrics
+    }
+}
+
+function Stop-AllCloudflaredProcesses {
+    foreach ($p in @(Get-Process cloudflared -ErrorAction SilentlyContinue)) {
+        try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { }
+    }
+    Start-Sleep -Seconds 2
+}
+
 function Restart-ScmConnector {
     $svc = Get-Service -Name $ConnectorServiceName -ErrorAction SilentlyContinue
     if ($null -eq $svc) {
@@ -173,15 +204,23 @@ function Restart-ScmConnector {
         Restart-Service -Name $ConnectorServiceName -Force -ErrorAction Stop
     }
     Start-Sleep -Seconds 3
-    return $svc
+    return Get-ScmConnectorInfo
 }
 
 function Assert-SingleConnector {
+    $info = Get-ScmConnectorInfo
     $pids = @(Get-Process cloudflared -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
     $receipt.connector_count_after = $pids.Count
     if ($pids.Count -ne 1) {
         throw "Expected exactly one cloudflared process; found $($pids.Count) ($($pids -join ','))"
     }
+    if (-not $info.isValid) {
+        throw "SCM connector does not match expected config/tunnel/metrics. PID: $($info.pid), cmdline: $($info.cmdline)"
+    }
+    $receipt.connector_count_after = 1
+    $receipt.connector_pid = $info.pid
+    $receipt.connector_cmdline = $info.cmdline
+    $receipt.connector_bound = $true
     return $true
 }
 
@@ -227,7 +266,7 @@ function Restore-SharedTunnelState {
     $receipt.config_after_sha256 = (Get-FileHash -LiteralPath $TunnelConfig -Algorithm SHA256).Hash.ToLowerInvariant()
 
     $recovered = $false
-    if ($Start -and $null -ne $connectorService) {
+    if ($receipt.connector_mutation_started) {
         try {
             Stop-AllCloudflaredProcesses
             if ((Get-Service -Name $ConnectorServiceName -ErrorAction SilentlyContinue).Status -eq "Stopped") {
@@ -237,8 +276,10 @@ function Restore-SharedTunnelState {
                 Restart-Service -Name $ConnectorServiceName -Force -ErrorAction Stop
             }
             Start-Sleep -Seconds 3
-            Assert-SingleConnector
-            $recovered = (Test-ConnectorReadiness)
+            $info = Get-ScmConnectorInfo
+            if ($null -ne $info -and $info.isValid) {
+                $recovered = (Test-ConnectorReadiness)
+            }
         }
         catch {
             $recovered = $false

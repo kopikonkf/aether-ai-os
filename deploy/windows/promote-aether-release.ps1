@@ -283,7 +283,19 @@ try {
             if (-not (Test-Path -LiteralPath $safeInstaller -PathType Leaf)) {
                 throw "Safe installer missing for fail-closed rollback: $safeInstaller"
             }
-            & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $safeInstaller -ReleasePath $rollbackPath -AetherHome $AetherHome -HostAddress $HostAddress -Port $Port | Out-Null
+            $installerArgs = @(
+                "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", $safeInstaller,
+                "-ReleasePath", $rollbackPath,
+                "-TargetSha", $RollbackRelease,
+                "-AetherHome", $AetherHome,
+                "-HostAddress", $HostAddress,
+                "-Port", [string]$Port
+            )
+            if ($PythonPath) {
+                $installerArgs += @("-PythonPath", $PythonPath)
+            }
+            & powershell.exe @installerArgs | Out-Null
             if ($LASTEXITCODE -ne 0) {
                 throw "Rollback reconcile failed (exit $LASTEXITCODE)"
             }
