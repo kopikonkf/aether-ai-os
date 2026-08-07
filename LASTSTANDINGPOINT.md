@@ -135,23 +135,48 @@ Founder approval / release evidence
   deletion receipt only. `VisionFrameReceipt` no longer requires or accepts a
   persistent storage path; raw bytes and prompt text are absent from the
   consent/frame SQLite ledgers and browser-sense event receipts.
+- Implementation slice 7 is source-present: `/senses` now exposes a same-origin
+  installable manifest with exact `/senses` start/scope, 192/512/maskable PNG
+  icons, safe-area layout, and minimum 44-CSS-pixel primary touch targets.
+- The browser build locks `livekit-client` 2.17.2 and esbuild 0.28.1 in an npm
+  lockfile, commits the reproducible local ESM bundle, and rebuilds/diffs that
+  artifact in CI. The Senses app and CSP no longer import or permit a public
+  JavaScript CDN at runtime.
+- The module service worker owns only an exact build-versioned static-asset
+  allowlist. The canonical `/senses` navigation is network-first with one static
+  offline-shell fallback; API, health/status, mutation, unknown-query,
+  cross-origin, audio, video, frame, transcript, authentication, and sensor
+  requests are network-only and never written by the service worker.
+- Offline launch is explicitly labelled `OFFLINE — Aether unavailable`; it
+  cannot send, capture, perform cognition, or queue a replay. Cache activation
+  deletes only prior Aether Senses cache versions, while credential revocation
+  explicitly purges every Aether Senses managed cache.
+- PWA lifecycle state is separate from Aether availability. Network loss,
+  backgrounding, page hide, and freeze synchronously stop local capture,
+  recognition, synthesis, remote audio, and the LiveKit room; returning visible
+  or online remains `SUSPENDED` until `Resume senses` is pressed. Resume creates
+  a fresh session epoch and never revives a prior turn or sensor lease. A waiting
+  service-worker update is activated only by an explicit safe-update gesture.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-6 are source-present. The Gemini adapter is not yet
+  merely because slices 1-7 are source-present. The Gemini adapter is not yet
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
-  and AionUi/Telegram presentation, browser/PWA execution, LiveKit grant
-  revocation, credentialed provider execution, and Founder host evidence still
-  require their own wiring and proof.
+  and receipt-driven AionUi/Telegram capability presentation, real browser/PWA
+  installation and launch evidence, LiveKit grant revocation, credentialed
+  provider execution, and Founder host evidence still require their own wiring
+  and proof.
 
 ## Next Senses implementation slice
 
-Bundle browser dependencies, add the installable PWA shell and a safe
-service-worker cache policy, then prove desktop/mobile foreground suspension,
-cold/warm launch behavior, and zero caching of raw media, authentication
-responses, cookies, tokens, or sensor payloads. Keep Senses source-present and
-do not claim mobile or host conformance before real browser/PWA evidence.
+Wire receipt-driven capability-action presentation and trusted approval handoff
+across AionUi/Senses and Telegram without activating a new capability adapter.
+Separately, after slice 7 is merged and deployed, run the Tier-1 Windows Chromium
+and Android installed-PWA matrix for install, cold/warm launch, foreground
+suspension, update activation, and Cache Storage inspection. Keep Senses
+source-present and do not claim mobile, host, or capability conformance before
+the corresponding real-browser and authoritative-receipt evidence exists.
 
 ## Next operational step
 

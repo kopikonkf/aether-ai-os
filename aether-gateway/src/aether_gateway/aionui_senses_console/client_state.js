@@ -537,6 +537,9 @@ export function reduceClientState(state, event) {
     case 'RESUME_REQUESTED':
       return transitionAuth(state, AuthSessionState.CONNECTING, event.type, {
         transportMode: TransportMode.STATUS_ONLY,
+        turn: TurnState.IDLE,
+        consent: stopConsent(state),
+        activeTurn: emptyTurnGeneration(),
         epoch: state.epoch + 1,
       });
     case 'SESSION_CLOSED':

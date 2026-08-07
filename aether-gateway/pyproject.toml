@@ -51,4 +51,7 @@ where = ["src"]
 "aether_gateway.aionui_mission_console" = ["*.html", "*.css", "*.js", "*.json"]
 "aether_gateway.aionui_opportunity_console" = ["*.html", "*.css", "*.js", "*.json"]
 "aether_gateway.aionui_experiment_console" = ["*.html", "*.css", "*.js", "*.json"]
-"aether_gateway.aionui_senses_console" = ["*.html", "*.css", "*.js", "*.json"]
+"aether_gateway.aionui_senses_console" = [
+    "*.html", "*.css", "*.js", "*.json", "*.webmanifest",
+    "vendor/*.js", "icons/*.png",
+]

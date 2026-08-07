@@ -12,7 +12,9 @@ def test_unified_browser_console_keeps_media_in_browser_transport() -> None:
     assert "localStorage" not in js
     assert "/api/browser-senses/session" in js
     assert "getUserMedia" in js
-    assert "livekit-client@2.17.2" in js
+    assert "./vendor/livekit-client-2.17.2.esm.js" in js
+    for public_cdn in ("cdn.jsdelivr.net", "unpkg.com", "esm.sh", "skypack.dev"):
+        assert public_cdn not in js
 
 
 def test_livekit_worker_delegates_cognition_to_gateway() -> None:
