@@ -157,8 +157,12 @@ def test_promote_release_asset_present_and_binds_exact_sha():
     promote = WINDOWS / "promote-aether-release.ps1"
     assert promote.is_file()
     text = _read(promote)
-    assert "rev-parse origin/main" in text
-    assert "git -C $RepoPath archive" in text
+    # git runs through the Invoke-Git/Invoke-GitCapture helpers so Windows
+    # PowerShell 5.1 cannot turn git's normal stderr progress into a terminating
+    # NativeCommandError; the SHA guard still binds origin/main exactly.
+    assert "Invoke-Git" in text
+    assert "origin/main" in text
+    assert '"rev-parse"' in text
     assert "Expected-target-SHA guard failed" in text
     assert "install-aether-services.ps1" in text
     assert "rollback_release" in text
@@ -170,9 +174,7 @@ def test_promote_release_asset_present_and_binds_exact_sha():
     assert "aether_migration" not in text
     # Stage temp + atomic publish (no rev-parse of an archive extraction).
     assert ".staging-" in text
-    assert "git -C $RepoPath archive" in text
-    assert "git -C $RepoPath rev-parse origin/main" in text
-    assert 'git -C $RepoPath rev-parse "$originMain^{tree}"' in text or "rev-parse " in text
+    assert '"archive"' in text
 
 
 def test_release_promotion_preserves_runtime_state_no_migration():
