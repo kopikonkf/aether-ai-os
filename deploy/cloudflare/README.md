@@ -13,9 +13,12 @@ Cloudflare edge
   -> Aether Gateway on 127.0.0.1:8000
 ```
 
-The Aether Caddy one-domain router listens on `http://127.0.0.1:8080`.
-The tunnel forwards the public hostname to that local origin, so Caddy's
-one-domain path rewriting remains authoritative.
+The Aether Caddy one-domain router listens on `:8080` with `bind 127.0.0.1`
+(host-agnostic listener, loopback-bound: any Host header on the loopback origin
+is routed through the founder auth). The tunnel forwards the public hostname
+(`aethers.my.id` / `www.aethers.my.id`) to that local origin with the original
+Host header preserved, so Caddy's one-domain path rewriting and Basic auth
+remain authoritative even though the Host is a domain, not `127.0.0.1`.
 
 ## Founder Alpha authentication
 
