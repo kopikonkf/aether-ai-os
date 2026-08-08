@@ -591,6 +591,12 @@ test('Senses shell renders all reducer axes and a private text-only control', as
     'privateTextOnly',
     'stopAether',
     'retryTurn',
+    'capabilityActionPanel',
+    'capabilityReceiptId',
+    'capabilityActionHash',
+    'approvalHandoff',
+    'aionuiApprovalLink',
+    'telegramApprovalCommand',
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
@@ -604,6 +610,7 @@ test('Senses app is wired only through the reducer presentation boundary', async
   );
 
   assert.match(app, /from '.\/client_state\.js\?v=[^']+'/);
+  assert.match(app, /from '.\/capability_actions\.js\?v=[^']+'/);
   assert.match(app, /from '.\/turn_generation\.js\?v=[^']+'/);
   assert.match(app, /from '.\/pwa_runtime\.js\?v=[^']+'/);
   assert.match(app, /\.\/vendor\/livekit-client-2\.17\.2\.esm\.js/);
@@ -612,16 +619,19 @@ test('Senses app is wired only through the reducer presentation boundary', async
   assert.match(app, /reconcileAmbiguousTurn/);
   assert.match(app, /interruptActiveTurn/);
   assert.match(app, /suspendClosePromise/);
+  assert.match(app, /api\/browser-senses\/actions\/\$\{encodeURIComponent\(actionId\)\}\/status/);
+  assert.match(app, /presentCapabilityActions\(result\.capability_actions, epoch\)/);
   assert.match(app, /await state\.suspendClosePromise/);
   assert.doesNotMatch(app, /function setState\s*\(/);
   assert.doesNotMatch(app, /state\.paired/);
   assert.doesNotMatch(app, /\bconnected\s*:/);
   assert.doesNotMatch(app, /\bthinking\s*:/);
   assert.doesNotMatch(app, /\bworking\s*:/);
+  assert.doesNotMatch(app, /browser-senses\/actions\/.+\/(?:approve|reject|decision)/);
   assert.doesNotMatch(app, /cdn\.jsdelivr\.net|unpkg\.com|esm\.sh/);
 });
 
-test('canonical handoff records slice seven boundaries and the next slice', async () => {
+test('canonical handoff records slice eight boundaries and the next slice', async () => {
   const handoff = await readFile(
     new URL('../../LASTSTANDINGPOINT.md', import.meta.url),
     'utf8',
@@ -630,13 +640,15 @@ test('canonical handoff records slice seven boundaries and the next slice', asyn
   assert.match(handoff, /Implementation slice 5 is source-present/);
   assert.match(handoff, /Implementation slice 6 is source-present/);
   assert.match(handoff, /Implementation slice 7 is source-present/);
-  assert.match(handoff, /merely because slices 1-7 are source-present/);
+  assert.match(handoff, /Implementation slice 8 is source-present/);
+  assert.match(handoff, /merely because slices 1-8 are source-present/);
   assert.match(handoff, /late-result-discarded/);
   assert.match(handoff, /never submitted again automatically/);
   assert.match(handoff, /server-authoritative consent leases/);
   assert.match(handoff, /VisionFrameReceipt` no longer requires/);
   assert.match(handoff, /module service worker owns only an exact build-versioned/);
-  assert.match(handoff, /Wire receipt-driven capability-action presentation/);
+  assert.match(handoff, /Complete the remaining capability cancellation/);
+  assert.match(handoff, /does not activate a new capability adapter/);
   assert.match(handoff, /Tier-1 Windows Chromium/);
   assert.match(handoff, /Conversational interruption remains orthogonal/);
 });

@@ -102,6 +102,21 @@ The page provides:
 - replay receipt and operator-safe error visibility;
 - ten-second polling with manual refresh.
 
+### Browser Senses handoff
+
+Browser Senses may present this native route with two non-secret query values:
+
+```text
+/#/approvals?approval_id=<approval-id>&action_hash=<full-sha256>
+```
+
+The renderer treats both values only as a selection request. It retrieves the
+bounded approval projection through the existing main-process bridge and
+selects nothing unless the returned full `action_hash` exactly matches the
+handoff hash. The URL contains no operator token, raw action arguments, result
+output, or decision authority. Approval still requires an explicit reason and
+the existing hash-bound main-process decision call.
+
 ## Wiring
 
 Use:

@@ -345,13 +345,28 @@ class AetherCognitiveGateway(CognitivePort):
         approval_id = str(result.metadata.get("approval_id") or "unknown")
         expires_at = str(result.metadata.get("expires_at") or "unknown")
         action_hash = str(result.metadata.get("action_hash") or "")
+        request_channel = str(perception_metadata.get("channel") or "").casefold()
+        if request_channel in {"browser", "livekit"}:
+            approval_instruction = (
+                "Open the trusted AionUi Approval Inbox or send /approvals in the "
+                "allowlisted Founder Telegram private chat. Senses cannot approve this action; "
+                "spoken or typed yes is not approval authority."
+            )
+        elif request_channel == "telegram":
+            approval_instruction = (
+                "Use the exact inline approval card or /approvals. Structured /yes or /no is "
+                "accepted only for one pending action bound to this Telegram chat; free text is not authority."
+            )
+        else:
+            approval_instruction = (
+                "Open the trusted AionUi Approval Inbox. This conversation surface cannot approve the action."
+            )
         content = (
             "Aether menunggu trusted operator approval.\n"
             f"Approval ID: {approval_id}\n"
             f"Action hash: {action_hash[:16]}…\n"
             f"Expires: {expires_at}\n"
-            "Untuk satu pending action di chat ini, cukup kirim /yes atau /no. "
-            "Gunakan /approve <approval_id> [reason] bila ada beberapa approval atau untuk audit eksplisit."
+            f"{approval_instruction}"
         )
         propagated = self._propagated_metadata(perception_metadata)
         propagated.update({

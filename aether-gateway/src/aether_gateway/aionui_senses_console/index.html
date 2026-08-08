@@ -10,9 +10,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Aether — Unified Browser Senses</title>
   <link rel="manifest" href="/senses/manifest.webmanifest" />
-  <link rel="icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-7-20260808-1" />
-  <link rel="apple-touch-icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-7-20260808-1" />
-  <link rel="stylesheet" href="/senses/styles.css?v=senses-v1-slice-7-20260808-1" />
+  <link rel="icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-8-20260808-1" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-8-20260808-1" />
+  <link rel="stylesheet" href="/senses/styles.css?v=senses-v1-slice-8-20260808-1" />
 </head>
 <body>
   <main class="shell">
@@ -59,6 +59,27 @@
         <div><span>Sensor consent</span><strong id="consentState">CAMERA OFF · SCREEN OFF</strong></div>
         <div><span>Capability action</span><strong id="actionState">NONE</strong></div>
         <div><span>External speech</span><strong id="externalSpeechState">EXTERNAL CONSENT REQUIRED</strong></div>
+      </div>
+    </section>
+
+    <section id="capabilityActionPanel" class="panel capability-panel" hidden>
+      <div class="panel-head">
+        <h2 id="capabilityName">Capability action</h2>
+        <strong id="capabilityReceiptState">PROPOSED</strong>
+      </div>
+      <p id="capabilitySummary" class="capability-summary"></p>
+      <div class="receipt-grid">
+        <div><span>Authoritative receipt</span><code id="capabilityReceiptId"></code></div>
+        <div><span>Progress</span><strong id="capabilityProgress">receipt only</strong></div>
+        <div class="receipt-hash"><span>Exact action SHA-256</span><code id="capabilityActionHash"></code></div>
+      </div>
+      <div id="approvalHandoff" class="approval-handoff" hidden>
+        <p><strong>Trusted approval required.</strong> Senses cannot approve this action, and spoken or typed “yes” is not authority.</p>
+        <div class="handoff-actions">
+          <a id="aionuiApprovalLink" class="button-link primary" href="/#/approvals">Open AionUi Approval Inbox</a>
+          <span>or send <code id="telegramApprovalCommand">/approvals</code> in the allowlisted Founder Telegram chat.</span>
+        </div>
+        <small>Approval expires <time id="approvalExpiry"></time>. The decision remains single-use and bound to the exact hash above.</small>
       </div>
     </section>
 
@@ -135,6 +156,6 @@
 
     <footer><span id="transportStatus">Transport not initialized.</span></footer>
   </main>
-  <script type="module" src="/senses/app.js?v=senses-v1-slice-7-20260808-1"></script>
+  <script type="module" src="/senses/app.js?v=senses-v1-slice-8-20260808-1"></script>
 </body>
 </html>

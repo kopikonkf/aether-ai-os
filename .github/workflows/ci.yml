@@ -38,7 +38,7 @@ jobs:
       - name: Compile source
         run: python -m compileall -q aether-core/src aether-tools/src aether-gateway/src scripts deploy/windows
       - name: Senses client reducer tests
-        run: node --test aether-gateway/tests/client_state_reducer.test.mjs aether-gateway/tests/turn_generation.test.mjs aether-gateway/tests/vision_capture.test.mjs aether-gateway/tests/pwa_cache_policy.test.mjs aether-gateway/tests/pwa_runtime.test.mjs
+        run: node --test aether-gateway/tests/client_state_reducer.test.mjs aether-gateway/tests/capability_actions.test.mjs aether-gateway/tests/turn_generation.test.mjs aether-gateway/tests/vision_capture.test.mjs aether-gateway/tests/pwa_cache_policy.test.mjs aether-gateway/tests/pwa_runtime.test.mjs
       - name: Core tests
         run: python -m pytest -q aether-core/tests
       - name: Tools tests

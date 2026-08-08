@@ -33,6 +33,7 @@ from aether.contracts import Expression, Perception
 from aether.events import EventBus
 from aether.senses import SenseEventPath
 from aether_gateway.adapters.telegram_bot import TelegramSenseAdapter
+from aether_gateway.approvals import ApprovalInboxService
 
 
 class CapturingCognition:
@@ -72,7 +73,13 @@ class MockContext:
         self.bot = unittest.mock.MagicMock()
 
 
-def build_adapter(tmp_path: Path, reset=None):
+def build_adapter(
+    tmp_path: Path,
+    reset=None,
+    *,
+    approval_coordinator=None,
+    approval_inbox=None,
+):
     cognition = CapturingCognition()
     sent: list[tuple[int, str]] = []
 
@@ -80,7 +87,14 @@ def build_adapter(tmp_path: Path, reset=None):
         sent.append((chat_id, text))
 
     path = SenseEventPath(EventBus(tmp_path / "telegram-events.jsonl"), cognition)
-    adapter = TelegramSenseAdapter(path, text_sender=sender, session_reset=reset, enabled=False)
+    adapter = TelegramSenseAdapter(
+        path,
+        text_sender=sender,
+        session_reset=reset,
+        approval_coordinator=approval_coordinator,
+        approval_inbox=approval_inbox,
+        enabled=False,
+    )
     return adapter, cognition, sent, path
 
 
@@ -195,6 +209,7 @@ def _pending_approval_record(status="pending"):
         "Write bounded artifact",
         ActionRisk.MEDIUM,
         False,
+        metadata={"channel": "telegram", "chat_id": 12345},
         action_id="act.telegram-test",
     )
     result = ActionResult(proposal.action_id, True, "completed", output="written") if status == "consumed" else None
@@ -215,8 +230,16 @@ class FakeApprovalInbox:
     def __init__(self, pending):
         self.pending = pending
 
-    def list(self):
+    def get(self, approval_id):
+        if approval_id != self.pending.approval_id:
+            raise KeyError(approval_id)
+        return self.pending
+
+    def list(self, _status=None):
         return [self.pending]
+
+    def sweep_expired(self):
+        return []
 
 
 class FakeApprovalCoordinator:
@@ -230,11 +253,19 @@ class FakeApprovalCoordinator:
         return self.outcome
 
 
+def _build_approval_adapter(tmp_path: Path, coordinator: FakeApprovalCoordinator):
+    approval_inbox = ApprovalInboxService(coordinator)
+    return build_adapter(
+        tmp_path,
+        approval_coordinator=coordinator,
+        approval_inbox=approval_inbox,
+    )
+
+
 def test_approval_commands_require_explicit_operator_allowlist(tmp_path: Path) -> None:
     pending, outcome = _pending_approval_record("consumed")
     coordinator = FakeApprovalCoordinator(pending, outcome)
-    adapter, _, _, _ = build_adapter(tmp_path)
-    adapter._approval_coordinator = coordinator
+    adapter, _, _, _ = _build_approval_adapter(tmp_path, coordinator)
     adapter.allowed_user_ids = set()
     update = MockUpdate(user_id=42)
 
@@ -247,8 +278,7 @@ def test_approval_commands_require_explicit_operator_allowlist(tmp_path: Path) -
 def test_allowlisted_telegram_operator_can_list_and_decide(tmp_path: Path) -> None:
     pending, outcome = _pending_approval_record("consumed")
     coordinator = FakeApprovalCoordinator(pending, outcome)
-    adapter, _, _, _ = build_adapter(tmp_path)
-    adapter._approval_coordinator = coordinator
+    adapter, _, _, _ = _build_approval_adapter(tmp_path, coordinator)
     adapter.allowed_user_ids = {42}
     update = MockUpdate(user_id=42)
 

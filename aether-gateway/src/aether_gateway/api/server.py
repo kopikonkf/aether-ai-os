@@ -91,6 +91,7 @@ from aether_gateway.browser_senses import (
     BootstrapRateLimitError,
     BootstrapStateError,
     BrowserSenseAuthError,
+    BrowserSenseActionProjector,
     BrowserSenseBootstrapService,
     BrowserSenseService,
     BrowserSessionTokenCodec,
@@ -445,6 +446,11 @@ browser_sense_bootstrap = BrowserSenseBootstrapService(
 trusted_approval_inbox = TrustedApprovalInbox(pending_action_store, action_path, action_event_bus)
 approval_coordinator = ApprovalCoordinator(trusted_approval_inbox, cognitive_gateway)
 approval_inbox = ApprovalInboxService(approval_coordinator)
+browser_sense_service.set_action_projector(BrowserSenseActionProjector(
+    action_event_bus,
+    routed_action_executor,
+    approval_inbox,
+))
 operator_authenticator = OperatorAuthenticator()
 
 
@@ -466,7 +472,7 @@ telegram_adapter = TelegramSenseAdapter(
     sense_path,
     behavior_monitor=behavior_monitor,
     session_reset=cognitive_gateway.clear_session,
-    approval_coordinator=approval_coordinator,
+    approval_inbox=approval_inbox,
 )
 
 
@@ -1645,6 +1651,21 @@ def browser_sense_turn_status(
         raise HTTPException(status_code=404, detail="Browser sense turn was not found") from exc
 
 
+@app.post("/api/browser-senses/actions/{action_id}/status")
+async def browser_sense_action_status(
+    action_id: str,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
+    try:
+        return await browser_sense_service.action_status(token, action_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Browser sense action was not found") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 @app.post("/api/browser-senses/turns/{turn_id}/interrupt")
 async def interrupt_browser_sense_turn(
     turn_id: str,
@@ -1711,6 +1732,14 @@ def senses_console_js():
 def senses_console_client_state_js():
     return FileResponse(
         AIONUI_SENSES_CONSOLE_DIR / "client_state.js",
+        media_type="application/javascript",
+    )
+
+
+@app.get("/senses/capability_actions.js", include_in_schema=False)
+def senses_console_capability_actions_js():
+    return FileResponse(
+        AIONUI_SENSES_CONSOLE_DIR / "capability_actions.js",
         media_type="application/javascript",
     )
 

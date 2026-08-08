@@ -87,8 +87,24 @@ export default function ApprovalInboxPage() {
   const approvals = useAetherApprovals(status);
   const snapshot = approvals.snapshot;
   const selected = approvals.selected;
+  const inspect = approvals.inspect;
 
   useEffect(() => setReason(''), [selected?.approval_id, selected?.status]);
+
+  useEffect(() => {
+    const query = window.location.hash.split('?', 2)[1];
+    if (!query) return;
+    const params = new URLSearchParams(query);
+    const approvalId = params.get('approval_id') || '';
+    const actionHash = params.get('action_hash') || '';
+    if (!approvalId.startsWith('approval.') || !/^[0-9a-f]{64}$/.test(actionHash)) {
+      Message.error('Senses approval handoff is incomplete or malformed');
+      return;
+    }
+    void inspect(approvalId, actionHash).catch(() => {
+      // The hook exposes the hash mismatch or inbox error without selecting a row.
+    });
+  }, [inspect]);
 
   async function decide(approved: boolean) {
     if (!selected) return;
@@ -154,7 +170,7 @@ export default function ApprovalInboxPage() {
               {snapshot.approvals.length === 0
                 ? <Empty description={`No ${status} approvals`} />
                 : snapshot.approvals.map((item) => (
-                  <ApprovalRow key={item.approval_id} item={item} inspect={(id) => void approvals.inspect(id)} />
+                  <ApprovalRow key={item.approval_id} item={item} inspect={(id) => void inspect(id)} />
                 ))}
             </Card>
 

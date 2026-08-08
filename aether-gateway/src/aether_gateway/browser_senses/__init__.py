@@ -1,5 +1,7 @@
 """Browser media transport, LiveKit token issuance, and Aether sense bridge."""
 
+from .actions import BrowserSenseActionProjector
+
 from .bootstrap import (
     BootstrapError,
     BootstrapRateLimitError,
@@ -27,6 +29,7 @@ __all__ = [
     "BootstrapRateLimitError",
     "BootstrapStateError",
     "BrowserSenseAuthError",
+    "BrowserSenseActionProjector",
     "BrowserSenseBootstrapService",
     "BrowserSenseService",
     "BrowserSenseTurnLedger",

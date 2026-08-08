@@ -17,7 +17,7 @@ import secrets
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, TYPE_CHECKING
 
 from aether.browser_senses import BrowserSenseStore
 from aether.contracts import (
@@ -56,6 +56,9 @@ from .vision import (
     VisionLifecycle,
     validate_image,
 )
+
+if TYPE_CHECKING:
+    from .actions import BrowserSenseActionProjector
 
 
 class BrowserSenseAuthError(PermissionError):
@@ -183,6 +186,7 @@ class BrowserSenseService:
         livekit_issuer: LiveKitTokenIssuer | None = None,
         maximum_frame_bytes: int = 750_000,
         default_ttl_seconds: int = 3600,
+        action_projector: "BrowserSenseActionProjector | None" = None,
     ) -> None:
         self.root = root
         self.frames_root = root / "frames"
@@ -196,6 +200,7 @@ class BrowserSenseService:
         self.livekit_issuer = livekit_issuer or LiveKitTokenIssuer()
         self.maximum_frame_bytes = maximum_frame_bytes
         self.default_ttl_seconds = default_ttl_seconds
+        self.action_projector = action_projector
         self.vision = VisionLifecycle(
             root / "vision-lifecycle.sqlite3",
             self.frames_root,
@@ -214,6 +219,9 @@ class BrowserSenseService:
                 },
                 severity="warning",
             )
+
+    def set_action_projector(self, projector: "BrowserSenseActionProjector") -> None:
+        self.action_projector = projector
 
     @classmethod
     def _safe_identity(cls, value: str, fallback: str) -> str:
@@ -487,6 +495,11 @@ class BrowserSenseService:
         try:
             trace = await self.sense_path.handle(adapter, perception)
             expression = adapter.expressions[-1]
+            capability_actions = (
+                await self.action_projector.for_correlation(session_id, correlation_id)
+                if self.action_projector is not None
+                else []
+            )
             terminal_receipt_id = new_id("sense-turn-receipt")
             response_hash = hashlib.sha256(expression.content.encode("utf-8")).hexdigest()
             turn = BrowserSenseTurnReceipt(
@@ -558,6 +571,7 @@ class BrowserSenseService:
                 "trace": asdict(trace),
                 "turn": asdict(turn),
                 "turn_status": turn_status,
+                "capability_actions": capability_actions,
                 "replayed": False,
             }
         except asyncio.CancelledError:
@@ -912,6 +926,12 @@ class BrowserSenseService:
     def turn_status(self, token: str, turn_id: str) -> dict[str, Any]:
         session = self.authenticate(token)
         return self.turn_ledger.status(session_id=session.session_id, turn_id=turn_id)
+
+    async def action_status(self, token: str, action_id: str) -> dict[str, Any]:
+        session = self.authenticate(token)
+        if self.action_projector is None:
+            raise KeyError(action_id)
+        return await self.action_projector.for_action(session.session_id, action_id)
 
     def interrupt_turn(
         self,

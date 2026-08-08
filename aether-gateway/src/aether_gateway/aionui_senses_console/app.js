@@ -5,22 +5,25 @@ import {
   TurnState,
   createClientStore,
   deriveClientPresentation,
-} from './client_state.js?v=senses-v1-slice-7-20260808-1';
+} from './client_state.js?v=senses-v1-slice-8-20260808-1';
+import {
+  createCapabilityProjectionConsumer,
+} from './capability_actions.js?v=senses-v1-slice-8-20260808-1';
 import {
   createTurnGenerationCoordinator,
   stopTurnAudio,
-} from './turn_generation.js?v=senses-v1-slice-7-20260808-1';
-import { createVisionCaptureCoordinator } from './vision_capture.js?v=senses-v1-slice-7-20260808-1';
+} from './turn_generation.js?v=senses-v1-slice-8-20260808-1';
+import { createVisionCaptureCoordinator } from './vision_capture.js?v=senses-v1-slice-8-20260808-1';
 import {
   CACHE_PREFIX,
   PWA_BUILD_ID,
-} from './pwa_cache_policy.js?v=senses-v1-slice-7-20260808-1';
+} from './pwa_cache_policy.js?v=senses-v1-slice-8-20260808-1';
 import {
   PwaLifecycleState,
   createInitialPwaRuntime,
   derivePwaPresentation,
   reducePwaRuntime,
-} from './pwa_runtime.js?v=senses-v1-slice-7-20260808-1';
+} from './pwa_runtime.js?v=senses-v1-slice-8-20260808-1';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -57,11 +60,13 @@ const state = {
   updateRegistration: null,
   reloadForUpdate: false,
   suspendClosePromise: null,
+  capabilityPollTimer: null,
 };
 const API = '';
 const TURN_STATE_TOPIC = 'aether.senses.turn-state.v1';
 const TURN_REQUEST_TIMEOUT_MS = 30000;
 const RECONCILIATION_DELAYS_MS = Object.freeze([0, 1000, 3000]);
+const CAPABILITY_POLL_INTERVAL_MS = 1500;
 const turnCoordinator = createTurnGenerationCoordinator();
 const visionCoordinator = createVisionCaptureCoordinator();
 let pwaRuntime = createInitialPwaRuntime({
@@ -164,6 +169,85 @@ function dispatchForEpoch(type, epoch, values = {}) {
   return clientStore.dispatch({ type, epoch, ...values });
 }
 
+function renderCapabilityProjection(projection) {
+  const visible = Boolean(projection);
+  $('capabilityActionPanel').hidden = !visible;
+  if (!visible) return;
+  const current = projection.current;
+  $('capabilityName').textContent = current.capabilityName;
+  $('capabilitySummary').textContent = current.safeSummary || current.capabilityName;
+  $('capabilityReceiptState').textContent = current.actionState.toUpperCase().replaceAll('-', ' ');
+  $('capabilityReceiptId').textContent = current.authoritativeReceiptId || current.receiptId;
+  $('capabilityActionHash').textContent = current.exactActionHash;
+  $('capabilityProgress').textContent = current.progress == null
+    ? 'receipt only'
+    : `${Math.round(current.progress * 100)}%`;
+  const handoff = projection.approvalHandoff;
+  $('approvalHandoff').hidden = !handoff;
+  if (handoff) {
+    $('approvalExpiry').textContent = handoff.expiresAt;
+    $('aionuiApprovalLink').href = handoff.aionuiRoute;
+    $('telegramApprovalCommand').textContent = handoff.telegramCommand;
+  }
+}
+
+const capabilityConsumer = createCapabilityProjectionConsumer(
+  (event) => clientStore.dispatch(event),
+  renderCapabilityProjection,
+);
+
+function stopCapabilityPolling() {
+  clearTimeout(state.capabilityPollTimer);
+  state.capabilityPollTimer = null;
+}
+
+async function pollCapabilityAction(actionId, epoch) {
+  if (!state.session || clientStore.getEpoch() !== epoch) return;
+  try {
+    const raw = await jsonFetch(
+      `${API}/api/browser-senses/actions/${encodeURIComponent(actionId)}/status`,
+      { method: 'POST', headers: authHeaders() },
+    );
+    if (!state.session || clientStore.getEpoch() !== epoch) return;
+    const projection = capabilityConsumer.consume(raw, { epoch });
+    if (projection.terminal) {
+      stopCapabilityPolling();
+      return;
+    }
+  } catch (error) {
+    if (error.status === 401) return;
+    message('system', `Capability receipt refresh failed: ${error.message}`);
+  }
+  state.capabilityPollTimer = setTimeout(
+    () => pollCapabilityAction(actionId, epoch),
+    CAPABILITY_POLL_INTERVAL_MS,
+  );
+}
+
+function presentCapabilityActions(rawActions, epoch) {
+  if (!Array.isArray(rawActions) || !rawActions.length) return;
+  if (rawActions.length !== 1) {
+    throw new Error('Senses received more than one active capability projection');
+  }
+  const nextActionId = String(rawActions[0]?.action_id || '');
+  const current = clientStore.getState().capabilityAction;
+  if (current.actionId && current.actionId !== nextActionId) {
+    if (!['succeeded', 'failed', 'canceled', 'rejected', 'unavailable'].includes(current.state)) {
+      throw new Error('A prior capability action is still non-terminal');
+    }
+    dispatchForEpoch('CAPABILITY_CLEARED', epoch);
+    capabilityConsumer.reset();
+  }
+  const projection = capabilityConsumer.consume(rawActions[0], { epoch });
+  stopCapabilityPolling();
+  if (!projection.terminal) {
+    state.capabilityPollTimer = setTimeout(
+      () => pollCapabilityAction(projection.actionId, epoch),
+      CAPABILITY_POLL_INTERVAL_MS,
+    );
+  }
+}
+
 function turnEvent(turn, values = {}) {
   return {
     turnId: turn.turnId,
@@ -258,6 +342,7 @@ function stopLocalCapture() {
 function clearSessionRuntime() {
   clearInterval(state.heartbeatTimer);
   state.heartbeatTimer = null;
+  stopCapabilityPolling();
   stopLocalCapture();
   state.room?.disconnect();
   state.room = null;
@@ -1258,6 +1343,7 @@ async function executeBrowserTurn({ endpoint, payload, turn, epoch, inputForRetr
       throw new Error('Aether returned an unbound turn result');
     }
     dispatchForEpoch('TURN_ACCEPTED', epoch, turnEvent(turn));
+    presentCapabilityActions(result.capability_actions, epoch);
     state.lastUnconfirmedInput = null;
     presentAssistantResponse(result.response, epoch, turn, status);
     return result;
