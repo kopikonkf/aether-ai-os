@@ -3,7 +3,9 @@
     admin 127.0.0.1:2019
 }
 
-http://127.0.0.1:8080 {
+http://:8080 {
+    bind 127.0.0.1
+
     import "C:/ProgramData/Aether/caddy/founder-auth.caddy"
 
     encode zstd gzip

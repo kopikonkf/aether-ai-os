@@ -232,7 +232,38 @@ its own evidence passes.
 
 ## Next operational step
 
-Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed those receipts into Founder acceptance, then run the first governed private experiment, capture the impact brief, promote it publicly, measure demand, and feed the result back into portfolio reallocation and CEE learning.
+- **Phase B exact `742631871ee2967583c2e2f0e5a9f02c91c880a6` has PASS** (promotion
+  receipt, services bound to `C:\aether\releases\74263187...`, /health /senses
+  /api/browser-senses/status 200, ACL protected, Caddy public 401 with the
+  live host-agnostic hot-fix).
+- **Phase C (Senses) stays HOLD until PR #47 is merged.**
+- After merge: controlled Caddy reconcile (no bcrypt/tunnel/Gateway/AETHER_HOME
+  change) -> local/public proof -> device matrix (Windows Chromium + Android PWA).
+- Do NOT repeat Phase A/B or any full Fase A–E.
+
+## Cloudflare ingress PR #47 (host-agnostic Caddy listener, 2026-08-08)
+
+- Based on exact `main@742631871ee2967583c2e2f0e5a9f02c91c880a6`.
+- **Why:** the VPS hot-fix found that the production Caddyfile site block
+  `http://127.0.0.1:8080` only matched Host `127.0.0.1`, so tunnelled requests
+  with Host `aethers.my.id` / `www.aethers.my.id` received an **empty 200 with no
+  Basic challenge** (founder auth bypassed on public route). The fix (applied
+  live and verified) is now canonicalized here.
+- **Change:** `deploy/windows/Caddyfile` listener `http://:8080` +
+  `bind 127.0.0.1` (loopback-only, host-agnostic); import
+  `founder-auth.caddy` + `header_up -Authorization` on every handler unchanged.
+  `deploy/cloudflare/README.md` updated; regression
+  `test_real_production_caddyfile_host_agnostic` (real Caddy + PRODUCTION Caddyfile,
+  Host `aethers.my.id` / `www.aethers.my.id` / `127.0.0.1`): unauth 401 + Basic
+  challenge (never 200-empty), correct creds 200, wrong creds 401, no
+  `Authorization` forwarded to echo upstream, `caddy validate` passes. Real-Caddy
+  integration renderer updated for the new listener form.
+- **Local:** integration `7 passed`; assets/probe behavior `14 passed`;
+  standalone `caddy validate` OK. CI boundary proof runs (not skipped) via
+  `AETHER_INGRESS_INTEGRATION=1`.
+- **Not included:** `cloudflared --metrics 127.0.0.1:20120` treated as separate
+  source drift. No deploy/restart/promotion/tunnel/DNS-IIS-Cloudflare mutation.
+- **PR:** https://github.com/kopikonkf/aether-ai-os/pull/47
 
 ## Cloudflare ingress PR #34 (round-4, 2026-08-07)
 

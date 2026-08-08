@@ -36,6 +36,8 @@ import shutil
 import socket
 import subprocess
 import threading
+import http.client
+import base64
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -262,7 +264,7 @@ def test_real_mode_caddybasic_complete_receipt_with_production_caddyfile(tmp_pat
     rendered = (
         template
         .replace("C:/ProgramData/Aether/caddy/founder-auth.caddy", auth_frag.as_posix())
-        .replace("http://127.0.0.1:8080", f"http://127.0.0.1:{caddy_port}")
+        .replace("http://:8080", f"http://:{caddy_port}")
         .replace("admin 127.0.0.1:2019", f"admin 127.0.0.1:{admin_port}")
         .replace("127.0.0.1:8000", f"127.0.0.1:{up.port}")
         .replace("127.0.0.1:25808", f"127.0.0.1:{up.port}")
@@ -356,6 +358,108 @@ def test_probe_rejects_partial_credential_surfaces(tmp_path: Path):
         cmd = [ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROBE), "-BaseUrl", "http://127.0.0.1:1", "-AetherHome", home] + extra
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         assert out.returncode != 0, f"expected partial reject for {extra}: {out.stdout}"
+
+
+@REAL_TOOLCHAIN
+def test_real_production_caddyfile_host_agnostic(tmp_path: Path):
+    """Regression: the production Caddyfile's listener must be HOST-AGNOSTIC.
+
+    The real public ingress receives requests whose HTTP/1.1 Host header is a
+    domain (aethers.my.id / www.aethers.my.id), handed through the Cloudflare
+    tunnel - NOT the literal ``127.0.0.1`` loopback address. A site block of
+    the form ``http://127.0.0.1:8080`` only matches Host ``127.0.0.1`` and made
+    Caddy reply with an empty 200 (no Basic challenge) for tunnelled domains.
+
+    This test renders the ACTUAL production ``deploy/windows/Caddyfile`` with a
+    real cost-14 bcrypt fragment and a real echo upstream, then issues raw HTTP
+    requests (Host = aethers.my.id / www.aethers.my.id / 127.0.0.1) and asserts:
+      - unauthenticated -> HTTP 401 + WWW-Authenticate Basic (NOT 200-empty)
+      - correct credentials -> 200
+      - wrong credentials -> 401
+      - echo upstream received no ``authorization`` header (stripped)
+      - ``caddy validate`` on the production-inspired config passes
+    """
+    caddy = find_caddy()
+    ps = find_powershell()
+
+    up = _ThreadedServer(HeaderRecorder)
+    HeaderRecorder.received = []
+
+    caddy_port = 8094
+    admin_port = 20198
+
+    auth_frag = tmp_path / "founder-auth.caddy"
+    auth_frag.write_text(
+        f'basic_auth bcrypt "Aether Founder Alpha" {{\n    founder {bcrypt_hash(caddy, "s3cr3t-founder")}\n}}\n',
+        encoding="utf-8",
+    )
+
+    template = PRODUCTION_CADDYFILE.read_text(encoding="utf-8")
+    rendered = (
+        template
+        .replace("C:/ProgramData/Aether/caddy/founder-auth.caddy", auth_frag.as_posix())
+        .replace("http://:8080", f"http://:{caddy_port}")
+        .replace("admin 127.0.0.1:2019", f"admin 127.0.0.1:{admin_port}")
+        .replace("127.0.0.1:8000", f"127.0.0.1:{up.port}")
+        .replace("127.0.0.1:25808", f"127.0.0.1:{up.port}")
+    )
+    caddyfile = tmp_path / "Caddyfile.prod-host"
+    caddyfile.write_text(rendered, encoding="utf-8")
+
+    v = subprocess.run(
+        [caddy, "validate", "--config", str(caddyfile), "--adapter", "caddyfile"],
+        capture_output=True,
+        text=True,
+    )
+    assert v.returncode == 0, v.stdout + v.stderr
+
+    proc = subprocess.Popen(
+        [caddy, "run", "--config", str(caddyfile), "--adapter", "caddyfile"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    good = base64.b64encode(b"founder:s3cr3t-founder").decode()
+    bad = base64.b64encode(b"founder:not-the-password").decode()
+    try:
+        assert wait_port("127.0.0.1", caddy_port), "caddy did not come up"
+        for host in ("aethers.my.id", "www.aethers.my.id", "127.0.0.1"):
+            # Unauthenticated -> MUST be 401 challenge, never an empty 200.
+            conn = http.client.HTTPConnection("127.0.0.1", caddy_port, timeout=10)
+            conn.request("GET", "/health", headers={"Host": host})
+            resp = conn.getresponse()
+            status = resp.status
+            headers = dict(resp.headers.items())
+            body = resp.read()
+            conn.close()
+            assert status == 401, f"{host}: expected 401 got {status} body={body!r}"
+            challenge = " ".join(str(v) for k, v in headers.items() if k.lower() == "www-authenticate")
+            assert "basic" in challenge.lower(), f"{host}: no Basic challenge: {headers}"
+            assert status != 200, f"{host}: empty-200 regression"
+            # Correct credentials -> 200.
+            conn = http.client.HTTPConnection("127.0.0.1", caddy_port, timeout=10)
+            conn.request("GET", "/health", headers={"Host": host, "Authorization": f"Basic {good}"})
+            resp = conn.getresponse()
+            assert resp.status == 200, f"{host}: expected 200 with good creds, got {resp.status}"
+            resp.read()
+            conn.close()
+            # Wrong credentials -> 401 challenge.
+            conn = http.client.HTTPConnection("127.0.0.1", caddy_port, timeout=10)
+            conn.request("GET", "/health", headers={"Host": host, "Authorization": f"Basic {bad}"})
+            resp = conn.getresponse()
+            assert resp.status == 401, f"{host}: expected 401 with bad creds, got {resp.status}"
+            resp.read()
+            conn.close()
+
+        assert HeaderRecorder.received, "upstream received no requests"
+        for hit in HeaderRecorder.received:
+            assert "authorization" not in hit["headers"], f"Authorization reached upstream: {hit['headers']}"
+    finally:
+        proc.terminate()
+        up.shutdown()
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            pass
 
 
 @REAL_TOOLCHAIN
