@@ -102,9 +102,11 @@ def test_browser_senses_console_and_session_api(tmp_path, monkeypatch):
         assert client.get("/health").headers["cache-control"] == "no-store"
         api_paths = client.get("/openapi.json").json()["paths"]
         assert "/api/browser-senses/actions/{action_id}/status" in api_paths
+        assert "/api/browser-senses/actions/{action_id}/cancel" in api_paths
+        assert "/api/browser-senses/actions/{action_id}/reconcile" in api_paths
         assert all(
             not path.startswith("/api/browser-senses/actions/")
-            or path.endswith("/status")
+            or path.endswith(("/status", "/cancel", "/reconcile"))
             for path in api_paths
         )
 

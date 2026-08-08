@@ -260,6 +260,9 @@ class BrowserSenseCapabilityActionReceipt:
     approval_request_id: str | None = None
     authoritative_receipt_id: str | None = None
     cancel_supported: bool = False
+    control_request_id: str | None = None
+    cancellation_status: str | None = None
+    reconciliation_status: str | None = None
     progress: float | None = None
     safe_summary: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -292,6 +295,25 @@ class BrowserSenseCapabilityActionReceipt:
         }
         if self.state in terminal:
             _require_text(self.authoritative_receipt_id, "terminal browser sense authoritative receipt ID")
+        if self.cancellation_status is not None:
+            if self.cancellation_status not in {
+                "requested", "unsupported", "not-confirmed", "confirmed"
+            }:
+                raise ValueError("unknown browser sense cancellation status")
+            _require_text(self.control_request_id, "browser sense cancellation control request ID")
+        if self.reconciliation_status is not None:
+            if self.reconciliation_status not in {"not-confirmed", "confirmed"}:
+                raise ValueError("unknown browser sense reconciliation status")
+            _require_text(self.control_request_id, "browser sense reconciliation control request ID")
+        if self.state is BrowserSenseCapabilityActionState.CANCELING:
+            if self.cancellation_status != "requested":
+                raise ValueError("canceling action requires a requested cancellation receipt")
+        if self.state is BrowserSenseCapabilityActionState.CANCELED:
+            if self.cancellation_status != "confirmed":
+                raise ValueError("canceled action requires a confirmed cancellation receipt")
+        if self.state is BrowserSenseCapabilityActionState.RECONCILING:
+            if self.reconciliation_status != "not-confirmed":
+                raise ValueError("reconciling action must remain not-confirmed")
         if self.progress is not None and not 0.0 <= self.progress <= 1.0:
             raise ValueError("browser sense capability action progress must be between zero and one")
 

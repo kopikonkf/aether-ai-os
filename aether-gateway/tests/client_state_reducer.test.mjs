@@ -287,6 +287,10 @@ test('reconciling action cannot be resubmitted and needs a receipt to finish', (
       actionId: 'action-ambiguous',
       actionState,
       exactActionHash: 'e'.repeat(64),
+      ...(actionState === CapabilityActionState.RECONCILING ? {
+        controlRequestId: 'reconcile.legacy',
+        reconciliationStatus: 'not-confirmed',
+      } : {}),
     }));
   }
   assert.throws(
@@ -302,8 +306,38 @@ test('reconciling action cannot be resubmitted and needs a receipt to finish', (
     actionState: CapabilityActionState.FAILED,
     exactActionHash: 'e'.repeat(64),
     authoritativeReceiptId: 'reconciliation-receipt-1',
+    controlRequestId: 'reconcile.legacy',
+    reconciliationStatus: 'confirmed',
   }));
   assert.equal(state.capabilityAction.state, CapabilityActionState.FAILED);
+});
+
+test('capability reconciliation is visibly not confirmed and never enables retry', () => {
+  let state = activeState();
+  for (const actionState of [
+    CapabilityActionState.PROPOSED,
+    CapabilityActionState.QUEUED,
+    CapabilityActionState.RUNNING,
+  ]) {
+    state = reduceClientState(state, event('CAPABILITY_RECEIPT', {
+      actionId: 'action-network-ambiguous',
+      actionState,
+      exactActionHash: 'e'.repeat(64),
+      cancelSupported: true,
+    }));
+  }
+  state = reduceClientState(state, event('CAPABILITY_RECEIPT', {
+    actionId: 'action-network-ambiguous',
+    actionState: CapabilityActionState.RECONCILING,
+    exactActionHash: 'e'.repeat(64),
+    controlRequestId: 'reconcile.1',
+    reconciliationStatus: 'not-confirmed',
+  }));
+
+  const presentation = deriveClientPresentation(state);
+  assert.equal(presentation.capabilityActionLabel, 'RECONCILING · NOT CONFIRMED');
+  assert.equal(presentation.canCancelAction, false);
+  assert.equal(presentation.canRetryAction, false);
 });
 
 test('capability receipts cannot switch exact actions mid-lifecycle', () => {
@@ -597,6 +631,8 @@ test('Senses shell renders all reducer axes and a private text-only control', as
     'approvalHandoff',
     'aionuiApprovalLink',
     'telegramApprovalCommand',
+    'cancelCapabilityAction',
+    'capabilityControlStatus',
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`));
   }
@@ -620,6 +656,14 @@ test('Senses app is wired only through the reducer presentation boundary', async
   assert.match(app, /interruptActiveTurn/);
   assert.match(app, /suspendClosePromise/);
   assert.match(app, /api\/browser-senses\/actions\/\$\{encodeURIComponent\(actionId\)\}\/status/);
+  assert.match(app, /api\/browser-senses\/actions\/.+\/cancel/);
+  assert.match(app, /api\/browser-senses\/actions\/.+\/reconcile/);
+  assert.match(app, /will not replay or resubmit execution/);
+  assert.match(app, /cancelCapabilityAction/);
+  assert.doesNotMatch(
+    app,
+    /stopAether[^\n]*cancelCapabilityAction|interruptActiveTurn\([^)]*\)[\s\S]{0,80}cancelCapabilityAction/,
+  );
   assert.match(app, /presentCapabilityActions\(result\.capability_actions, epoch\)/);
   assert.match(app, /await state\.suspendClosePromise/);
   assert.doesNotMatch(app, /function setState\s*\(/);
@@ -631,7 +675,7 @@ test('Senses app is wired only through the reducer presentation boundary', async
   assert.doesNotMatch(app, /cdn\.jsdelivr\.net|unpkg\.com|esm\.sh/);
 });
 
-test('canonical handoff records slice eight boundaries and the next slice', async () => {
+test('canonical handoff records slice nine boundaries and the next proof gate', async () => {
   const handoff = await readFile(
     new URL('../../LASTSTANDINGPOINT.md', import.meta.url),
     'utf8',
@@ -641,13 +685,16 @@ test('canonical handoff records slice eight boundaries and the next slice', asyn
   assert.match(handoff, /Implementation slice 6 is source-present/);
   assert.match(handoff, /Implementation slice 7 is source-present/);
   assert.match(handoff, /Implementation slice 8 is source-present/);
-  assert.match(handoff, /merely because slices 1-8 are source-present/);
+  assert.match(handoff, /Implementation slice 9 is source-present/);
+  assert.match(handoff, /merely because slices 1-9 are source-present/);
   assert.match(handoff, /late-result-discarded/);
   assert.match(handoff, /never submitted again automatically/);
   assert.match(handoff, /server-authoritative consent leases/);
   assert.match(handoff, /VisionFrameReceipt` no longer requires/);
   assert.match(handoff, /module service worker owns only an exact build-versioned/);
-  assert.match(handoff, /Complete the remaining capability cancellation/);
+  assert.match(handoff, /one supported-cancel trial/);
+  assert.match(handoff, /zero action/);
+  assert.match(handoff, /resubmissions/);
   assert.match(handoff, /does not activate a new capability adapter/);
   assert.match(handoff, /Tier-1 Windows Chromium/);
   assert.match(handoff, /Conversational interruption remains orthogonal/);

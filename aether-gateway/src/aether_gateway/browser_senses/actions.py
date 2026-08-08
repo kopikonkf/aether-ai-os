@@ -46,6 +46,7 @@ def _manifest_payload(capability: ActionCapability) -> dict[str, Any]:
         "reversible": capability.reversible,
         "input_schema": dict(capability.input_schema),
         "routing_key": capability.routing_key,
+        "cancel_supported": capability.cancel_supported,
     }
 
 
@@ -231,6 +232,15 @@ class BrowserSenseActionProjector:
         receipts: list[BrowserSenseCapabilityActionReceipt] = []
         current = BrowserSenseCapabilityActionState.NONE
         approval: dict[str, str] | None = None
+        cancellation_request_id: str | None = None
+        reconciliation_request_id: str | None = None
+        terminal_states = {
+            BrowserSenseCapabilityActionState.SUCCEEDED,
+            BrowserSenseCapabilityActionState.FAILED,
+            BrowserSenseCapabilityActionState.CANCELED,
+            BrowserSenseCapabilityActionState.REJECTED,
+            BrowserSenseCapabilityActionState.UNAVAILABLE,
+        }
 
         def append_receipt(
             event: Event,
@@ -238,11 +248,16 @@ class BrowserSenseActionProjector:
             *,
             approval_request_id: str | None = None,
             authoritative: bool = False,
+            control_request_id: str | None = None,
+            cancellation_status: str | None = None,
+            reconciliation_status: str | None = None,
+            repeat: bool = False,
         ) -> None:
             nonlocal current
-            if target is current:
+            if target is current and not repeat:
                 return
-            require_browser_sense_action_transition(current, target)
+            if target is not current:
+                require_browser_sense_action_transition(current, target)
             receipt = BrowserSenseCapabilityActionReceipt(
                 receipt_id=event.event_id,
                 action_id=action_id,
@@ -260,7 +275,10 @@ class BrowserSenseActionProjector:
                 ),
                 approval_request_id=approval_request_id,
                 authoritative_receipt_id=(event.event_id if authoritative else None),
-                cancel_supported=False,
+                cancel_supported=bool(capability and capability.cancel_supported),
+                control_request_id=control_request_id,
+                cancellation_status=cancellation_status,
+                reconciliation_status=reconciliation_status,
                 progress=(1.0 if target is BrowserSenseCapabilityActionState.SUCCEEDED else None),
                 safe_summary=safe_summary,
                 metadata={
@@ -273,6 +291,11 @@ class BrowserSenseActionProjector:
 
         for event in action_events:
             kind = _event_type(event)
+            if current in terminal_states:
+                # Terminal action truth is monotonic. Late executor results and
+                # duplicate/replayed controls remain in the audit journal but
+                # cannot overwrite the public terminal receipt.
+                continue
             if kind == EventType.ACTION_PROPOSED.value:
                 if not receipts:
                     append_receipt(event, BrowserSenseCapabilityActionState.PROPOSED)
@@ -301,11 +324,87 @@ class BrowserSenseActionProjector:
             if kind == EventType.ACTION_EXECUTION_REQUESTED.value:
                 append_receipt(event, BrowserSenseCapabilityActionState.RUNNING)
                 continue
+            if kind == EventType.ACTION_CANCEL_INTENT_RECORDED.value:
+                event_hash = str(event.payload.get("action_hash") or "")
+                if not hmac.compare_digest(event_hash, exact_action_hash):
+                    raise ValueError("cancel intent hash does not match the exact action")
+                cancellation_request_id = str(event.payload.get("control_request_id") or "")
+                append_receipt(
+                    event,
+                    current,
+                    authoritative=True,
+                    control_request_id=cancellation_request_id,
+                    cancellation_status="requested",
+                    repeat=True,
+                )
+                continue
+            if kind in {
+                EventType.ACTION_CANCEL_UNSUPPORTED.value,
+                EventType.ACTION_CANCEL_NOT_CONFIRMED.value,
+            }:
+                cancellation_request_id = str(
+                    event.payload.get("control_request_id") or cancellation_request_id or ""
+                )
+                append_receipt(
+                    event,
+                    current,
+                    authoritative=True,
+                    control_request_id=cancellation_request_id,
+                    cancellation_status=(
+                        "unsupported"
+                        if kind == EventType.ACTION_CANCEL_UNSUPPORTED.value
+                        else "not-confirmed"
+                    ),
+                    repeat=True,
+                )
+                continue
+            if kind == EventType.ACTION_CANCEL_REQUESTED.value:
+                cancellation_request_id = str(
+                    event.payload.get("control_request_id") or cancellation_request_id or ""
+                )
+                append_receipt(
+                    event,
+                    BrowserSenseCapabilityActionState.CANCELING,
+                    control_request_id=cancellation_request_id,
+                    cancellation_status="requested",
+                )
+                continue
+            if kind == EventType.ACTION_CANCELED.value:
+                cancellation_request_id = str(
+                    event.payload.get("control_request_id") or cancellation_request_id or ""
+                )
+                append_receipt(
+                    event,
+                    BrowserSenseCapabilityActionState.CANCELED,
+                    authoritative=True,
+                    control_request_id=cancellation_request_id,
+                    cancellation_status="confirmed",
+                )
+                continue
+            if kind == EventType.ACTION_RECONCILIATION_REQUESTED.value:
+                event_hash = str(event.payload.get("action_hash") or "")
+                if not hmac.compare_digest(event_hash, exact_action_hash):
+                    raise ValueError("reconciliation hash does not match the exact action")
+                observed = str(event.payload.get("observed_receipt_id") or "")
+                if not any(item.event_id == observed for item in action_events):
+                    raise ValueError("reconciliation references an unknown action receipt")
+                reconciliation_request_id = str(event.payload.get("control_request_id") or "")
+                append_receipt(
+                    event,
+                    BrowserSenseCapabilityActionState.RECONCILING,
+                    control_request_id=reconciliation_request_id,
+                    reconciliation_status="not-confirmed",
+                )
+                continue
             if kind == EventType.ACTION_COMPLETED.value:
                 append_receipt(
                     event,
                     BrowserSenseCapabilityActionState.SUCCEEDED,
                     authoritative=True,
+                    control_request_id=reconciliation_request_id,
+                    reconciliation_status=(
+                        "confirmed" if reconciliation_request_id else None
+                    ),
                 )
                 continue
             if kind == EventType.ACTION_FAILED.value:
@@ -313,6 +412,10 @@ class BrowserSenseActionProjector:
                     event,
                     BrowserSenseCapabilityActionState.FAILED,
                     authoritative=True,
+                    control_request_id=reconciliation_request_id,
+                    reconciliation_status=(
+                        "confirmed" if reconciliation_request_id else None
+                    ),
                 )
                 continue
             if kind == EventType.ACTION_PREFLIGHT_FAILED.value:

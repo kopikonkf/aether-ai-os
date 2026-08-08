@@ -261,6 +261,9 @@ function emptyAction() {
     approvalRequestId: null,
     authoritativeReceiptId: null,
     cancelSupported: false,
+    controlRequestId: null,
+    cancellationStatus: null,
+    reconciliationStatus: null,
     progress: null,
     safeSummary: null,
     stale: false,
@@ -450,6 +453,18 @@ function reduceCapabilityReceipt(state, event) {
   if (TERMINAL_ACTIONS.has(target) && !String(event.authoritativeReceiptId || '').trim()) {
     throw new Error('terminal capability action requires an authoritative receipt');
   }
+  if (
+    (event.cancellationStatus || event.reconciliationStatus)
+    && !String(event.controlRequestId || '').trim()
+  ) {
+    throw new Error('capability control receipt requires an exact control request ID');
+  }
+  if (
+    target === CapabilityActionState.RECONCILING
+    && event.reconciliationStatus !== 'not-confirmed'
+  ) {
+    throw new Error('reconciling capability must remain not confirmed');
+  }
   if (event.progress !== undefined && event.progress !== null) {
     if (!Number.isFinite(event.progress) || event.progress < 0 || event.progress > 1) {
       throw new Error('capability progress must be between zero and one');
@@ -467,6 +482,9 @@ function reduceCapabilityReceipt(state, event) {
       approvalRequestId: event.approvalRequestId || null,
       authoritativeReceiptId: event.authoritativeReceiptId || null,
       cancelSupported: event.cancelSupported === true,
+      controlRequestId: event.controlRequestId || current.controlRequestId,
+      cancellationStatus: event.cancellationStatus || null,
+      reconciliationStatus: event.reconciliationStatus || null,
       progress: event.progress ?? current.progress,
       safeSummary: event.safeSummary || current.safeSummary,
       stale: false,
@@ -900,9 +918,15 @@ export function deriveClientPresentation(state) {
     transportLabel: label(state.transportMode),
     turnLabel,
     consentLabel: `CAMERA ${label(state.consent.camera.mode)} · SCREEN ${label(state.consent.screen.mode)}`,
-    capabilityActionLabel: (
-      `${label(state.capabilityAction.state)}${state.capabilityAction.stale ? ' · LAST KNOWN' : ''}`
-    ),
+    capabilityActionLabel: [
+      label(state.capabilityAction.state),
+      (
+        state.capabilityAction.reconciliationStatus === 'not-confirmed'
+          ? 'NOT CONFIRMED'
+          : null
+      ),
+      state.capabilityAction.stale ? 'LAST KNOWN' : null,
+    ].filter(Boolean).join(' · '),
     externalSpeechLabel,
     canConnect: [
       AuthSessionState.READY,
@@ -935,6 +959,13 @@ export function deriveClientPresentation(state) {
       ].includes(state.activeTurn.delivery)
     ),
     canRetryTurn: active && state.activeTurn.delivery === TurnDeliveryState.NOT_CONFIRMED,
+    canCancelAction: (
+      active
+      && state.capabilityAction.state === CapabilityActionState.RUNNING
+      && state.capabilityAction.cancelSupported
+      && !state.capabilityAction.cancellationStatus
+    ),
+    canRetryAction: false,
   };
 }
 

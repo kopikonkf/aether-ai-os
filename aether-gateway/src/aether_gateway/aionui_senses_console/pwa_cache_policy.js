@@ -1,4 +1,4 @@
-export const PWA_BUILD_ID = 'senses-v1-slice-8-20260808-1';
+export const PWA_BUILD_ID = 'senses-v1-slice-9-20260808-1';
 export const CACHE_PREFIX = 'aether-senses-shell-';
 export const CACHE_NAME = `${CACHE_PREFIX}${PWA_BUILD_ID}`;
 export const SHELL_NAVIGATION_URL = '/senses';

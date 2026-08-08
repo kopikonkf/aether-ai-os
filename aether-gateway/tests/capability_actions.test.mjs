@@ -23,6 +23,9 @@ function receipt(state, sequence, values = {}) {
     approval_request_id: null,
     authoritative_receipt_id: null,
     cancel_supported: false,
+    control_request_id: null,
+    cancellation_status: null,
+    reconciliation_status: null,
     progress: null,
     safe_summary: 'tool.write · medium risk',
     metadata: { source: 'action-path-ledger' },
@@ -108,5 +111,51 @@ test('consumer dispatches new receipts in order and refreshes current receipt sa
   assert.deepEqual(events.map((event) => event.actionState), ['proposed', 'proposed']);
   assert.equal(events[0].epoch, 4);
   assert.equal(rendered.at(-1).current.receiptId, 'evt.1');
+});
+
+test('normalizer preserves exact cancellation and not-confirmed reconciliation receipts', () => {
+  const canceled = normalizeCapabilityProjection(projection([
+    receipt('proposed', 1, { cancel_supported: true }),
+    receipt('queued', 2, { cancel_supported: true }),
+    receipt('running', 3, { cancel_supported: true }),
+    receipt('canceling', 4, {
+      cancel_supported: true,
+      control_request_id: 'cancel.1',
+      cancellation_status: 'requested',
+    }),
+    receipt('canceled', 5, {
+      cancel_supported: true,
+      control_request_id: 'cancel.1',
+      cancellation_status: 'confirmed',
+      authoritative_receipt_id: 'evt.5',
+    }),
+  ]));
+  assert.equal(canceled.current.cancellationStatus, 'confirmed');
+  assert.equal(canceled.current.controlRequestId, 'cancel.1');
+  assert.equal(canceled.terminal, true);
+
+  const ambiguous = normalizeCapabilityProjection(projection([
+    receipt('proposed', 1),
+    receipt('queued', 2),
+    receipt('running', 3),
+    receipt('reconciling', 4, {
+      control_request_id: 'reconcile.1',
+      reconciliation_status: 'not-confirmed',
+    }),
+  ]));
+  assert.equal(ambiguous.current.reconciliationStatus, 'not-confirmed');
+  assert.equal(ambiguous.terminal, false);
+});
+
+test('normalizer rejects control receipts without exact control identity', () => {
+  assert.throws(
+    () => normalizeCapabilityProjection(projection([
+      receipt('proposed', 1),
+      receipt('queued', 2),
+      receipt('running', 3),
+      receipt('reconciling', 4, { reconciliation_status: 'not-confirmed' }),
+    ])),
+    /control request ID/,
+  );
 });
 

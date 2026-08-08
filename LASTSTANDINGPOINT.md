@@ -179,28 +179,56 @@ Founder approval / release evidence
   fail closed outside the allowlisted Founder's private chat, and their result
   remains on the originating Senses receipt channel instead of being copied as
   raw output into Telegram.
+- Implementation slice 9 is source-present: the governed action path now owns a
+  distinct cancellation/reconciliation control boundary. Every control intent
+  is bound to a stable `control_request_id`, exact action SHA-256, Browser
+  Senses session, authenticated principal, and observed ledger receipt. Reuse
+  of the same ID with different evidence fails closed; an exact replay reads the
+  prior control receipt and never calls the adapter again.
+- Action execution is shielded from the lifetime of its HTTP waiter. A browser
+  timeout or disconnect therefore cannot cancel the backend implicitly or
+  authorize a replay. The original execution continues to one authoritative
+  terminal receipt; a status-ambiguity intent emits `RECONCILING · NOT
+  CONFIRMED` and performs lookup only. A later completion/failure receipt moves
+  that same action monotonically to a confirmed terminal state.
+- Cancellation is available only when the exact registered capability declares
+  support and its adapter implements an acknowledgement port. Senses exposes a
+  separate receipt-bound cancel control only while that action is `RUNNING`;
+  `Stop Aether`, Escape, speech barge-in, disconnect, and suspension still do
+  not imply capability cancellation. Unsupported and unacknowledged cancel
+  outcomes remain non-terminal and are not resubmitted. A confirmed cancel
+  projects `CANCELING` then `CANCELED`; any late adapter result is hash-only
+  discarded and cannot overwrite the cancellation receipt.
+- No existing production capability was newly marked cancellation-capable by
+  this slice. Current adapters retain the safe default `cancel_supported=false`
+  unless they already provide and declare the exact acknowledgement contract.
+  The new lifecycle is exercised against bounded in-process conformance fakes;
+  real host/device trials remain separate evidence.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-8 are source-present. The Gemini adapter is not yet
+  merely because slices 1-9 are source-present. The Gemini adapter is not yet
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
-  real browser/PWA installation and launch evidence, capability cancellation
-  and network-ambiguous reconciliation receipts, LiveKit grant revocation,
-  credentialed provider execution, and Founder host evidence still require
-  their own wiring and proof. Slice 8 does not activate a new capability adapter
-  or raise any named capability to `ACTIVE` or `FOUNDER-PROVEN`.
+  real browser/PWA installation and launch evidence, real-device capability
+  cancellation/reconciliation trials, LiveKit grant revocation, credentialed
+  provider execution, and Founder host evidence still require their own wiring
+  and proof. Slice 9 does not activate a new capability adapter or raise any
+  named capability to `ACTIVE` or `FOUNDER-PROVEN`.
 
 ## Next Senses implementation slice
 
-Complete the remaining capability cancellation and network-ambiguous
-reconciliation receipts against already conformed test capabilities; do not
-activate a new external adapter. Separately, after slice 8 is merged and
-deployed, run the Tier-1 Windows Chromium and Android installed-PWA matrix for
-install, cold/warm launch, foreground suspension, update activation, and Cache
-Storage inspection. Keep Senses source-present and do not claim mobile, host,
-or capability conformance before the corresponding real-browser and
-authoritative-receipt evidence exists.
+After slice 9 is merged and deployed, run the Tier-1 Windows Chromium and
+Android installed-PWA matrix for install, cold/warm launch, foreground
+suspension, update activation, and Cache Storage inspection. Include one supported-cancel trial
+and one forced network-ambiguity trial against an already
+conformed bounded test capability, proving one backend invocation, zero action
+resubmissions, exact control replay safety, `NOT CONFIRMED` presentation, and a
+late terminal receipt. Keep Senses source-present and do not claim mobile, host,
+or capability conformance before that real-browser evidence exists. The next
+source slice after this host matrix is LiveKit grant revocation plus
+credentialed provider execution/fallback proof; it remains non-activated until
+its own evidence passes.
 
 ## Next operational step
 

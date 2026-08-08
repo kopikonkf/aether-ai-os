@@ -1,6 +1,6 @@
 """Stable ports owned by Aether Core."""
 from .actions import (
-    ActionApproval, ActionCapability, ActionDecision, ActionProposal, ActionResult,
+    ActionApproval, ActionCapability, ActionControlReceipt, ActionDecision, ActionProposal, ActionResult,
     ActionRisk, ActionScope, ActionTarget, ApprovalOutcome, ApprovalStatus, PendingAction,
     GovernedActionExecutor, ResumableActionExecutor, ToolExecutor, canonical_action_hash,
 )
@@ -104,6 +104,7 @@ from .browser_senses import (
 __all__ = [
     "ActionApproval",
     "ActionCapability",
+    "ActionControlReceipt",
     "ActionDecision",
     "ActionProposal",
     "ActionResult",

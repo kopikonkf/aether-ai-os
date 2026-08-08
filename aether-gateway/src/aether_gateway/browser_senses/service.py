@@ -58,6 +58,7 @@ from .vision import (
 )
 
 if TYPE_CHECKING:
+    from aether.actions import GovernedActionPath
     from .actions import BrowserSenseActionProjector
 
 
@@ -187,6 +188,7 @@ class BrowserSenseService:
         maximum_frame_bytes: int = 750_000,
         default_ttl_seconds: int = 3600,
         action_projector: "BrowserSenseActionProjector | None" = None,
+        action_controller: "GovernedActionPath | None" = None,
     ) -> None:
         self.root = root
         self.frames_root = root / "frames"
@@ -201,6 +203,7 @@ class BrowserSenseService:
         self.maximum_frame_bytes = maximum_frame_bytes
         self.default_ttl_seconds = default_ttl_seconds
         self.action_projector = action_projector
+        self.action_controller = action_controller
         self.vision = VisionLifecycle(
             root / "vision-lifecycle.sqlite3",
             self.frames_root,
@@ -222,6 +225,9 @@ class BrowserSenseService:
 
     def set_action_projector(self, projector: "BrowserSenseActionProjector") -> None:
         self.action_projector = projector
+
+    def set_action_controller(self, controller: "GovernedActionPath") -> None:
+        self.action_controller = controller
 
     @classmethod
     def _safe_identity(cls, value: str, fallback: str) -> str:
@@ -931,6 +937,50 @@ class BrowserSenseService:
         session = self.authenticate(token)
         if self.action_projector is None:
             raise KeyError(action_id)
+        return await self.action_projector.for_action(session.session_id, action_id)
+
+    async def cancel_action(
+        self,
+        token: str,
+        action_id: str,
+        *,
+        control_request_id: str,
+        expected_action_hash: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        session = self.authenticate(token)
+        if self.action_controller is None or self.action_projector is None:
+            raise RuntimeError("Browser sense action control is unavailable")
+        await self.action_controller.cancel_action(
+            action_id,
+            control_request_id=control_request_id,
+            expected_action_hash=expected_action_hash,
+            session_id=session.session_id,
+            principal=session.principal,
+            reason=reason,
+        )
+        return await self.action_projector.for_action(session.session_id, action_id)
+
+    async def reconcile_action(
+        self,
+        token: str,
+        action_id: str,
+        *,
+        control_request_id: str,
+        expected_action_hash: str,
+        observed_receipt_id: str,
+    ) -> dict[str, Any]:
+        session = self.authenticate(token)
+        if self.action_controller is None or self.action_projector is None:
+            raise RuntimeError("Browser sense action control is unavailable")
+        await self.action_controller.reconcile_action(
+            action_id,
+            control_request_id=control_request_id,
+            expected_action_hash=expected_action_hash,
+            session_id=session.session_id,
+            principal=session.principal,
+            observed_receipt_id=observed_receipt_id,
+        )
         return await self.action_projector.for_action(session.session_id, action_id)
 
     def interrupt_turn(
