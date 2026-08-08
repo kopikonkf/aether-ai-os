@@ -214,12 +214,80 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
   pre-existing `test_state_snapshot` canonical.sqlite3 Windows lock failure
   (unrelated; ok on ubuntu CI).
 - **Report posted:** https://github.com/kopikonkf/aether-ai-os/pull/34#issuecomment-5216460430
-- **Merged:** PR #34 merged to main at `055f609e314d6d9064e8a237cedb4e7bf33d4178`.
-  After PR #39 merges, stage the resulting exact main SHA, then continue the
-  Founder VPS host-proof sequence:
-  generate a bcrypt hash interactive (temp `.txt`, `icacls` to SYSTEM+Admins;
-  installer removes it) -> `aether_migration_<sha>.ps1` cutover -> validate
-  `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` -> production install (AetherService
-  + Watchdog, no sense-worker) -> ACL -> local auth proof (production Caddyfile +
-  proof echo) -> reuse tunnel `8f53133` + DNS cutover `:8080` -> public proof +
-  recovery receipts CONFORMED.
+- **Merged:** PR #34 merged to main at `055f609e314d6d9064e8a237cedb4e7bf33d4178`;
+  PR #39 (docs continuity) merged after it. AETHER_HOME migration is COMPLETE
+  (receipt `20260806T221720Z`) — it must NOT be re-run. The remaining Founder
+  host-proof sequence (after the release-promotion/shared-tunnel source patch
+  merges) is: stage exact latest `main` -> `promote-aether-release.ps1` (reconcile
+  Gateway/Watchdog only, no migration) -> bcrypt hash interactive (temp `.txt`,
+  `icacls` SYSTEM+Admins; installer removes it) -> Caddy basic auth (ADR-0053) ->
+  local auth proof (production Caddyfile + proof echo) -> `update-shared-tunnel.ps1`
+  origin `:80 -> :8080` on tunnel `8f53133` -> Dee authorizes public cutover ->
+  public proof + recovery receipts CONFORMED.
+
+## Host state (2026-08-07) — migration COMPLETE; ingress awaiting source PR merge
+
+- **AETHER_HOME migration: COMPLETE**, do not re-run. Receipt
+  `C:\aether\migration-evidence\20260806T221720Z\aether-quiescent-migration-20260806T221720Z.json`
+  verdict `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` (source `C:\aether\home` ->
+  rollback preserved; canonical target `C:\ProgramData\Aether`, 20/20 DB,
+  mismatches 0). `C:\aether\home` no longer exists.
+- **Active release on VPS: `81582f70c0ccd3d7b32d364b2be6784cff5ffc31`**
+  (immutable). Production services running: `AetherGateway` (:8000, health ok),
+  `AetherWatchdog`, `AetherCaddy` (:8080). `AetherSenseWorker` and
+  `AetherCloudflareTunnel` absent (per design: no sense-worker; shared tunnel).
+- **Founder ingress host: NOT CONFORMED.** `https://aethers.my.id` currently
+  serves IIS welcome page (tunnel config maps `aethers`/`www` -> `localhost:80`);
+  Caddy :8080 has no basic auth yet; `founder-auth.caddy` absent.
+- **AETHER_HOME DACL on the live host is NOT yet protected** (`AreAccessRulesProtected=false`,
+  extra SIDs: Owner S-1-3-0, Users S-1-5-32-545 ReadAndExecute/Write) because the
+  active release's installer still runs `icacls /inheritance:e`. The new installer
+  (PR #40) is fail-closed, so Fase A (exact ACL setter + tree-wide postcondition)
+  MUST run before any promote.
+- **Ingress host mutation is awaiting the release-promotion / shared-tunnel
+  source PR (`agent/release-promotion-shared-tunnel`; round-7 review in
+  progress; the branch head is always volatile and is NOT recorded here):**
+  - `install-aether-services.ps1`: removed `/inheritance:e`; `Ensure-ProtectedAetherHome`
+    (new=apply protected exact, existing=assert only); `-TargetSha` bound to manifest.
+  - `promote-aether-release.ps1`: `-ExpectedTargetSha` is mandatory (provenance guard);
+    **`-Start` is required for any mutating promotion** (restart + live running-path +
+    health gates are never optional and never skipped); stage via temp dir + atomic
+    publish; `Invoke-Git`/`Invoke-GitCapture` wrappers so Windows PowerShell 5.1 cannot
+    turn git's normal stderr progress into a terminating error; **restart failures are
+    never swallowed**; running-path proof correlates the LIVE `Win32_Service.ProcessId`
+    with `Win32_Process.CommandLine` bound to the release; **universal rollback envelope
+    wraps EVERY failure after service-configuration mutation** using the CURRENT safe
+    installer against `81582f70`, proving running path + health + DACL +
+    **live `AETHER_HOME\services\service-manifest.json` provenance** rebound to the
+    rollback release, and **`rollback_proven` is the aggregate of ALL of those
+    postconditions** (a manifest mismatch or DACL failure leaves the aggregate
+    FALSE with an observation-derived error); `targetRelease` is NEVER deleted once services may reference it
+    (only a publish that never touched services is removed for retry-safety);
+    retry-safe (reuse matching release metadata, remove partial publish); boolean
+    receipt with target_sha + paths; DACL asserted before AND after.
+  - `update-shared-tunnel.ps1`: rewrites ONLY the two Aether `service:` scalars
+    (`:80 -> :8080`), preserves `oc`/`jarvis`/`http_status:404`; validate-before-apply
+    + atomic replace + backup; **connector binding via `Win32_Service.ProcessId`
+    correlated with `Win32_Process.CommandLine` (exact CIM), exact config-derived
+    tunnel UUID** (never a hard-coded prefix, never the UUID-in-cmdline assumption);
+    **the SCM connector is stopped via `Stop-Service` + wait (never `Stop-Process`),
+    then only positively matched stale direct PIDs are stopped** and stop failures are
+    never swallowed, preserving unrelated connectors; `Assert-Administrator` runs before
+    `-Apply/-Start` mutation; every receipt field is initialized and every observation
+    null-checked; fail-closed restore on every post-replace failure, and **recovery
+    requires the exact-one governed connector assertion plus observed readiness**
+    before `recovery_proven` is set.
+  - Executable fault-injection tests run the real `.ps1` through PowerShell on any
+    runner via documented env-gated observation seams (default path always real
+    CIM/SCM/service control): tunnel success binding + stale-direct handoff,
+    restart-failure restore, stale-PID stop-failure, readiness-failure recovery,
+    duplicate-connector recovery refusal; promotion success, reuse-existing manifest SHA,
+    target-installer failure, rollback failure, health failure, running-path failure,
+    old-live-PID after binPath change, restart failure, omitted `-Start`, and live
+    service-manifest SHA mismatch.
+  - No DNS CNAME change needed — cutover is origin mapping only.
+- **Next (after this PR reviews + merges):** Fase A (ACL hardening) -> stage exact
+  latest reviewed `main` SHA (`-ExpectedTargetSha`) -> promote services (no migration)
+  -> bcrypt hash interactive -> Caddy basic auth (ADR-0053) -> local auth proof ->
+  shared-tunnel origin cutover (`:80 -> :8080`) -> Dee authorizes public cutover ->
+  public proof + recovery receipts.

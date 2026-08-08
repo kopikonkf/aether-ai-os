@@ -5,6 +5,7 @@ param(
     [string]$AetherHome = "C:\ProgramData\Aether",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
+    [string]$TargetSha = "",
     [switch]$InstallSenseWorker,
     [switch]$Start
 )
@@ -138,7 +139,134 @@ function Install-OrUpdate-Service {
     Invoke-ServiceControl -Arguments @("failureflag", $Name, "1")
 }
 
+function New-ProtectedAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$IsContainer
+    )
+
+    $acl = if ($IsContainer) {
+        New-Object System.Security.AccessControl.DirectorySecurity
+    }
+    else {
+        New-Object System.Security.AccessControl.FileSecurity
+    }
+
+    $acl.SetAccessRuleProtection($true, $false)
+
+    $inherit = [System.Security.AccessControl.InheritanceFlags]::None
+    if ($IsContainer) {
+        $inherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+            [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+
+    foreach ($sid in @("S-1-5-18", "S-1-5-32-544")) {
+        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            (New-Object System.Security.Principal.SecurityIdentifier $sid),
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            $inherit,
+            [System.Security.AccessControl.PropagationFlags]::None,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+        $acl.AddAccessRule($rule)
+    }
+
+    return $acl
+}
+
+function Assert-ProtectedAcl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][bool]$IsContainer,
+        [string]$Label = $Path
+    )
+
+    $targetAcl = Get-Acl -LiteralPath $Path
+    $requiredRules = @{
+        "S-1-5-18" = $false
+        "S-1-5-32-544" = $false
+    }
+    $aclViolations = @()
+    if (-not $targetAcl.AreAccessRulesProtected) {
+        $aclViolations += "inheritance_not_disabled"
+    }
+    $hasContainerInherit = [System.Security.AccessControl.InheritanceFlags]::ContainerInherit
+    $hasObjectInherit = [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    foreach ($rule in $targetAcl.Access) {
+        try {
+            $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        }
+        catch {
+            $sid = [string]$rule.IdentityReference
+        }
+        if ($sid -notin @($requiredRules.Keys)) {
+            $aclViolations += "unexpected_rule:${sid}:$($rule.AccessControlType)"
+            continue
+        }
+        $ruleIsFullControlAllow = (
+            $rule.AccessControlType -eq "Allow" -and
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -eq [System.Security.AccessControl.FileSystemRights]::FullControl
+        )
+        $inheritsOk = $true
+        if ($IsContainer) {
+            $inheritsOk = (
+                [bool]($rule.InheritanceFlags -band $hasContainerInherit) -and
+                [bool]($rule.InheritanceFlags -band $hasObjectInherit)
+            )
+        }
+        if (-not ($ruleIsFullControlAllow -and $inheritsOk)) {
+            $aclViolations += "required_rule_incomplete:${sid}:rights=$($rule.FileSystemRights):inherit=$($rule.InheritanceFlags)"
+        }
+        else {
+            $requiredRules[$sid] = $true
+        }
+    }
+    foreach ($sid in @($requiredRules.Keys)) {
+        if (-not $requiredRules[$sid]) {
+            $aclViolations += "required_sid_missing:${sid}"
+        }
+    }
+    if ($aclViolations.Count -gt 0) {
+        throw "ACL postcondition verification failed for ${Label}: $($aclViolations -join ', ')"
+    }
+}
+
+function Ensure-ProtectedAetherHome {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $homeExistedBefore = Test-Path -LiteralPath $Path -PathType Container
+
+    if (-not $homeExistedBefore) {
+        New-Item -ItemType Directory -Force -Path $Path | Out-Null
+        $protectedAcl = New-ProtectedAcl -Path $Path -IsContainer $true
+        Set-Acl -LiteralPath $Path -AclObject $protectedAcl
+        Assert-ProtectedAcl -Path $Path -IsContainer $true -Label "AETHER_HOME(new)"
+    }
+    else {
+        # Existing AETHER_HOME must already be protected with exactly SYSTEM +
+        # Administrators. Never re-enable inheritance (which would broaden the
+        # DACL); assert the pre-existing postcondition instead.
+        Assert-ProtectedAcl -Path $Path -IsContainer $true -Label "AETHER_HOME(existing)"
+    }
+
+    return $homeExistedBefore
+}
+
 Assert-Administrator
+
+$homePreExists = Ensure-ProtectedAetherHome -Path $AetherHome
+
+$servicesDir = Join-Path $AetherHome "services"
+$logsDir = Join-Path $AetherHome "logs"
+$serviceEventsPath = Join-Path $servicesDir "service-events.jsonl"
+New-Item -ItemType Directory -Force -Path $servicesDir, $logsDir | Out-Null
+
+$servicesAcl = New-ProtectedAcl -Path $servicesDir -IsContainer $true
+Set-Acl -LiteralPath $servicesDir -AclObject $servicesAcl
+$logsAcl = New-ProtectedAcl -Path $logsDir -IsContainer $true
+Set-Acl -LiteralPath $logsDir -AclObject $logsAcl
 
 if (-not $ReleasePath) {
     $ReleasePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
@@ -158,12 +286,6 @@ foreach ($asset in @($runner, $watchdog, $serviceHost)) {
 
 $serviceHostPython = Resolve-ServiceHostPython -RequestedPath $PythonPath -ResolvedReleasePath $ReleasePath
 $powerShellExe = (Get-Command powershell.exe -ErrorAction Stop).Source
-$servicesDir = Join-Path $AetherHome "services"
-$logsDir = Join-Path $AetherHome "logs"
-$serviceEventsPath = Join-Path $servicesDir "service-events.jsonl"
-New-Item -ItemType Directory -Force -Path $AetherHome, $servicesDir, $logsDir | Out-Null
-
-icacls $AetherHome /inheritance:e /grant "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 
 $commonRunnerArgs = @(
     "-NoProfile",
@@ -226,6 +348,7 @@ Install-OrUpdate-Service -Name "AetherWatchdog" -DisplayName "Aether Watchdog" -
 $manifest = [ordered]@{
     installed_at = (Get-Date).ToUniversalTime().ToString("o")
     release_path = $ReleasePath
+    target_sha = $TargetSha
     aether_home = $AetherHome
     host = $HostAddress
     port = $Port
