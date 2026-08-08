@@ -4,7 +4,10 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from aether.actions import FailureFingerprintStore, GovernedActionPath
+from aether.actions import ActionControlConflict, ActionControlIntegrityError
 from aether.contracts import (
     ActionApproval, ActionCapability, ActionProposal, ActionRisk, ActionScope, ActionTarget,
     RuntimeResult, canonical_action_hash,
@@ -24,6 +27,61 @@ class FakeToolExecutor:
     async def execute_tool(self, operation, arguments):
         self.calls += 1
         return self.result
+
+
+class SlowCancellableToolExecutor:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.cancel_calls = 0
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def capabilities(self):
+        return [ActionCapability(
+            ActionTarget.TOOL,
+            "read",
+            "bounded cancellable read",
+            (ActionScope.READ,),
+            True,
+            {"type": "object"},
+            cancel_supported=True,
+        )]
+
+    async def execute_tool(self, operation, arguments):
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return RuntimeResult(True, output="completed-once")
+
+    async def cancel_tool(self, action_id, operation, arguments):
+        self.cancel_calls += 1
+        return RuntimeResult(True, output="cancel-acknowledged")
+
+
+class SlowUnsupportedToolExecutor(SlowCancellableToolExecutor):
+    async def capabilities(self):
+        return [ActionCapability(
+            ActionTarget.TOOL,
+            "read",
+            "bounded read without cancellation acknowledgement",
+            (ActionScope.READ,),
+            True,
+            {"type": "object"},
+            cancel_supported=False,
+        )]
+
+
+class CancellationIgnoringToolExecutor(SlowCancellableToolExecutor):
+    async def execute_tool(self, operation, arguments):
+        self.calls += 1
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            # Model an upstream adapter that acknowledged cancel but still
+            # delivered a late result. The governed path must discard it.
+            pass
+        return RuntimeResult(True, output="late-sensitive-output")
 
 
 def _path(tmp_path: Path, backend: FakeToolExecutor) -> GovernedActionPath:
@@ -175,3 +233,224 @@ def test_read_only_discovery_tools_do_not_interrupt_founder_with_approval(tmp_pa
         assert result.ok
         assert backend.calls == 1
         assert path.event_bus.replay()[1].payload["mode"] == "auto-approved"
+
+
+def _browser_proposal(action_id: str = "act.browser-control") -> ActionProposal:
+    return ActionProposal(
+        ActionTarget.TOOL,
+        "read",
+        {"path": "workspace/proof.md"},
+        (ActionScope.READ,),
+        "Read bounded proof",
+        metadata={"channel": "browser", "session_id": "browser:sense-session.1"},
+        action_id=action_id,
+    )
+
+
+def test_supported_cancel_is_exact_bound_single_use_and_terminal(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        backend = SlowCancellableToolExecutor()
+        path = _path(tmp_path, backend)
+        proposal = _browser_proposal()
+        execution = asyncio.create_task(path.execute(proposal))
+        await backend.started.wait()
+
+        outcome = await path.cancel_action(
+            proposal.action_id,
+            control_request_id="cancel.1",
+            expected_action_hash=canonical_action_hash(proposal),
+            session_id="sense-session.1",
+            principal="founder",
+            reason="founder-explicit-cancel",
+        )
+        result = await execution
+
+        assert outcome.status == "canceled"
+        assert outcome.terminal is True
+        assert result.status == "canceled"
+        assert backend.calls == 1
+        assert backend.cancel_calls == 1
+        assert [event.event_type for event in path.event_bus.replay()] == [
+            "action.proposed",
+            "governance.approved",
+            "action.execution.requested",
+            "action.cancel.intent-recorded",
+            "action.cancel.requested",
+            "action.canceled",
+        ]
+
+        replay = await path.cancel_action(
+            proposal.action_id,
+            control_request_id="cancel.1",
+            expected_action_hash=canonical_action_hash(proposal),
+            session_id="sense-session.1",
+            principal="founder",
+            reason="founder-explicit-cancel",
+        )
+        assert replay.replayed is True
+        assert backend.cancel_calls == 1
+        with pytest.raises(ActionControlConflict):
+            await path.cancel_action(
+                proposal.action_id,
+                control_request_id="cancel.2",
+                expected_action_hash=canonical_action_hash(proposal),
+                session_id="sense-session.1",
+                principal="founder",
+                reason="founder-explicit-cancel",
+            )
+
+    asyncio.run(scenario())
+
+
+def test_acknowledged_cancel_discards_late_adapter_result_hash_only(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        backend = CancellationIgnoringToolExecutor()
+        path = _path(tmp_path, backend)
+        proposal = _browser_proposal("act.late-after-cancel")
+        execution = asyncio.create_task(path.execute(proposal))
+        await backend.started.wait()
+
+        await path.cancel_action(
+            proposal.action_id,
+            control_request_id="cancel.late.1",
+            expected_action_hash=canonical_action_hash(proposal),
+            session_id="sense-session.1",
+            principal="founder",
+            reason="founder-explicit-cancel",
+        )
+        result = await execution
+        events = path.event_bus.replay()
+
+        assert result.status == "canceled"
+        assert not any(event.event_type == "action.completed" for event in events)
+        discarded = next(
+            event for event in events
+            if event.event_type == "action.late-result.discarded"
+        )
+        assert len(discarded.payload["result_hash"]) == 64
+        assert "late-sensitive-output" not in str(discarded.payload)
+
+    asyncio.run(scenario())
+
+
+def test_network_ambiguous_waiter_reconciles_without_cancel_or_resubmission(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        backend = SlowCancellableToolExecutor()
+        path = _path(tmp_path, backend)
+        proposal = _browser_proposal("act.ambiguous")
+        waiter = asyncio.create_task(path.execute(proposal))
+        await backend.started.wait()
+
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        receipt = await path.reconcile_action(
+            proposal.action_id,
+            control_request_id="reconcile.1",
+            expected_action_hash=canonical_action_hash(proposal),
+            session_id="sense-session.1",
+            principal="founder",
+            observed_receipt_id=next(
+                event.event_id
+                for event in path.event_bus.replay()
+                if event.event_type == "action.execution.requested"
+            ),
+        )
+        assert receipt.status == "not-confirmed"
+        assert receipt.terminal is False
+        assert backend.calls == 1
+        assert backend.cancel_calls == 0
+
+        backend.release.set()
+        for _ in range(20):
+            if any(event.event_type == "action.completed" for event in path.event_bus.replay()):
+                break
+            await asyncio.sleep(0)
+        assert backend.calls == 1
+        assert [event.event_type for event in path.event_bus.replay()].count(
+            "action.execution.requested"
+        ) == 1
+        assert [event.event_type for event in path.event_bus.replay()].count(
+            "action.reconciliation.requested"
+        ) == 1
+        assert any(event.event_type == "action.completed" for event in path.event_bus.replay())
+
+        replay = await path.reconcile_action(
+            proposal.action_id,
+            control_request_id="reconcile.1",
+            expected_action_hash=canonical_action_hash(proposal),
+            session_id="sense-session.1",
+            principal="founder",
+            observed_receipt_id=receipt.receipt_id,
+        )
+        assert replay.replayed is True
+        assert backend.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_unsupported_cancel_stays_non_terminal_and_execution_finishes_once(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        backend = SlowUnsupportedToolExecutor()
+        path = _path(tmp_path, backend)
+        proposal = _browser_proposal("act.unsupported-cancel")
+        execution = asyncio.create_task(path.execute(proposal))
+        await backend.started.wait()
+
+        receipt = await path.cancel_action(
+            proposal.action_id,
+            control_request_id="cancel.unsupported.1",
+            expected_action_hash=canonical_action_hash(proposal),
+            session_id="sense-session.1",
+            principal="founder",
+            reason="founder-explicit-cancel",
+        )
+        assert receipt.status == "unsupported"
+        assert receipt.terminal is False
+        assert execution.done() is False
+        assert backend.cancel_calls == 0
+
+        backend.release.set()
+        result = await execution
+        assert result.ok is True
+        assert backend.calls == 1
+        assert [event.event_type for event in path.event_bus.replay()].count(
+            "action.cancel.unsupported"
+        ) == 1
+        assert not any(
+            event.event_type == "action.canceled"
+            for event in path.event_bus.replay()
+        )
+
+    asyncio.run(scenario())
+
+
+def test_action_control_rejects_cross_session_hash_and_request_id_reuse(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        backend = SlowCancellableToolExecutor()
+        path = _path(tmp_path, backend)
+        proposal = _browser_proposal("act.bound")
+        execution = asyncio.create_task(path.execute(proposal))
+        await backend.started.wait()
+        with pytest.raises(ActionControlIntegrityError):
+            await path.reconcile_action(
+                proposal.action_id,
+                control_request_id="control.shared",
+                expected_action_hash="0" * 64,
+                session_id="sense-session.1",
+                principal="founder",
+                observed_receipt_id="evt.unknown",
+            )
+        with pytest.raises(ActionControlIntegrityError):
+            await path.reconcile_action(
+                proposal.action_id,
+                control_request_id="control.shared",
+                expected_action_hash=canonical_action_hash(proposal),
+                session_id="sense-session.other",
+                principal="founder",
+                observed_receipt_id="evt.unknown",
+            )
+        backend.release.set()
+        assert (await execution).ok is True
+
+    asyncio.run(scenario())

@@ -34,7 +34,8 @@ AIONUI_SENSES_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_senses
 load_dotenv(AETHER_CORE_DIR / ".env", override=False)
 
 from aether.actions import (
-    ApprovalNotFound, ApprovalStateError, FailureFingerprintStore, GovernedActionPath,
+    ActionControlConflict, ActionControlIntegrityError, ApprovalNotFound,
+    ApprovalStateError, FailureFingerprintStore, GovernedActionPath,
     PendingActionStore, TrustedApprovalInbox,
 )
 from aether.cognition import AetherCognitiveGateway, SQLiteConversationStore
@@ -451,6 +452,7 @@ browser_sense_service.set_action_projector(BrowserSenseActionProjector(
     routed_action_executor,
     approval_inbox,
 ))
+browser_sense_service.set_action_controller(action_path)
 operator_authenticator = OperatorAuthenticator()
 
 
@@ -686,6 +688,38 @@ class BrowserSenseInterruptRequest(BaseModel):
     delivered_audio_ms: int | None = Field(default=None, ge=0)
     livekit_control_sent: bool = False
     browser_audio_stopped: bool = False
+
+
+class BrowserSenseActionCancelRequest(BaseModel):
+    control_request_id: str = Field(
+        min_length=8,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    expected_action_hash: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    reason: str = Field(pattern=r"^founder-explicit-cancel$")
+
+
+class BrowserSenseActionReconcileRequest(BaseModel):
+    control_request_id: str = Field(
+        min_length=8,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
+    expected_action_hash: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    observed_receipt_id: str = Field(
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    )
 
 
 class BrowserSenseWorkerInterruptRequest(BrowserSenseInterruptRequest):
@@ -1663,6 +1697,50 @@ async def browser_sense_action_status(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Browser sense action was not found") from exc
     except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/browser-senses/actions/{action_id}/cancel")
+async def browser_sense_action_cancel(
+    action_id: str,
+    req: BrowserSenseActionCancelRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
+    try:
+        return await browser_sense_service.cancel_action(
+            token,
+            action_id,
+            control_request_id=req.control_request_id,
+            expected_action_hash=req.expected_action_hash,
+            reason=req.reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Browser sense action was not found") from exc
+    except (ActionControlConflict, ActionControlIntegrityError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/api/browser-senses/actions/{action_id}/reconcile")
+async def browser_sense_action_reconcile(
+    action_id: str,
+    req: BrowserSenseActionReconcileRequest,
+    request: Request,
+    x_aether_csrf: str | None = Header(default=None),
+):
+    token, _, _ = _browser_cookie_auth(request, x_aether_csrf)
+    try:
+        return await browser_sense_service.reconcile_action(
+            token,
+            action_id,
+            control_request_id=req.control_request_id,
+            expected_action_hash=req.expected_action_hash,
+            observed_receipt_id=req.observed_receipt_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Browser sense action was not found") from exc
+    except (ActionControlConflict, ActionControlIntegrityError, RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

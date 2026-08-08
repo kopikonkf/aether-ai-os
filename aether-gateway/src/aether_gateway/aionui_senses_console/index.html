@@ -10,9 +10,9 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Aether — Unified Browser Senses</title>
   <link rel="manifest" href="/senses/manifest.webmanifest" />
-  <link rel="icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-8-20260808-1" />
-  <link rel="apple-touch-icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-8-20260808-1" />
-  <link rel="stylesheet" href="/senses/styles.css?v=senses-v1-slice-8-20260808-1" />
+  <link rel="icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-9-20260808-1" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/senses/icons/aether-senses-192-v1.png?v=senses-v1-slice-9-20260808-1" />
+  <link rel="stylesheet" href="/senses/styles.css?v=senses-v1-slice-9-20260808-1" />
 </head>
 <body>
   <main class="shell">
@@ -72,6 +72,14 @@
         <div><span>Authoritative receipt</span><code id="capabilityReceiptId"></code></div>
         <div><span>Progress</span><strong id="capabilityProgress">receipt only</strong></div>
         <div class="receipt-hash"><span>Exact action SHA-256</span><code id="capabilityActionHash"></code></div>
+      </div>
+      <div class="capability-controls">
+        <button id="cancelCapabilityAction" class="danger" type="button" hidden>
+          Cancel this action
+        </button>
+        <span id="capabilityControlStatus">
+          Cancellation is separate from Stop Aether and requires an exact receipt-bound action.
+        </span>
       </div>
       <div id="approvalHandoff" class="approval-handoff" hidden>
         <p><strong>Trusted approval required.</strong> Senses cannot approve this action, and spoken or typed “yes” is not authority.</p>
@@ -156,6 +164,6 @@
 
     <footer><span id="transportStatus">Transport not initialized.</span></footer>
   </main>
-  <script type="module" src="/senses/app.js?v=senses-v1-slice-8-20260808-1"></script>
+  <script type="module" src="/senses/app.js?v=senses-v1-slice-9-20260808-1"></script>
 </body>
 </html>

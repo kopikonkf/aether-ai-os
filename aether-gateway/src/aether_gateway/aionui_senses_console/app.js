@@ -5,25 +5,25 @@ import {
   TurnState,
   createClientStore,
   deriveClientPresentation,
-} from './client_state.js?v=senses-v1-slice-8-20260808-1';
+} from './client_state.js?v=senses-v1-slice-9-20260808-1';
 import {
   createCapabilityProjectionConsumer,
-} from './capability_actions.js?v=senses-v1-slice-8-20260808-1';
+} from './capability_actions.js?v=senses-v1-slice-9-20260808-1';
 import {
   createTurnGenerationCoordinator,
   stopTurnAudio,
-} from './turn_generation.js?v=senses-v1-slice-8-20260808-1';
-import { createVisionCaptureCoordinator } from './vision_capture.js?v=senses-v1-slice-8-20260808-1';
+} from './turn_generation.js?v=senses-v1-slice-9-20260808-1';
+import { createVisionCaptureCoordinator } from './vision_capture.js?v=senses-v1-slice-9-20260808-1';
 import {
   CACHE_PREFIX,
   PWA_BUILD_ID,
-} from './pwa_cache_policy.js?v=senses-v1-slice-8-20260808-1';
+} from './pwa_cache_policy.js?v=senses-v1-slice-9-20260808-1';
 import {
   PwaLifecycleState,
   createInitialPwaRuntime,
   derivePwaPresentation,
   reducePwaRuntime,
-} from './pwa_runtime.js?v=senses-v1-slice-8-20260808-1';
+} from './pwa_runtime.js?v=senses-v1-slice-9-20260808-1';
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -61,12 +61,17 @@ const state = {
   reloadForUpdate: false,
   suspendClosePromise: null,
   capabilityPollTimer: null,
+  capabilityProjection: null,
+  capabilityAmbiguity: null,
+  capabilityCancelAttemptedActions: new Set(),
 };
 const API = '';
 const TURN_STATE_TOPIC = 'aether.senses.turn-state.v1';
 const TURN_REQUEST_TIMEOUT_MS = 30000;
 const RECONCILIATION_DELAYS_MS = Object.freeze([0, 1000, 3000]);
 const CAPABILITY_POLL_INTERVAL_MS = 1500;
+const CAPABILITY_STATUS_TIMEOUT_MS = 8000;
+const CAPABILITY_CONTROL_TIMEOUT_MS = 10000;
 const turnCoordinator = createTurnGenerationCoordinator();
 const visionCoordinator = createVisionCaptureCoordinator();
 let pwaRuntime = createInitialPwaRuntime({
@@ -137,6 +142,11 @@ function renderClientState(clientState) {
     !presentation.canSend || !pwa.canSend
   );
   $('stopAether').disabled = !presentation.canStopTurn;
+  const cancelAttempted = state.capabilityCancelAttemptedActions.has(
+    clientState.capabilityAction.actionId,
+  );
+  $('cancelCapabilityAction').hidden = !presentation.canCancelAction && !cancelAttempted;
+  $('cancelCapabilityAction').disabled = !presentation.canCancelAction || cancelAttempted;
   $('retryTurn').hidden = !(presentation.canRetryTurn && state.lastUnconfirmedInput);
   $('retryTurn').disabled = !(presentation.canRetryTurn && state.lastUnconfirmedInput);
   $('previewVoice').disabled = !presentation.canUseBrowserSpeech || !pwa.sensorsAllowed;
@@ -171,8 +181,14 @@ function dispatchForEpoch(type, epoch, values = {}) {
 
 function renderCapabilityProjection(projection) {
   const visible = Boolean(projection);
+  state.capabilityProjection = projection || null;
   $('capabilityActionPanel').hidden = !visible;
-  if (!visible) return;
+  if (!visible) {
+    $('capabilityControlStatus').textContent = (
+      'Cancellation is separate from Stop Aether and requires an exact receipt-bound action.'
+    );
+    return;
+  }
   const current = projection.current;
   $('capabilityName').textContent = current.capabilityName;
   $('capabilitySummary').textContent = current.safeSummary || current.capabilityName;
@@ -182,6 +198,29 @@ function renderCapabilityProjection(projection) {
   $('capabilityProgress').textContent = current.progress == null
     ? 'receipt only'
     : `${Math.round(current.progress * 100)}%`;
+  if (current.reconciliationStatus === 'not-confirmed') {
+    $('capabilityControlStatus').textContent = (
+      'NOT CONFIRMED — Aether is looking up this action ID only; it will not replay or resubmit it.'
+    );
+  } else if (current.cancellationStatus === 'not-confirmed') {
+    $('capabilityControlStatus').textContent = (
+      'Cancel outcome is NOT CONFIRMED. The cancel intent will not be submitted again.'
+    );
+  } else if (current.cancellationStatus === 'unsupported') {
+    $('capabilityControlStatus').textContent = (
+      'This capability does not provide an authoritative cancellation acknowledgement.'
+    );
+  } else if (current.actionState === 'canceled') {
+    $('capabilityControlStatus').textContent = 'Cancellation confirmed by the executor receipt.';
+  } else if (current.cancelSupported && current.actionState === 'running') {
+    $('capabilityControlStatus').textContent = (
+      'Cancel is available for this exact action. Stop Aether still affects speech/turn only.'
+    );
+  } else {
+    $('capabilityControlStatus').textContent = (
+      'No cancel claim is available for the current receipt.'
+    );
+  }
   const handoff = projection.approvalHandoff;
   $('approvalHandoff').hidden = !handoff;
   if (handoff) {
@@ -201,22 +240,99 @@ function stopCapabilityPolling() {
   state.capabilityPollTimer = null;
 }
 
+function capabilityControlId(prefix) {
+  return `${prefix}.${crypto.randomUUID()}`;
+}
+
+function markCapabilityNetworkAmbiguous(actionId) {
+  const current = state.capabilityProjection?.current;
+  if (
+    !current
+    || current.actionId !== actionId
+    || current.actionState !== 'running'
+    || state.capabilityAmbiguity?.actionId === actionId
+  ) return;
+  state.capabilityAmbiguity = {
+    actionId,
+    controlRequestId: capabilityControlId('reconcile'),
+    observedReceiptId: current.receiptId,
+    exactActionHash: current.exactActionHash,
+  };
+  message(
+    'system',
+    'Capability status became network-ambiguous. Aether will look up the same action ID; it will not replay or resubmit execution.',
+  );
+}
+
+async function recordCapabilityReconciliation(projection, epoch) {
+  const ambiguity = state.capabilityAmbiguity;
+  if (
+    !ambiguity
+    || ambiguity.actionId !== projection.actionId
+    || projection.current.actionState !== 'running'
+  ) return projection;
+  // Mark before I/O. Even an ambiguous response never causes this control POST
+  // or the underlying action execution to be submitted again automatically.
+  state.capabilityAmbiguity = null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CAPABILITY_CONTROL_TIMEOUT_MS);
+  try {
+    const raw = await jsonFetch(
+      `${API}/api/browser-senses/actions/${encodeURIComponent(projection.actionId)}/reconcile`,
+      {
+        method: 'POST',
+        headers: authHeaders(),
+        signal: controller.signal,
+        body: JSON.stringify({
+          control_request_id: ambiguity.controlRequestId,
+          expected_action_hash: ambiguity.exactActionHash,
+          observed_receipt_id: ambiguity.observedReceiptId,
+        }),
+      },
+    );
+    return capabilityConsumer.consume(raw, { epoch });
+  } catch (error) {
+    if (error.status !== 401) {
+      message(
+        'system',
+        `Capability reconciliation receipt was not confirmed: ${error.message}. Status lookup continues without resubmission.`,
+      );
+    }
+    return projection;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function pollCapabilityAction(actionId, epoch) {
   if (!state.session || clientStore.getEpoch() !== epoch) return;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, CAPABILITY_STATUS_TIMEOUT_MS);
   try {
     const raw = await jsonFetch(
       `${API}/api/browser-senses/actions/${encodeURIComponent(actionId)}/status`,
-      { method: 'POST', headers: authHeaders() },
+      { method: 'POST', headers: authHeaders(), signal: controller.signal },
     );
     if (!state.session || clientStore.getEpoch() !== epoch) return;
-    const projection = capabilityConsumer.consume(raw, { epoch });
+    let projection = capabilityConsumer.consume(raw, { epoch });
+    projection = await recordCapabilityReconciliation(projection, epoch);
     if (projection.terminal) {
+      state.capabilityAmbiguity = null;
       stopCapabilityPolling();
       return;
     }
   } catch (error) {
     if (error.status === 401) return;
+    if (isAmbiguousNetworkError(error, timedOut)) {
+      markCapabilityNetworkAmbiguous(actionId);
+    }
     message('system', `Capability receipt refresh failed: ${error.message}`);
+  } finally {
+    clearTimeout(timeout);
   }
   state.capabilityPollTimer = setTimeout(
     () => pollCapabilityAction(actionId, epoch),
@@ -237,6 +353,7 @@ function presentCapabilityActions(rawActions, epoch) {
     }
     dispatchForEpoch('CAPABILITY_CLEARED', epoch);
     capabilityConsumer.reset();
+    state.capabilityAmbiguity = null;
   }
   const projection = capabilityConsumer.consume(rawActions[0], { epoch });
   stopCapabilityPolling();
@@ -245,6 +362,60 @@ function presentCapabilityActions(rawActions, epoch) {
       () => pollCapabilityAction(projection.actionId, epoch),
       CAPABILITY_POLL_INTERVAL_MS,
     );
+  }
+}
+
+async function cancelCapabilityAction() {
+  const projection = state.capabilityProjection;
+  const clientState = clientStore.getState();
+  const presentation = deriveClientPresentation(clientState);
+  if (
+    !projection
+    || projection.actionId !== clientState.capabilityAction.actionId
+    || !presentation.canCancelAction
+  ) {
+    throw new Error('The current authoritative receipt does not allow cancellation.');
+  }
+  if (state.capabilityCancelAttemptedActions.has(projection.actionId)) {
+    throw new Error('Cancel was already requested once; Aether will not resubmit it.');
+  }
+  const controlRequestId = capabilityControlId('cancel');
+  state.capabilityCancelAttemptedActions.add(projection.actionId);
+  renderClientState(clientState);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, CAPABILITY_CONTROL_TIMEOUT_MS);
+  try {
+    const raw = await jsonFetch(
+      `${API}/api/browser-senses/actions/${encodeURIComponent(projection.actionId)}/cancel`,
+      {
+        method: 'POST',
+        headers: authHeaders(),
+        signal: controller.signal,
+        body: JSON.stringify({
+          control_request_id: controlRequestId,
+          expected_action_hash: projection.exactActionHash,
+          reason: 'founder-explicit-cancel',
+        }),
+      },
+    );
+    const next = capabilityConsumer.consume(raw, { epoch: clientStore.getEpoch() });
+    if (next.terminal) stopCapabilityPolling();
+    return next;
+  } catch (error) {
+    if (isAmbiguousNetworkError(error, timedOut)) {
+      message(
+        'system',
+        'Cancel response is NOT CONFIRMED. The exact cancel intent will not be posted again; receipt polling continues.',
+      );
+      return null;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -343,6 +514,7 @@ function clearSessionRuntime() {
   clearInterval(state.heartbeatTimer);
   state.heartbeatTimer = null;
   stopCapabilityPolling();
+  state.capabilityAmbiguity = null;
   stopLocalCapture();
   state.room?.disconnect();
   state.room = null;
@@ -1790,6 +1962,9 @@ $('stopAether').addEventListener('click', () => {
 });
 $('retryTurn').addEventListener('click', () => {
   retryUnconfirmedTurn().catch((error) => message('system', error.message));
+});
+$('cancelCapabilityAction').addEventListener('click', () => {
+  cancelCapabilityAction().catch((error) => message('system', error.message));
 });
 $('micButton').addEventListener('click', toggleMic);
 $('fallbackTalk').addEventListener('click', fallbackSTT);

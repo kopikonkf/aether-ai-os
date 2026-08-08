@@ -9,7 +9,12 @@ from .approval import (
     TrustedApprovalInbox,
 )
 from .failure import FailureFingerprintStore
-from .path import GovernedActionPath
+from .path import (
+    ActionControlConflict,
+    ActionControlError,
+    ActionControlIntegrityError,
+    GovernedActionPath,
+)
 
 __all__ = [
     "ApprovalError",
@@ -17,6 +22,9 @@ __all__ = [
     "ApprovalIntegrityError",
     "ApprovalNotFound",
     "ApprovalStateError",
+    "ActionControlConflict",
+    "ActionControlError",
+    "ActionControlIntegrityError",
     "FailureFingerprintStore",
     "GovernedActionPath",
     "PendingActionStore",

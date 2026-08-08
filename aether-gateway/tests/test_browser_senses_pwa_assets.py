@@ -83,7 +83,7 @@ class BrowserSensesPwaAssetsTest(unittest.TestCase):
             CONSOLE / "manifest.webmanifest",
         ):
             references = set(
-                re.findall(r"senses-v1-slice-8-[0-9-]+", path.read_text("utf-8"))
+                re.findall(r"senses-v1-slice-9-[0-9-]+", path.read_text("utf-8"))
             )
             self.assertEqual(references, {build_id}, path.name)
 

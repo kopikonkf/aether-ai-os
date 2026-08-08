@@ -1,4 +1,4 @@
-import { CapabilityActionState } from './client_state.js?v=senses-v1-slice-8-20260808-1';
+import { CapabilityActionState } from './client_state.js?v=senses-v1-slice-9-20260808-1';
 
 const TERMINAL_STATES = new Set([
   CapabilityActionState.SUCCEEDED,
@@ -51,6 +51,15 @@ function normalizeReceipt(raw, actionId, exactActionHash) {
       ? null
       : text(raw.authoritative_receipt_id, 'authoritative action receipt ID'),
     cancelSupported: raw.cancel_supported === true,
+    controlRequestId: raw.control_request_id == null
+      ? null
+      : text(raw.control_request_id, 'capability control request ID'),
+    cancellationStatus: raw.cancellation_status == null
+      ? null
+      : text(raw.cancellation_status, 'capability cancellation status'),
+    reconciliationStatus: raw.reconciliation_status == null
+      ? null
+      : text(raw.reconciliation_status, 'capability reconciliation status'),
     progress: raw.progress == null ? null : Number(raw.progress),
     safeSummary: raw.safe_summary == null ? null : text(raw.safe_summary, 'safe action summary'),
   };
@@ -65,6 +74,44 @@ function normalizeReceipt(raw, actionId, exactActionHash) {
   }
   if (TERMINAL_STATES.has(state) && !receipt.authoritativeReceiptId) {
     throw new Error('terminal capability state requires an authoritative receipt');
+  }
+  if (
+    (receipt.cancellationStatus || receipt.reconciliationStatus)
+    && !receipt.controlRequestId
+  ) {
+    throw new Error('capability control receipt requires an exact control request ID');
+  }
+  if (
+    receipt.cancellationStatus
+    && !['requested', 'unsupported', 'not-confirmed', 'confirmed'].includes(
+      receipt.cancellationStatus,
+    )
+  ) {
+    throw new Error('capability receipt contains an unknown cancellation status');
+  }
+  if (
+    receipt.reconciliationStatus
+    && !['not-confirmed', 'confirmed'].includes(receipt.reconciliationStatus)
+  ) {
+    throw new Error('capability receipt contains an unknown reconciliation status');
+  }
+  if (
+    state === CapabilityActionState.CANCELING
+    && receipt.cancellationStatus !== 'requested'
+  ) {
+    throw new Error('canceling capability requires a requested cancellation receipt');
+  }
+  if (
+    state === CapabilityActionState.CANCELED
+    && receipt.cancellationStatus !== 'confirmed'
+  ) {
+    throw new Error('canceled capability requires a confirmed cancellation receipt');
+  }
+  if (
+    state === CapabilityActionState.RECONCILING
+    && receipt.reconciliationStatus !== 'not-confirmed'
+  ) {
+    throw new Error('reconciling capability must remain not confirmed');
   }
   if (
     receipt.progress != null

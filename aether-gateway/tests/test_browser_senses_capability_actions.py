@@ -39,6 +39,7 @@ class FakeCapabilities:
                 required_scopes=(ActionScope.WRITE,),
                 reversible=True,
                 input_schema={"type": "object"},
+                cancel_supported=True,
             )
         ]
 
@@ -230,3 +231,127 @@ def test_registered_capability_manifest_hash_is_server_derived() -> None:
     assert len(projected["current"]["adapter_manifest_hash"]) == 64
     assert projected["current"]["capability_name"] == "tool.write"
     assert projected["current"]["safe_summary"] == "tool.write · medium risk"
+    assert projected["current"]["cancel_supported"] is True
+
+
+def _running_events() -> list[Event]:
+    return [
+        _event(EventType.ACTION_PROPOSED, _proposal_payload(), sequence=1),
+        _event(EventType.GOVERNANCE_APPROVED, {"action_id": ACTION_ID}, sequence=2),
+        _event(EventType.ACTION_EXECUTION_REQUESTED, {"action_id": ACTION_ID}, sequence=3),
+    ]
+
+
+def test_supported_cancellation_projects_exact_control_receipts_and_ignores_late_result() -> None:
+    events = _running_events() + [
+        _event(
+            EventType.ACTION_CANCEL_INTENT_RECORDED,
+            {
+                "action_id": ACTION_ID,
+                "action_hash": _action_hash(),
+                "control_request_id": "cancel.1",
+                "session_id": SESSION_ID,
+            },
+            sequence=4,
+        ),
+        _event(
+            EventType.ACTION_CANCEL_REQUESTED,
+            {
+                "action_id": ACTION_ID,
+                "action_hash": _action_hash(),
+                "control_request_id": "cancel.1",
+            },
+            sequence=5,
+        ),
+        _event(
+            EventType.ACTION_CANCELED,
+            {
+                "action_id": ACTION_ID,
+                "action_hash": _action_hash(),
+                "control_request_id": "cancel.1",
+            },
+            sequence=6,
+        ),
+        _event(
+            EventType.ACTION_LATE_RESULT_DISCARDED,
+            {
+                "action_id": ACTION_ID,
+                "result_hash": "f" * 64,
+            },
+            sequence=7,
+        ),
+    ]
+
+    projected = _project(events)[0]
+
+    assert [item["state"] for item in projected["receipts"]] == [
+        "proposed", "queued", "running", "running", "canceling", "canceled",
+    ]
+    assert projected["current"]["state"] == "canceled"
+    assert projected["current"]["control_request_id"] == "cancel.1"
+    assert projected["current"]["cancellation_status"] == "confirmed"
+    assert projected["current"]["authoritative_receipt_id"] == "evt.6"
+    assert "result_hash" not in json.dumps(projected)
+
+
+def test_network_ambiguity_stays_not_confirmed_until_late_terminal_receipt() -> None:
+    ambiguous = _running_events() + [
+        _event(
+            EventType.ACTION_RECONCILIATION_REQUESTED,
+            {
+                "action_id": ACTION_ID,
+                "action_hash": _action_hash(),
+                "control_request_id": "reconcile.1",
+                "observed_receipt_id": "evt.3",
+                "outcome": "not-confirmed",
+            },
+            sequence=4,
+        ),
+    ]
+
+    projected = _project(ambiguous)[0]
+    assert projected["current"]["state"] == "reconciling"
+    assert projected["current"]["reconciliation_status"] == "not-confirmed"
+    assert projected["current"]["authoritative_receipt_id"] is None
+
+    reconciled = _project(ambiguous + [
+        _event(
+            EventType.ACTION_COMPLETED,
+            {"action_id": ACTION_ID, "output": "must-remain-server-side"},
+            sequence=5,
+        )
+    ])[0]
+    assert reconciled["current"]["state"] == "succeeded"
+    assert reconciled["current"]["reconciliation_status"] == "confirmed"
+    assert reconciled["current"]["authoritative_receipt_id"] == "evt.5"
+    assert "must-remain-server-side" not in json.dumps(reconciled)
+
+
+def test_unsupported_cancel_receipt_never_claims_terminal_cancellation() -> None:
+    events = _running_events() + [
+        _event(
+            EventType.ACTION_CANCEL_INTENT_RECORDED,
+            {
+                "action_id": ACTION_ID,
+                "action_hash": _action_hash(),
+                "control_request_id": "cancel.unsupported",
+                "session_id": SESSION_ID,
+            },
+            sequence=4,
+        ),
+        _event(
+            EventType.ACTION_CANCEL_UNSUPPORTED,
+            {
+                "action_id": ACTION_ID,
+                "action_hash": _action_hash(),
+                "control_request_id": "cancel.unsupported",
+            },
+            sequence=5,
+        ),
+    ]
+
+    projected = _project(events)[0]
+
+    assert projected["current"]["state"] == "running"
+    assert projected["current"]["cancellation_status"] == "unsupported"
+    assert projected["current"]["authoritative_receipt_id"] == "evt.5"

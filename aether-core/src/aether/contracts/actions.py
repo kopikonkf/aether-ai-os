@@ -48,6 +48,7 @@ class ActionCapability:
     reversible: bool = True
     input_schema: Mapping[str, Any] = field(default_factory=dict)
     routing_key: str | None = None
+    cancel_supported: bool = False
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,16 @@ class ActionResult:
     error: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     failure_fingerprint: str | None = None
+
+
+@dataclass(frozen=True)
+class ActionControlReceipt:
+    action_id: str
+    control_request_id: str
+    status: str
+    receipt_id: str
+    terminal: bool = False
+    replayed: bool = False
 
 
 @dataclass(frozen=True)
