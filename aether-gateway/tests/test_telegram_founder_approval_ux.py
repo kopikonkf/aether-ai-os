@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from aether.contracts import ActionResult, Expression
 from aether_gateway.adapters.telegram_bot import TelegramSenseAdapter
+from aether_gateway.approvals import ApprovalInboxService
 
 
 class FakeMessage:
@@ -26,7 +27,13 @@ class FakeInbox:
     def __init__(self, rows) -> None:
         self.rows = list(rows)
 
-    def list(self):
+    def sweep_expired(self):
+        return []
+
+    def get(self, approval_id):
+        return next(row for row in self.rows if row.approval_id == approval_id)
+
+    def list(self, _status=None):
         return list(self.rows)
 
 
@@ -57,7 +64,14 @@ def _pending(approval_id: str, *, chat_id: int = 99):
     return SimpleNamespace(
         approval_id=approval_id,
         action_id=f"act.{approval_id}",
-        proposal=SimpleNamespace(metadata={"chat_id": chat_id}),
+        action_hash="a" * 64,
+        request_channel="telegram",
+        proposal=SimpleNamespace(
+            metadata={
+                "channel": "telegram",
+                "chat_id": chat_id,
+            }
+        ),
     )
 
 
@@ -66,9 +80,11 @@ def _adapter(coordinator, sent: list[str]):
         sent.append(f"{chat_id}:{text}")
 
     sense_path = SimpleNamespace()
+    approval_inbox = ApprovalInboxService(coordinator)
     adapter = TelegramSenseAdapter(
         sense_path,
         approval_coordinator=coordinator,
+        approval_inbox=approval_inbox,
         text_sender=sender,
         enabled=False,
     )
