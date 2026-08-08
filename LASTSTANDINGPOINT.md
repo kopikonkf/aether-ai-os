@@ -232,12 +232,18 @@ its own evidence passes.
 
 ## Next operational step
 
-Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed those receipts into Founder acceptance, then run the first governed private experiment, capture the impact brief, promote it publicly, measure demand, and feed the result back into portfolio reallocation and CEE learning.
+- **Phase B exact `742631871ee2967583c2e2f0e5a9f02c91c880a6` has PASS** (promotion
+  receipt, services bound to `C:\aether\releases\74263187...`, /health /senses
+  /api/browser-senses/status 200, ACL protected, Caddy public 401 with the
+  live host-agnostic hot-fix).
+- **Phase C (Senses) stays HOLD until PR #47 is merged.**
+- After merge: controlled Caddy reconcile (no bcrypt/tunnel/Gateway/AETHER_HOME
+  change) -> local/public proof -> device matrix (Windows Chromium + Android PWA).
+- Do NOT repeat Phase A/B or any full Fase A–E.
 
 ## Cloudflare ingress PR #47 (host-agnostic Caddy listener, 2026-08-08)
 
-- **Head:** `bebf817` (branch `agent/caddy-action-host-agnostic`), based on exact
-  `main@742631871ee2967583c2e2f0e5a9f02c91c880a6`, `mergeable_state=clean`.
+- Based on exact `main@742631871ee2967583c2e2f0e5a9f02c91c880a6`.
 - **Why:** the VPS hot-fix found that the production Caddyfile site block
   `http://127.0.0.1:8080` only matched Host `127.0.0.1`, so tunnelled requests
   with Host `aethers.my.id` / `www.aethers.my.id` received an **empty 200 with no
