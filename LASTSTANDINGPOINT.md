@@ -217,15 +217,14 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
 - **Merged:** PR #34 merged to main at `055f609e314d6d9064e8a237cedb4e7bf33d4178`;
   PR #39 (docs continuity) merged after it. AETHER_HOME migration is COMPLETE
   (receipt `20260806T221720Z`) — it must NOT be re-run. The remaining Founder
-  host-proof sequence (after the release-promotion/shared-tunnel source patch
-  merges) is: stage exact latest `main` -> `promote-aether-release.ps1` (reconcile
-  Gateway/Watchdog only, no migration) -> bcrypt hash interactive (temp `.txt`,
+  host-proof sequence is: stage exact latest `main` -> `promote-aether-release.ps1`
+  (reconcile Gateway/Watchdog only, no migration) -> bcrypt hash interactive (temp `.txt`,
   `icacls` SYSTEM+Admins; installer removes it) -> Caddy basic auth (ADR-0053) ->
   local auth proof (production Caddyfile + proof echo) -> `update-shared-tunnel.ps1`
   origin `:80 -> :8080` on tunnel `8f53133` -> Dee authorizes public cutover ->
   public proof + recovery receipts CONFORMED.
 
-## Host state (2026-08-07) — migration COMPLETE; ingress awaiting source PR merge
+## Host state (2026-08-07) — migration COMPLETE; ingress source merged, host NOT CONFORMED
 
 - **AETHER_HOME migration: COMPLETE**, do not re-run. Receipt
   `C:\aether\migration-evidence\20260806T221720Z\aether-quiescent-migration-20260806T221720Z.json`
@@ -244,9 +243,9 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
   active release's installer still runs `icacls /inheritance:e`. The new installer
   (PR #40) is fail-closed, so Fase A (exact ACL setter + tree-wide postcondition)
   MUST run before any promote.
-- **Ingress host mutation is awaiting the release-promotion / shared-tunnel
-  source PR (`agent/release-promotion-shared-tunnel`; round-7 review in
-  progress; the branch head is always volatile and is NOT recorded here):**
+- **Release-promotion / shared-tunnel source is MERGED to main at `5256751`
+  (PR #40). Host mutation is NOT executed and awaits Founder authorization.**
+  Source behaviour:
   - `install-aether-services.ps1`: removed `/inheritance:e`; `Ensure-ProtectedAetherHome`
     (new=apply protected exact, existing=assert only); `-TargetSha` bound to manifest.
   - `promote-aether-release.ps1`: `-ExpectedTargetSha` is mandatory (provenance guard);
@@ -286,7 +285,7 @@ Run Windows service and Cloudflare ingress host proof on the Founder VPS, feed t
     old-live-PID after binPath change, restart failure, omitted `-Start`, and live
     service-manifest SHA mismatch.
   - No DNS CNAME change needed — cutover is origin mapping only.
-- **Next (after this PR reviews + merges):** Fase A (ACL hardening) -> stage exact
+- **Next (after Founder authorizes host mutation):** Fase A (ACL hardening) -> stage exact
   latest reviewed `main` SHA (`-ExpectedTargetSha`) -> promote services (no migration)
   -> bcrypt hash interactive -> Caddy basic auth (ADR-0053) -> local auth proof ->
   shared-tunnel origin cutover (`:80 -> :8080`) -> Dee authorizes public cutover ->
