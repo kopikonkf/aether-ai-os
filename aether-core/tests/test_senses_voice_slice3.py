@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -449,12 +450,42 @@ def test_founder_alpha_manifest_is_free_disclosed_and_cannot_auto_bill() -> None
     assert deployment.provider.voice_id == "Aoede"
     assert deployment.provider.billing_tier == "free"
     assert deployment.provider.preview is True
-    assert deployment.provider.audition_state == "pending_founder_audition"
+    assert deployment.provider.audition_state == "founder_accepted"
     assert deployment.provider.credential_ref == "env://GEMINI_API_KEY"
     assert deployment.auto_upgrade_billing is False
     assert deployment.fallback_order == ("browser-speech", "text-only")
     assert deployment.private_text_only_supported is True
     assert "improve_provider_products" in deployment.provider.data_use_classification
+
+
+def test_founder_acceptance_marker_is_hash_only_and_non_activating() -> None:
+    marker = REPO_ROOT / "configs" / "runtime" / "gemini_tts_founder_acceptance_marker.yaml"
+    assert marker.is_file()
+    text = marker.read_text(encoding="utf-8")
+    parsed = yaml.safe_load(text)
+    assert parsed.get("audition_outcome") == "AUDITION_ACCEPTED"
+    assert parsed["canonical_status"]["senses_gemini_runtime_path"] == (
+        "WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO"
+    )
+    evidence = parsed["evidence"]
+    for key in ("speech_text_sha256", "audio_sha256_pcm", "wav_sha256",
+                "acceptance_receipt_sha256"):
+        assert re.fullmatch(r"[0-9a-f]{64}", evidence[key]), key
+    assert re.fullmatch(r"[0-9a-f]{40}", evidence["execution_sha"])
+    assert re.fullmatch(r"[0-9a-f]{40}", evidence["promotion_sha"])
+    assert evidence["artifact_pcm_bytes"] == 130560
+    assert evidence["artifact_wav_bytes"] == 130604
+    chain = evidence["applicability_chain"]
+    assert isinstance(chain, list) and len(chain) >= 2
+    assert all(re.fullmatch(r"[0-9a-f]{40}", entry) for entry in chain)
+    assert chain[0] == evidence["execution_sha"]
+    assert chain[-1] == evidence["promotion_sha"]
+    assert evidence["provider_call_count"] == 1
+    assert parsed["secret_suppression"] is True
+    serialized = text.casefold()
+    assert "AIza" not in serialized
+    assert "AQ." not in serialized
+    assert "Bearer" not in serialized
 
 
 @pytest.mark.parametrize(

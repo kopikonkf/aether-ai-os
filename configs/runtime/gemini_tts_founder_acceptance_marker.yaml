@@ -1,0 +1,33 @@
+# Gemini exact-text TTS - Founder audition acceptance (hash-only marker)
+#
+# This file records the Founder audition outcome in a hash-only, secret-free
+# form. It does NOT activate anything and does NOT raise the runtime path to
+# WIRED/ACTIVE/FOUNDER-PROVEN.
+
+capability: "gemini-exact-tts"
+voice_candidate: "Aoede"
+model_id: "gemini-3.1-flash-tts-preview"
+audition_outcome: "AUDITION_ACCEPTED"
+audition_date: "2026-08-09"
+
+canonical_status:
+  voice_aoede: "AUDITION_ACCEPTED"
+  adapter_live_canary: "PASS"
+  senses_gemini_runtime_path: "WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO"
+  global_senses: "all NO"
+
+evidence:
+  speech_text_sha256: "2daebe564a3c17995ecf0ececd475d4c8b3093f3af11c116de05343cc91bbf31"
+  audio_sha256_pcm: "e7afa460d078c49fc1c081710b49f4e50939b56d821bbe7215fa61e473f043b9"
+  artifact_pcm_bytes: 130560
+  wav_sha256: "eae34e0b0b5158e8e92b3903a4ac42582fe18a36ac17d34e65cf0e23fca10333"
+  artifact_wav_bytes: 130604
+  content_type: "audio/l16; rate=24000; channels=1"
+  provider_call_count: 1
+  execution_sha: "62a972581f5a88593c12838bb0bc04e9984bfcbf"
+  applicability_chain: ["62a972581f5a88593c12838bb0bc04e9984bfcbf", "78a0951c9923e33d5eea0a019b6139058c7bc184", "956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5"]
+  promotion_sha: "956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5"
+  acceptance_receipt_sha256: "1c73f1685f41b8fad0b7b738f2b6c99e1a87a13de6ac88c9361619aa98403e47"
+
+secret_suppression: true
+source_receipt: "C:/ProgramData/Aether/runtime/senses/acceptance_runs/gemini_tts_founder_audition_accepted.json"
