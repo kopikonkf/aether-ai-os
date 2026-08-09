@@ -190,6 +190,64 @@ def test_gemini_adapter_sends_only_bounded_exact_text_payload() -> None:
     assert "tool schemas" not in body.decode().casefold()
 
 
+def test_gemini_adapter_parses_interactions_steps_audio_part() -> None:
+    """The interactions endpoint returns audio as a steps[].content[] audio part."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-steps-pcm-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "id": "v1_abc",
+                        "status": "completed",
+                        "steps": [
+                            {
+                                "type": "model_output",
+                                "content": [
+                                    {
+                                        "type": "audio",
+                                        "mime_type": "audio/l16",
+                                        "mime_type_string": "audio/l16; rate=24000; channels=1",
+                                        "data": base64.b64encode(audio).decode(),
+                                        "channels": 1,
+                                        "sample_rate": 24000,
+                                    }
+                                ],
+                            }
+                        ],
+                        "object": "interaction",
+                        "model": deployment.provider.model_id,
+                    }
+                ).encode(),
+                {"x-request-id": "gemini-request-steps"},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-steps",
+        delivery_instruction=compiled.director_instruction,
+        delivery_preset_id=compiled.delivery_preset_id,
+        voice_profile_sha256=compiled.voice_profile_sha256,
+        compiler_sha256=compiled.compiler_sha256,
+    )
+
+    artifact = adapter.synthesize(request, lambda ref: "gemini-api-secret")
+
+    assert artifact.audio == audio
+    assert artifact.content_type.startswith("audio/l16")
+    assert artifact.extension == "pcm"
+
+
 def test_founder_alpha_manifest_is_free_disclosed_and_cannot_auto_bill() -> None:
     deployment = _deployment()
 

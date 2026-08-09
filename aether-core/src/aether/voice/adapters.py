@@ -187,30 +187,66 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
             {"x-goog-api-key": token},
         )
         payload = response.json()
-        output_audio = payload.get("output_audio") or payload.get("outputAudio")
-        if not isinstance(output_audio, Mapping):
-            raise TypeError("Gemini TTS response did not contain output_audio")
-        encoded = output_audio.get("data")
-        if not isinstance(encoded, str):
-            raise TypeError("Gemini TTS response did not contain audio data")
-        try:
-            audio = base64.b64decode(encoded, validate=True)
-        except (ValueError, TypeError) as exc:
-            raise ValueError("Gemini TTS response contained malformed base64 audio") from exc
-        if not audio:
-            raise ValueError("Gemini TTS response contained empty audio")
-        content_type = str(
-            output_audio.get("mime_type")
-            or output_audio.get("mimeType")
-            or "audio/pcm;rate=24000"
-        )
+        audio = self._extract_audio(payload)
+
+        if audio is None:
+            raise TypeError("Gemini TTS response did not contain audio output")
+        content_type = audio.get("mime_type") or audio.get("mimeType") or "audio/pcm;rate=24000"
         if content_type.startswith("audio/wav"):
             extension = "wav"
         elif content_type.startswith("audio/mpeg"):
             extension = "mp3"
         else:
             extension = "pcm"
-        return VoiceArtifact(audio, content_type, extension)
+        return VoiceArtifact(audio["bytes"], content_type, extension)
+
+    @staticmethod
+    def _extract_audio(payload: Mapping[str, object]) -> dict[str, object] | None:
+        """Locate the synthesized audio part in the v1beta interactions response.
+
+        The interactions endpoint returns audio as a ``steps[].content[]`` part
+        shaped ``{mime_type, data, channels, sample_rate}``. The legacy
+        ``output_audio`` / ``outputAudio`` single-part shape is also accepted so
+        older fixtures and deployments keep working.
+        """
+        legacy = payload.get("output_audio") or payload.get("outputAudio")
+        if isinstance(legacy, Mapping):
+            data = legacy.get("data")
+            if isinstance(data, str):
+                decoded = _b64decode(data)
+                if decoded:
+                    return {"bytes": decoded, "mime_type": legacy.get("mime_type") or legacy.get("mimeType")}
+        steps = payload.get("steps")
+        if isinstance(steps, list):
+            for step in steps:
+                if not isinstance(step, Mapping):
+                    continue
+                content = step.get("content")
+                if not isinstance(content, list):
+                    continue
+                for part in content:
+                    if not isinstance(part, Mapping):
+                        continue
+                    if str(part.get("type", "")) != "audio":
+                        continue
+                    data = part.get("data")
+                    if not isinstance(data, str):
+                        continue
+                    decoded = _b64decode(data)
+                    if decoded:
+                        return {
+                            "bytes": decoded,
+                            "mime_type": part.get("mime_type") or part.get("mime_type_string") or "audio/pcm;rate=24000",
+                        }
+        return None
+
+
+def _b64decode(value: str) -> bytes | None:
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (ValueError, TypeError):
+        return None
+    return decoded or None
 
 
 class OpenAIExactTextTTSAdapter(_JsonTTSAdapter):
