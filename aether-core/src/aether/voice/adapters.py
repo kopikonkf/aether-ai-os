@@ -167,6 +167,9 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
     """Gemini TTS peripheral that receives one bounded exact-text prompt."""
 
     endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions"
+    # Free-tier Founder Alpha deployment contracts: L16 PCM @ 24 kHz mono.
+    EXPECTED_SAMPLE_RATE = 24000
+    EXPECTED_CHANNELS = 1
 
     def synthesize(
         self, request: VoiceSynthesisRequest, resolve_credential: CredentialResolver
@@ -191,14 +194,46 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
 
         if audio is None:
             raise TypeError("Gemini TTS response did not contain audio output")
-        content_type = audio.get("mime_type") or audio.get("mimeType") or "audio/pcm;rate=24000"
-        if content_type.startswith("audio/wav"):
-            extension = "wav"
-        elif content_type.startswith("audio/mpeg"):
-            extension = "mp3"
-        else:
-            extension = "pcm"
+
+        content_type = self._canonical_content_type(audio)
+        extension = self._extension_for(content_type)
         return VoiceArtifact(audio["bytes"], content_type, extension)
+
+    @classmethod
+    def _canonical_content_type(cls, audio: Mapping[str, object]) -> str:
+        """Build one canonical content type from the official PCM part fields.
+
+        The interactions audio block carries ``mime_type`` (audio/l16),
+        ``sample_rate`` (integer) and ``channels`` (integer). The raw L16 PCM is
+        only interpretable together with all three, so we assert the exact
+        Founder Alpha contract (rate=24000, channels=1) instead of trusting a
+        bare mime_type string. A non-PCM response falls back to its declared
+        mime type.
+        """
+        mime_type = str(audio.get("mime_type") or audio.get("mime_type_string") or "")
+        sample_rate = audio.get("sample_rate")
+        channels = audio.get("channels")
+        if mime_type.startswith("audio/l16") or mime_type.startswith("audio/pcm"):
+            rate = int(sample_rate) if sample_rate is not None else None
+            chan = int(channels) if channels is not None else None
+            if (rate, chan) != (cls.EXPECTED_SAMPLE_RATE, cls.EXPECTED_CHANNELS):
+                raise ValueError(
+                    "Gemini TTS PCM parameters do not match the Founder Alpha "
+                    f"contract: expected rate={cls.EXPECTED_SAMPLE_RATE} channels="
+                    f"{cls.EXPECTED_CHANNELS}, got rate={rate} channels={chan}"
+                )
+            return f"audio/l16; rate={rate}; channels={chan}"
+        if not mime_type:
+            return "audio/pcm;rate=24000"
+        return mime_type
+
+    @staticmethod
+    def _extension_for(content_type: str) -> str:
+        if content_type.startswith("audio/wav"):
+            return "wav"
+        if content_type.startswith("audio/mpeg"):
+            return "mp3"
+        return "pcm"
 
     @staticmethod
     def _extract_audio(payload: Mapping[str, object]) -> dict[str, object] | None:
@@ -215,7 +250,12 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
             if isinstance(data, str):
                 decoded = _b64decode(data)
                 if decoded:
-                    return {"bytes": decoded, "mime_type": legacy.get("mime_type") or legacy.get("mimeType")}
+                    return {
+                        "bytes": decoded,
+                        "mime_type": legacy.get("mime_type") or legacy.get("mimeType"),
+                        "sample_rate": legacy.get("sample_rate"),
+                        "channels": legacy.get("channels"),
+                    }
         steps = payload.get("steps")
         if isinstance(steps, list):
             for step in steps:
@@ -236,7 +276,9 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
                     if decoded:
                         return {
                             "bytes": decoded,
-                            "mime_type": part.get("mime_type") or part.get("mime_type_string") or "audio/pcm;rate=24000",
+                            "mime_type": part.get("mime_type") or part.get("mime_type_string"),
+                            "sample_rate": part.get("sample_rate"),
+                            "channels": part.get("channels"),
                         }
         return None
 

@@ -146,6 +146,8 @@ def test_gemini_adapter_sends_only_bounded_exact_text_payload() -> None:
                         "output_audio": {
                             "data": base64.b64encode(audio).decode(),
                             "mime_type": "audio/pcm;rate=24000",
+                            "sample_rate": 24000,
+                            "channels": 1,
                         }
                     }
                 ).encode(),
@@ -167,7 +169,7 @@ def test_gemini_adapter_sends_only_bounded_exact_text_payload() -> None:
     artifact = adapter.synthesize(request, lambda ref: "gemini-api-secret")
 
     assert artifact.audio == audio
-    assert artifact.content_type == "audio/pcm;rate=24000"
+    assert artifact.content_type == "audio/l16; rate=24000; channels=1"
     url, headers, body, content_type = transport.calls[0]
     payload = json.loads(body)
     assert url == "https://generativelanguage.googleapis.com/v1beta/interactions"
@@ -244,8 +246,61 @@ def test_gemini_adapter_parses_interactions_steps_audio_part() -> None:
     artifact = adapter.synthesize(request, lambda ref: "gemini-api-secret")
 
     assert artifact.audio == audio
-    assert artifact.content_type.startswith("audio/l16")
+    assert artifact.content_type == "audio/l16; rate=24000; channels=1"
     assert artifact.extension == "pcm"
+
+
+def test_gemini_adapter_rejects_pcm_params_outside_founder_alpha_contract() -> None:
+    """Raw L16 PCM without the exact 24 kHz / mono contract is rejected."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-pcm-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "steps": [
+                            {
+                                "type": "model_output",
+                                "content": [
+                                    {
+                                        "type": "audio",
+                                        "mime_type": "audio/l16",
+                                        "mime_type_string": "audio/l16; rate=48000; channels=2",
+                                        "data": base64.b64encode(audio).decode(),
+                                        "channels": 2,
+                                        "sample_rate": 48000,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ).encode(),
+                {},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-params",
+        delivery_instruction=compiled.director_instruction,
+    )
+
+    try:
+        adapter.synthesize(request, lambda ref: "gemini-api-secret")
+    except ValueError as exc:
+        assert "rate=24000 channels=1" in str(exc)
+    else:
+        raise AssertionError("out-of-contract PCM parameters must be rejected")
 
 
 def test_founder_alpha_manifest_is_free_disclosed_and_cannot_auto_bill() -> None:
