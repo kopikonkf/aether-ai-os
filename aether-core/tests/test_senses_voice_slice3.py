@@ -303,6 +303,48 @@ def test_gemini_adapter_rejects_pcm_params_outside_founder_alpha_contract() -> N
         raise AssertionError("out-of-contract PCM parameters must be rejected")
 
 
+def test_gemini_adapter_accepts_camelcase_outputAudio_metadata() -> None:
+    """The legacy outputAudio shape may use camelCase mimeType/sampleRate."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-camelcase-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "outputAudio": {
+                            "data": base64.b64encode(audio).decode(),
+                            "mimeType": "audio/l16",
+                            "sampleRate": 24000,
+                            "channels": 1,
+                        }
+                    }
+                ).encode(),
+                {},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-camelcase",
+        delivery_instruction=compiled.director_instruction,
+    )
+
+    artifact = adapter.synthesize(request, lambda ref: "gemini-api-secret")
+
+    assert artifact.audio == audio
+    assert artifact.content_type == "audio/l16; rate=24000; channels=1"
+    assert artifact.extension == "pcm"
+
+
 def test_gemini_adapter_rejects_legacy_audio_without_pcm_metadata() -> None:
     """A legacy output_audio part with data only is uninterpretable -> rejected."""
     deployment = _deployment()

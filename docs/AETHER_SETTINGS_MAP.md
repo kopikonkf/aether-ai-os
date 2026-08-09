@@ -100,7 +100,7 @@ Urutan nyata yang harus dijalankan, dan **kenapa** harus urut ini:
 | `TELEGRAM_BOT_TOKEN` | `123:abc` | Bridge (ship-loop) | Approval via Telegram | Bot mati |
 | `GH_TOKEN` | `github_pat_...` | Integrator (push/PR) | Ship-loop ke GitHub | Push gagal |
 
-> ⚠️ **Temuan penting sesi ini:** kuota Gemini dihitung **per project Google Cloud**, bukan per key maupun per akun. Bikin 10 key dalam 1 project = tetap 1 kuota (RPM/RPD/TPM). Multi-key hanya menambah kuota kalau masing-masing terikat ke **project yang berbeda** (atau akun berbeda). Jadi cadangan rate-limit yang benar = pisah project, bukan banyak key dalam satu project.
+> ⚠️ **Temuan penting sesi ini:** kuota Gemini dihitung **per project Google Cloud**, bukan per key maupun per akun. Bikin 10 key dalam 1 project = tetap 1 kuota (RPM/RPD/TPM). Akun berbeda pun tidak menambah kuota — yang menentukan tetap project tempat key itu dibuat. Cadangan rate-limit yang benar = pisah ke **project berbeda**, bukan banyak key dalam satu project.
 
 ### 3B. Variabel `.env` (satu file, dibaca Gateway saat start)
 

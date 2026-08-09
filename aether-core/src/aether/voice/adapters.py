@@ -258,7 +258,7 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
                     return {
                         "bytes": decoded,
                         "mime_type": legacy.get("mime_type") or legacy.get("mimeType"),
-                        "sample_rate": legacy.get("sample_rate"),
+                        "sample_rate": legacy.get("sample_rate") if legacy.get("sample_rate") is not None else legacy.get("sampleRate"),
                         "channels": legacy.get("channels"),
                     }
         steps = payload.get("steps")
