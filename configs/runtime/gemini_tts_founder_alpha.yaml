@@ -17,7 +17,7 @@ provider:
   data_use_classification: submitted_text_may_be_used_to_improve_provider_products
   preview: true
   terms_snapshot_date: "2026-08-07"
-  audition_state: pending_founder_audition
+  audition_state: founder_accepted
 
 fallback_order:
   - browser-speech

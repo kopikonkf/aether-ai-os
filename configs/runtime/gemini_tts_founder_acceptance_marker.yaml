@@ -1,0 +1,23 @@
+# Gemini exact-text TTS — Founder audition acceptance (hash-only marker)
+
+> This file records the Founder audition outcome in a hash-only, secret-free
+> form. It does NOT activate anything and does NOT raise the runtime path to
+> WIRED/ACTIVE/FOUNDER-PROVEN.
+
+- Capability: `gemini-exact-tts`
+- Voice candidate: `Aoede` (`gemini-3.1-flash-tts-preview`)
+- Audition outcome: **AUDITION_ACCEPTED** (Founder, 2026-08-09)
+- Canonical status (ChatGPT SSOT correction):
+  - voice `Aoede` = `AUDITION_ACCEPTED`
+  - adapter live credentialed canary = `PASS`
+  - Senses Gemini runtime path = `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO`
+  - global Senses = all `NO`
+- Evidence (hash-only; no raw text/secret):
+  - speech_text_sha256 = `2daebe564a3c17995ecf0ececd475d4c8b3093f3af11c116de05343cc91bbf31`
+  - audio_sha256 (PCM) = `e7afa460d078c49fc1c081710b49f4e50939b56d821bbe7215fa61e473f043b9`
+  - artifact PCM = 128640 bytes, content-type `audio/l16; rate=24000; channels=1`
+  - provider_call_count for the accepted attempt = 1 (no retry)
+  - execution SHA = `62a9725`; applicability chain = `62a9725 -> 78a0951 -> 956a48a`
+  - promotion SHA = `956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5`
+- Source receipt: `C:\ProgramData\Aether\runtime\senses\acceptance_runs\gemini_tts_founder_audition_accepted.json`
+- Secret suppression: true (Gemini key only ever read via `env://GEMINI_API_KEY`; never written anywhere).

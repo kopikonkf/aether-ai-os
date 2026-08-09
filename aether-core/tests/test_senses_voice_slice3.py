@@ -449,12 +449,27 @@ def test_founder_alpha_manifest_is_free_disclosed_and_cannot_auto_bill() -> None
     assert deployment.provider.voice_id == "Aoede"
     assert deployment.provider.billing_tier == "free"
     assert deployment.provider.preview is True
-    assert deployment.provider.audition_state == "pending_founder_audition"
+    assert deployment.provider.audition_state == "founder_accepted"
     assert deployment.provider.credential_ref == "env://GEMINI_API_KEY"
     assert deployment.auto_upgrade_billing is False
     assert deployment.fallback_order == ("browser-speech", "text-only")
     assert deployment.private_text_only_supported is True
     assert "improve_provider_products" in deployment.provider.data_use_classification
+
+
+def test_founder_acceptance_marker_is_hash_only_and_non_activating() -> None:
+    marker = REPO_ROOT / "configs" / "runtime" / "gemini_tts_founder_acceptance_marker.yaml"
+    assert marker.is_file()
+    text = marker.read_text(encoding="utf-8")
+    assert "AUDITION_ACCEPTED" in text
+    assert "speech_text_sha256 =" in text
+    assert "audio_sha256 (PCM) =" in text
+    assert "FOUNDER-PROVEN:NO" in text
+    assert "trade secret" not in text
+    serialized = text.casefold()
+    assert "AIza" not in serialized
+    assert "AQ." not in serialized
+    assert "Bearer" not in serialized
 
 
 @pytest.mark.parametrize(

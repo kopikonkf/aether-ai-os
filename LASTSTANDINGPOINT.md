@@ -73,7 +73,9 @@ Founder approval / release evidence
   voice `Aoede`, free-tier disclosure, explicit-consent and `Private text-only`
   boundaries, secret-class suppression, one-attempt quota circuit breaking,
   browser-speech/text fallback, no automatic billing upgrade, and
-  `pending_founder_audition` status.
+  `founder_accepted` audition status (Founder audition ACCEPTED 2026-08-09;
+  voice `Aoede` = AUDITION_ACCEPTED, adapter canary = PASS, runtime path
+  WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO).
 - Implementation slice 4 is source-present: the Senses shell now derives
   authentication/session, transport mode, turn, camera/screen consent,
   capability-action, and external-speech privacy presentation from one
@@ -225,11 +227,14 @@ Founder approval / release evidence
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
   merely because slices 1-10 are source-present. The Gemini adapter is not yet
-  the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
-  real browser/PWA installation and launch evidence, real-device capability
-  cancellation/reconciliation trials, and Founder host evidence still require
-  their own wiring and proof. Slice 10 does not activate a new capability adapter
-  or raise any named capability to `ACTIVE` or `FOUNDER-PROVEN`.
+  the active LiveKit worker path. The Founder Alpha voice `Aoede` has passed its
+  audition (`AUDITION_ACCEPTED`, 2026-08-09) and the exact-text adapter has a
+  live credentialed canary `PASS`, but the Senses Gemini runtime path remains
+  `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO`. Real browser/PWA installation and
+  launch evidence, real-device capability cancellation/reconciliation trials,
+  and Founder host evidence still require their own wiring and proof. Slice 10
+  does not activate a new capability adapter or raise any named capability to
+  `ACTIVE` or `FOUNDER-PROVEN`.
 
 ## Platform T0 (parallel workstream)
 
