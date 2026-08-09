@@ -1449,6 +1449,26 @@ def revoke_browser_sense_device(
     }
 
 
+@app.get("/api/browser-senses/livekit/grants/{session_id}")
+def browser_sense_livekit_grant_status(
+    session_id: str,
+    request: Request,
+    x_aether_operator_token: str | None = Header(default=None),
+):
+    _require_senses_origin(request)
+    operator = _authenticate_operator(x_aether_operator_token)
+    try:
+        grants = browser_sense_service.grants.active_for_session(session_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "principal": operator.principal,
+        "session_id": session_id,
+        "active_grants": grants,
+        "status": "ok",
+    }
+
+
 @app.post("/api/browser-senses/session/challenges", status_code=201)
 def create_browser_sense_session_challenge(request: Request):
     _require_senses_origin(request)

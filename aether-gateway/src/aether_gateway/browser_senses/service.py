@@ -45,6 +45,7 @@ from aether.utils.ids import new_id
 from aether.utils.time import utc_now
 from aether_gateway.adapters import DirectTextSenseAdapter
 
+from .grants import LiveKitGrantError, LiveKitGrantLedger
 from .turns import BrowserSenseTurnLedger, TurnClaim, TurnClaimConflict
 from .vision import (
     BOUNDED_CAPTURE_INTERVAL_SECONDS,
@@ -200,6 +201,7 @@ class BrowserSenseService:
         self.event_bus = event_bus
         self.token_codec = token_codec
         self.livekit_issuer = livekit_issuer or LiveKitTokenIssuer()
+        self.grants = LiveKitGrantLedger(root / "livekit-grants.sqlite3")
         self.maximum_frame_bytes = maximum_frame_bytes
         self.default_ttl_seconds = default_ttl_seconds
         self.action_projector = action_projector
@@ -265,6 +267,27 @@ class BrowserSenseService:
             transports.insert(0, BrowserSenseTransport.LIVEKIT)
         except Exception as exc:
             livekit = {"ready": False, "error": f"{type(exc).__name__}: {exc}", **self.livekit_issuer.status()}
+        livekit_grant: dict[str, Any] | None = None
+        if livekit.get("ready"):
+            livekit_grant = self.grants.record_grant(
+                session_id=session_id,
+                room_name=room_name,
+                participant_identity=participant_identity,
+                participant_token=str(livekit.get("participant_token") or ""),
+                expires_at=expires_at,
+                metadata={"principal": principal},
+            )
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_LIVEKIT_GRANT_ISSUED,
+                actor="aether.browser-senses",
+                payload={
+                    "grant_id": livekit_grant["grant_id"],
+                    "session_id": session_id,
+                    "room_name": room_name,
+                    "participant_identity": participant_identity,
+                    "expires_at": livekit_grant["expires_at"],
+                },
+            )
         session = BrowserSenseSession(
             session_id=session_id,
             room_name=room_name,
@@ -298,6 +321,7 @@ class BrowserSenseService:
             "session": self._session_dict(session),
             "browser_session_token": browser_token,
             "livekit": livekit,
+            "livekit_grant": livekit_grant,
         }
 
     def authenticate(self, token: str) -> BrowserSenseSession:
@@ -335,6 +359,13 @@ class BrowserSenseService:
                 EventType.BROWSER_SENSE_VISION_CONSENT_REVOKED,
                 actor="aether.browser-senses",
                 payload=consent,
+            )
+        for grant in self.grants.revoke_for_session(session.session_id, reason=reason):
+            self.event_bus.emit(
+                EventType.BROWSER_SENSE_LIVEKIT_GRANT_REVOKED,
+                actor="aether.browser-senses",
+                payload=grant,
+                severity="warning",
             )
         return closed
 

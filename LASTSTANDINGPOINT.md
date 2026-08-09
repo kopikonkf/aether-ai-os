@@ -206,29 +206,41 @@ Founder approval / release evidence
   real host/device trials remain separate evidence.
 - The v1 session issuance path accepts only `GOVERNED_PIPELINE`.
   `NATIVE_AUDIO_EXPERIMENTAL` remains lab-only and cannot enter v1 evidence.
+- Implementation slice 10 is source-present and NON-ACTIVATION: the LiveKit
+  grant ledger records every issued participant grant bound to its exact Senses
+  session, and a device/session revocation invalidates those grants (append-only
+  evidence, `BROWSER_SENSE_LIVEKIT_GRANT_ISSUED` /
+  `BROWSER_SENSE_LIVEKIT_GRANT_REVOKED` events, a usable/revoked/expired status
+  check, and an operator-authenticated grant status route). A revoked or expired
+  grant is refused by `assert_usable`; re-issuance after revocation is not
+  granted. The `CredentialedVoiceWorker` runs exactly one governed exact-text
+  Gemini TTS synthesis with an env-resolved credential (`env://` reference
+  only), a hash-only `VoiceTurnReceipt`, honest browser-speech/text-only
+  fallback proof, and an explicit non-activation gate — it is never wired into
+  the LiveKit worker and raises no capability to `ACTIVE`/`CONFORMED`/
+  `FOUNDER-PROVEN`. `aether-voice-worker` CLI is dry-run by default and only
+  performs a live provider call behind an explicit operator flag.
+- Platform T0 (`phases/` phase-observer + `aether.work-packet.v1`) is developed
+  on its own independent branch and is NOT part of this Senses PR.
 - The overall Senses v1 contract is not yet fully `IMPLEMENTED`, `WIRED`,
   `CONFORMED`, `ACTIVE`, or `FOUNDER-PROVEN`. No host capability gate changes
-  merely because slices 1-9 are source-present. The Gemini adapter is not yet
+  merely because slices 1-10 are source-present. The Gemini adapter is not yet
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
   real browser/PWA installation and launch evidence, real-device capability
-  cancellation/reconciliation trials, LiveKit grant revocation, credentialed
-  provider execution, and Founder host evidence still require their own wiring
-  and proof. Slice 9 does not activate a new capability adapter or raise any
-  named capability to `ACTIVE` or `FOUNDER-PROVEN`.
+  cancellation/reconciliation trials, and Founder host evidence still require
+  their own wiring and proof. Slice 10 does not activate a new capability
+  adapter or raise any named capability to `ACTIVE` or `FOUNDER-PROVEN`.
 
 ## Next Senses implementation slice
 
-After slice 9 is merged and deployed, run the Tier-1 Windows Chromium and
-Android installed-PWA matrix for install, cold/warm launch, foreground
-suspension, update activation, and Cache Storage inspection. Include one supported-cancel trial
-and one forced network-ambiguity trial against an already
-conformed bounded test capability, proving one backend invocation, zero action
-resubmissions, exact control replay safety, `NOT CONFIRMED` presentation, and a
-late terminal receipt. Keep Senses source-present and do not claim mobile, host,
-or capability conformance before that real-browser evidence exists. The next
-source slice after this host matrix is LiveKit grant revocation plus
-credentialed provider execution/fallback proof; it remains non-activated until
-its own evidence passes.
+The next step is the live non-activation evidence pass for slice 10 where it
+can be exercised without activating the LiveKit worker: a credentialed
+execution/fallback trial of the Gemini Founder Alpha voice path (env-resolved
+`GEMINI_API_KEY`, exact-text bounded turn, hash-only receipt, fallback proof)
+and a LiveKit grant issue→revoke→refuse trial against a real session. Keep
+Senses source-present and do not claim mobile, host, or capability conformance
+before that evidence exists. Slice 10 remains non-activated until its own
+evidence passes.
 
 ## Next operational step
 
