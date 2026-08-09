@@ -243,7 +243,9 @@ Founder approval / release evidence
 - The versioned `aether.work-packet.v1` schema is hash-bound and
   transition-safe: every packet carries its schema version, exact status, and a
   deterministic SHA-256 over the full unsigned payload; an integrity mismatch
-  or a foreign schema is rejected, and status transitions re-bind the hash.
+  or a foreign schema is rejected, status transitions must follow the allowed
+  transition graph, and a terminal state (completed/failed/cancelled) can never
+  be reopened.
 - Tests: `aether-core/tests/test_phases_t0.py` (6 passed). This workstream is
   independent from the Senses slice-10 PR and ships on its own branch.
 
