@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -466,12 +467,13 @@ def test_founder_acceptance_marker_is_hash_only_and_non_activating() -> None:
     assert parsed["canonical_status"]["senses_gemini_runtime_path"] == (
         "WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO"
     )
-    assert len(parsed["evidence"]["speech_text_sha256"]) == 64
-    assert len(parsed["evidence"]["audio_sha256_pcm"]) == 64
-    assert len(parsed["evidence"]["wav_sha256"]) == 64
-    assert len(parsed["evidence"]["acceptance_receipt_sha256"]) == 64
-    assert parsed["evidence"]["artifact_wav_bytes"] == 130604
-    assert parsed["evidence"]["provider_call_count"] == 1
+    evidence = parsed["evidence"]
+    for key in ("speech_text_sha256", "audio_sha256_pcm", "wav_sha256",
+                "acceptance_receipt_sha256"):
+        assert re.fullmatch(r"[0-9a-f]{64}", evidence[key]), key
+    assert re.fullmatch(r"[0-9a-f]{40}", evidence["execution_sha"])
+    assert evidence["artifact_wav_bytes"] == 130604
+    assert evidence["provider_call_count"] == 1
     assert parsed["secret_suppression"] is True
     serialized = text.casefold()
     assert "AIza" not in serialized

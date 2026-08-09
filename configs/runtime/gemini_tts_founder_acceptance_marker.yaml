@@ -24,8 +24,8 @@ evidence:
   artifact_wav_bytes: 130604
   content_type: "audio/l16; rate=24000; channels=1"
   provider_call_count: 1
-  execution_sha: "62a9725"
-  applicability_chain: ["62a9725", "78a0951", "956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5"]
+  execution_sha: "62a972581f5a88593c12838bb0bc04e9984bfcbf"
+  applicability_chain: ["62a972581f5a88593c12838bb0bc04e9984bfcbf", "78a0951c9923e33d5eea0a019b6139058c7bc184", "956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5"]
   promotion_sha: "956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5"
   acceptance_receipt_sha256: "1c73f1685f41b8fad0b7b738f2b6c99e1a87a13de6ac88c9361619aa98403e47"
 
