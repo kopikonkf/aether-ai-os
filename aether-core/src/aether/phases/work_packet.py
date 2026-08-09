@@ -30,6 +30,29 @@ class WorkPacketValidationError(ValueError):
     pass
 
 
+# Terminal states cannot be reopened once reached.
+_TERMINAL_STATUSES = frozenset({WorkPacketStatus.COMPLETED, WorkPacketStatus.FAILED, WorkPacketStatus.CANCELLED})
+
+# Allowed single-step transitions. Terminal states have no outgoing edges.
+_ALLOWED_TRANSITIONS: Mapping[WorkPacketStatus, frozenset[WorkPacketStatus]] = {
+    WorkPacketStatus.DRAFT: frozenset({WorkPacketStatus.READY, WorkPacketStatus.CANCELLED}),
+    WorkPacketStatus.READY: frozenset({WorkPacketStatus.CLAIMED, WorkPacketStatus.CANCELLED}),
+    WorkPacketStatus.CLAIMED: frozenset({WorkPacketStatus.RUNNING, WorkPacketStatus.FAILED, WorkPacketStatus.CANCELLED}),
+    WorkPacketStatus.RUNNING: frozenset({WorkPacketStatus.COMPLETED, WorkPacketStatus.FAILED, WorkPacketStatus.CANCELLED}),
+    WorkPacketStatus.COMPLETED: frozenset(),
+    WorkPacketStatus.FAILED: frozenset(),
+    WorkPacketStatus.CANCELLED: frozenset(),
+}
+
+# Statuses that may appear when a packet is constructed (draft-only starts).
+_OPEN_STATUSES = frozenset({
+    WorkPacketStatus.DRAFT,
+    WorkPacketStatus.READY,
+    WorkPacketStatus.CLAIMED,
+    WorkPacketStatus.RUNNING,
+})
+
+
 def _normalized(value: Any) -> Any:
     if isinstance(value, StrEnum):
         return value.value
@@ -106,6 +129,14 @@ class WorkPacket:
         target = WorkPacketStatus(status)
         if target is self.status:
             return self
+        if self.status in _TERMINAL_STATUSES:
+            raise WorkPacketValidationError(
+                f"work packet terminal state {self.status.value} cannot be reopened"
+            )
+        if target not in _ALLOWED_TRANSITIONS.get(self.status, frozenset()):
+            raise WorkPacketValidationError(
+                f"invalid work packet transition: {self.status.value} -> {target.value}"
+            )
         return WorkPacket(**{**self._unsigned_payload(), "status": target})
 
 

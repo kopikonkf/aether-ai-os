@@ -100,6 +100,38 @@ def test_work_packet_transition_is_functional_and_rebounds_hash() -> None:
     assert WorkPacket(**ready.to_dict()).hash == ready.hash
 
 
+def test_work_packet_transition_graph_and_terminal_lock() -> None:
+    packet = build_work_packet(
+        work_packet_id="wp.graph",
+        kind="phase-observe",
+        phase="t0",
+        producer="aether.phases",
+        created_at="2026-08-09T00:00:00Z",
+    )
+
+    # DRAFT -> READY -> CLAIMED -> RUNNING -> COMPLETED is the happy path.
+    completed = (
+        packet
+        .transition(WorkPacketStatus.READY)
+        .transition(WorkPacketStatus.CLAIMED)
+        .transition(WorkPacketStatus.RUNNING)
+        .transition(WorkPacketStatus.COMPLETED)
+    )
+    assert completed.status is WorkPacketStatus.COMPLETED
+
+    # A terminal state can never be reopened.
+    with pytest.raises(WorkPacketValidationError, match="cannot be reopened"):
+        completed.transition(WorkPacketStatus.RUNNING)
+    with pytest.raises(WorkPacketValidationError, match="cannot be reopened"):
+        completed.transition(WorkPacketStatus.DRAFT)
+
+    # Skipping a state is rejected.
+    with pytest.raises(WorkPacketValidationError, match="invalid work packet transition"):
+        packet.transition(WorkPacketStatus.RUNNING)
+    with pytest.raises(WorkPacketValidationError, match="invalid work packet transition"):
+        packet.transition(WorkPacketStatus.COMPLETED)
+
+
 def test_phase_observer_records_proposal_only_candidate(tmp_path: Path) -> None:
     event_bus = EventBus(tmp_path / "events.jsonl")
     fabric = _fabric(tmp_path)
