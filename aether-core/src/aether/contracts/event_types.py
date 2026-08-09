@@ -32,6 +32,8 @@ class EventType(StrEnum):
     BROWSER_SENSE_BOOTSTRAP_EXCHANGED = "browser-sense.bootstrap.exchanged"
     BROWSER_SENSE_DEVICE_REVOKED = "browser-sense.device.revoked"
     BROWSER_SENSE_SESSION_CREDENTIAL_ISSUED = "browser-sense.session-credential.issued"
+    BROWSER_SENSE_LIVEKIT_GRANT_ISSUED = "browser-sense.livekit-grant.issued"
+    BROWSER_SENSE_LIVEKIT_GRANT_REVOKED = "browser-sense.livekit-grant.revoked"
     DECISION_PROPOSED = "decision.proposed"
     ACTION_PROPOSED = "action.proposed"
     ACTION_PREFLIGHT_FAILED = "action.preflight.failed"

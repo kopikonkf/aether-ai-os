@@ -10,6 +10,7 @@ from .bootstrap import (
     DeviceCredentialError,
     SessionCredentialError,
 )
+from .grants import LiveKitGrantError, LiveKitGrantLedger, LiveKitRevokePort
 from .service import (
     BrowserSenseAuthError,
     BrowserSenseService,
@@ -35,6 +36,9 @@ __all__ = [
     "BrowserSenseTurnLedger",
     "BrowserSessionTokenCodec",
     "DeviceCredentialError",
+    "LiveKitGrantError",
+    "LiveKitGrantLedger",
+    "LiveKitRevokePort",
     "LiveKitTokenIssuer",
     "SessionCredentialError",
     "TurnClaimConflict",

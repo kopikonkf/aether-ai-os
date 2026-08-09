@@ -25,6 +25,7 @@ from .policy import (
     CompiledVoicePrompt,
     VoiceProfilePolicy,
 )
+from .worker import CredentialedVoiceWorker, WorkerOutcome
 from .runtime import (
     ExactTextVoiceRuntime,
     VoiceDeploymentManifest,
@@ -39,6 +40,7 @@ __all__ = [
     "BoundedVoicePromptCompiler",
     "CartesiaTTSAdapter",
     "CompiledVoicePrompt",
+    "CredentialedVoiceWorker",
     "CredentialResolver",
     "ExactTextVoiceRuntime",
     "GeminiExactTextTTSAdapter",
@@ -58,5 +60,6 @@ __all__ = [
     "VoiceTranscriptionRequest",
     "VoiceTurnReceipt",
     "VoiceTurnRequest",
+    "WorkerOutcome",
     "write_comparison_sheets",
 ]
