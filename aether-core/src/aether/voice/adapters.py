@@ -204,18 +204,25 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
         """Build one canonical content type from the official PCM part fields.
 
         The interactions audio block carries ``mime_type`` (audio/l16),
-        ``sample_rate`` (integer) and ``channels`` (integer). The raw L16 PCM is
-        only interpretable together with all three, so we assert the exact
-        Founder Alpha contract (rate=24000, channels=1) instead of trusting a
-        bare mime_type string. A non-PCM response falls back to its declared
-        mime type.
+        ``sample_rate`` (integer) and ``channels`` (integer). Raw L16 PCM is only
+        interpretable together with all three, so all three are REQUIRED: a part
+        missing any of them is rejected rather than silently defaulted. We then
+        assert the exact Founder Alpha contract (rate=24000, channels=1) for PCM.
         """
         mime_type = str(audio.get("mime_type") or audio.get("mime_type_string") or "")
         sample_rate = audio.get("sample_rate")
         channels = audio.get("channels")
+        if not mime_type:
+            raise ValueError(
+                "Gemini TTS audio part is missing mime_type; cannot interpret the payload"
+            )
         if mime_type.startswith("audio/l16") or mime_type.startswith("audio/pcm"):
-            rate = int(sample_rate) if sample_rate is not None else None
-            chan = int(channels) if channels is not None else None
+            if sample_rate is None or channels is None:
+                raise ValueError(
+                    "Gemini TTS PCM audio part is missing sample_rate and/or channels"
+                )
+            rate = int(sample_rate)
+            chan = int(channels)
             if (rate, chan) != (cls.EXPECTED_SAMPLE_RATE, cls.EXPECTED_CHANNELS):
                 raise ValueError(
                     "Gemini TTS PCM parameters do not match the Founder Alpha "
@@ -223,8 +230,6 @@ class GeminiExactTextTTSAdapter(_JsonTTSAdapter):
                     f"{cls.EXPECTED_CHANNELS}, got rate={rate} channels={chan}"
                 )
             return f"audio/l16; rate={rate}; channels={chan}"
-        if not mime_type:
-            return "audio/pcm;rate=24000"
         return mime_type
 
     @staticmethod

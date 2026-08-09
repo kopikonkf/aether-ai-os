@@ -38,7 +38,14 @@ class Transport:
 
 def _ok_audio(audio: bytes = b"credentialed-pcm-audio") -> bytes:
     return json.dumps(
-        {"output_audio": {"data": base64.b64encode(audio).decode()}}
+        {
+            "output_audio": {
+                "data": base64.b64encode(audio).decode(),
+                "mime_type": "audio/pcm;rate=24000",
+                "sample_rate": 24000,
+                "channels": 1,
+            }
+        }
     ).encode()
 
 
