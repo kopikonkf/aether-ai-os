@@ -354,28 +354,47 @@ class LiveKitGrantLedger:
         reason: str,
         revoke_port: LiveKitRevokePort | None = None,
     ) -> list[dict[str, Any]]:
+        """Revoke grants for a session without holding a SQLite lock across I/O.
+
+        The candidate grant list is read in a short transaction and the
+        connection is closed before the LiveKit revoke call (which may block on
+        the network for up to the port timeout). Each grant is then finalized in
+        its own short transaction that re-reads the latest state and appends the
+        revocation event idempotently, so concurrent grant issue/revoke cannot
+        be starved by a held write lock.
+        """
         port = revoke_port or LiveKitRevokePort()
-        revoked: list[dict[str, Any]] = []
         with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
             rows = conn.execute(
                 "SELECT grant_id, room_name, participant_identity FROM livekit_grants WHERE session_id=? ORDER BY issued_at",
                 (session_id,),
             ).fetchall()
-            for row in rows:
+            candidates = [
+                (row["grant_id"], row["room_name"], row["participant_identity"])
+                for row in rows
+            ]
+
+        revoked: list[dict[str, Any]] = []
+        for grant_id, room_name, participant_identity in candidates:
+            livekit_side = port.revoke(
+                room_name=room_name,
+                participant_identity=participant_identity,
+                reason=reason,
+            )
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 event = self._expire_if_needed(
-                    conn, row["grant_id"], self._latest_event(conn, row["grant_id"])
+                    conn, grant_id, self._latest_event(conn, grant_id)
                 )
                 if event["state"] in _TERMINAL_GRANT_STATES:
+                    # Already revoked/expired (e.g. concurrent revoke): skip
+                    # idempotently; a revoked grant stays revoked and is not
+                    # re-reported as a new revocation.
+                    conn.rollback()
                     continue
-                livekit_side = port.revoke(
-                    room_name=row["room_name"],
-                    participant_identity=row["participant_identity"],
-                    reason=reason,
-                )
                 receipt_id = self._append_event(
                     conn,
-                    row["grant_id"],
+                    grant_id,
                     "revoked",
                     str(reason or "session-revoked")[:160],
                     self._now(),
@@ -385,7 +404,8 @@ class LiveKitGrantLedger:
                     "SELECT * FROM livekit_grant_events WHERE receipt_id=?",
                     (receipt_id,),
                 ).fetchone()
-                revoked.append(self._public_grant(row["grant_id"], event, conn))
+                revoked.append(self._public_grant(grant_id, event, conn))
+                conn.commit()
         return revoked
 
     def active_for_session(self, session_id: str) -> list[dict[str, Any]]:

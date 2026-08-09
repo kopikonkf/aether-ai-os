@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -275,3 +277,70 @@ def test_revoke_port_confirmed_only_on_success(tmp_path: Path) -> None:
     assert outcome["livekit_side"] == "revoked"
     assert outcome["confirmed"] is True
     assert observed == [("room", "founder")]
+
+
+class BlockingRevokePort:
+    """A revoke port that blocks on an event so we can observe the ledger lock-free."""
+
+    def __init__(self, release: threading.Event) -> None:
+        self.release = release
+        self.calls = []
+
+    def revoke(self, *, room_name, participant_identity, reason):
+        self.calls.append((room_name, participant_identity, reason))
+        self.release.wait(timeout=10)
+        return {"livekit_side": "revoked", "confirmed": True, "reason": "blocked-test"}
+
+
+def test_revoke_does_not_hold_sqlite_lock_while_port_blocks(tmp_path: Path) -> None:
+    """The ledger must stay writable while a LiveKit revoke call blocks.
+
+    Regression for review round-2: revoke_for_session previously held
+    BEGIN IMMEDIATE across the network call, so a concurrent grant issue could
+    be starved. The fix reads candidates in a short transaction, calls the port
+    outside SQLite, then finalizes each grant in its own short transaction.
+    """
+    ledger = LiveKitGrantLedger(tmp_path / "grants.sqlite3")
+    ledger.record_grant(
+        session_id="sense-session.1",
+        room_name="room",
+        participant_identity="founder-1",
+        participant_token="token-x",
+    )
+
+    release = threading.Event()
+    port = BlockingRevokePort(release)
+    written_during_block: list[bool] = []
+
+    def revoker() -> None:
+        ledger.revoke_for_session("sense-session.1", reason="device-revoked", revoke_port=port)
+
+    def writer() -> None:
+        # The moment the revoke port is blocked, the ledger must accept a new grant.
+        try:
+            ledger.record_grant(
+                session_id="sense-session.2",
+                room_name="room-2",
+                participant_identity="founder-2",
+                participant_token="token-y",
+            )
+            written_during_block.append(True)
+        except sqlite3.OperationalError as exc:
+            written_during_block.append(False)
+
+    revoke_thread = threading.Thread(target=revoker)
+    revoke_thread.start()
+    # Wait until the port is blocked on the release event before writing.
+    deadline = time.monotonic() + 8
+    while not port.calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    writer()
+    release.set()
+    revoke_thread.join(timeout=15)
+
+    assert port.calls == [("room", "founder-1", "device-revoked")]
+    assert written_during_block == [True], "ledger was locked while revoke port blocked"
+    assert ledger.status()["grants"] == 2
+    assert ledger.grant_state(
+        next(item["grant_id"] for item in ledger.active_for_session("sense-session.2"))
+    )["state"] == "issued"
