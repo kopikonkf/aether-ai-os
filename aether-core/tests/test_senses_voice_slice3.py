@@ -146,6 +146,8 @@ def test_gemini_adapter_sends_only_bounded_exact_text_payload() -> None:
                         "output_audio": {
                             "data": base64.b64encode(audio).decode(),
                             "mime_type": "audio/pcm;rate=24000",
+                            "sample_rate": 24000,
+                            "channels": 1,
                         }
                     }
                 ).encode(),
@@ -167,7 +169,7 @@ def test_gemini_adapter_sends_only_bounded_exact_text_payload() -> None:
     artifact = adapter.synthesize(request, lambda ref: "gemini-api-secret")
 
     assert artifact.audio == audio
-    assert artifact.content_type == "audio/pcm;rate=24000"
+    assert artifact.content_type == "audio/l16; rate=24000; channels=1"
     url, headers, body, content_type = transport.calls[0]
     payload = json.loads(body)
     assert url == "https://generativelanguage.googleapis.com/v1beta/interactions"
@@ -188,6 +190,253 @@ def test_gemini_adapter_sends_only_bounded_exact_text_payload() -> None:
     assert "gemini-api-secret" not in body.decode()
     assert "system_prompt" not in body.decode()
     assert "tool schemas" not in body.decode().casefold()
+
+
+def test_gemini_adapter_parses_interactions_steps_audio_part() -> None:
+    """The interactions endpoint returns audio as a steps[].content[] audio part."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-steps-pcm-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "id": "v1_abc",
+                        "status": "completed",
+                        "steps": [
+                            {
+                                "type": "model_output",
+                                "content": [
+                                    {
+                                        "type": "audio",
+                                        "mime_type": "audio/l16",
+                                        "mime_type_string": "audio/l16; rate=24000; channels=1",
+                                        "data": base64.b64encode(audio).decode(),
+                                        "channels": 1,
+                                        "sample_rate": 24000,
+                                    }
+                                ],
+                            }
+                        ],
+                        "object": "interaction",
+                        "model": deployment.provider.model_id,
+                    }
+                ).encode(),
+                {"x-request-id": "gemini-request-steps"},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-steps",
+        delivery_instruction=compiled.director_instruction,
+        delivery_preset_id=compiled.delivery_preset_id,
+        voice_profile_sha256=compiled.voice_profile_sha256,
+        compiler_sha256=compiled.compiler_sha256,
+    )
+
+    artifact = adapter.synthesize(request, lambda ref: "gemini-api-secret")
+
+    assert artifact.audio == audio
+    assert artifact.content_type == "audio/l16; rate=24000; channels=1"
+    assert artifact.extension == "pcm"
+
+
+def test_gemini_adapter_rejects_pcm_params_outside_founder_alpha_contract() -> None:
+    """Raw L16 PCM without the exact 24 kHz / mono contract is rejected."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-pcm-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "steps": [
+                            {
+                                "type": "model_output",
+                                "content": [
+                                    {
+                                        "type": "audio",
+                                        "mime_type": "audio/l16",
+                                        "mime_type_string": "audio/l16; rate=48000; channels=2",
+                                        "data": base64.b64encode(audio).decode(),
+                                        "channels": 2,
+                                        "sample_rate": 48000,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ).encode(),
+                {},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-params",
+        delivery_instruction=compiled.director_instruction,
+    )
+
+    try:
+        adapter.synthesize(request, lambda ref: "gemini-api-secret")
+    except ValueError as exc:
+        assert "rate=24000 channels=1" in str(exc)
+    else:
+        raise AssertionError("out-of-contract PCM parameters must be rejected")
+
+
+def test_gemini_adapter_accepts_camelcase_outputAudio_metadata() -> None:
+    """The legacy outputAudio shape may use camelCase mimeType/sampleRate."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-camelcase-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "outputAudio": {
+                            "data": base64.b64encode(audio).decode(),
+                            "mimeType": "audio/l16",
+                            "sampleRate": 24000,
+                            "channels": 1,
+                        }
+                    }
+                ).encode(),
+                {},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-camelcase",
+        delivery_instruction=compiled.director_instruction,
+    )
+
+    artifact = adapter.synthesize(request, lambda ref: "gemini-api-secret")
+
+    assert artifact.audio == audio
+    assert artifact.content_type == "audio/l16; rate=24000; channels=1"
+    assert artifact.extension == "pcm"
+
+
+def test_gemini_adapter_rejects_legacy_audio_without_pcm_metadata() -> None:
+    """A legacy output_audio part with data only is uninterpretable -> rejected."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-pcm-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "output_audio": {
+                            "data": base64.b64encode(audio).decode(),
+                        }
+                    }
+                ).encode(),
+                {},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-missing-metadata",
+        delivery_instruction=compiled.director_instruction,
+    )
+
+    try:
+        adapter.synthesize(request, lambda ref: "gemini-api-secret")
+    except ValueError as exc:
+        message = str(exc)
+        assert ("missing mime_type" in message) or (
+            "missing sample_rate and/or channels" in message
+        )
+    else:
+        raise AssertionError("audio part without PCM metadata must be rejected")
+
+
+def test_gemini_adapter_rejects_audio_without_mime_type() -> None:
+    """An audio part with no mime_type at all is uninterpretable -> rejected."""
+    deployment = _deployment()
+    compiler = BoundedVoicePromptCompiler(_policy())
+    compiled = compiler.compile(
+        "Halo, Dee. Aku Aether.",
+        delivery_preset_id="warm_composed",
+    )
+    audio = b"deterministic-pcm-audio"
+    transport = Transport(
+        [
+            HttpResponse(
+                200,
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "steps": [
+                            {
+                                "type": "model_output",
+                                "content": [
+                                    {
+                                        "type": "audio",
+                                        "data": base64.b64encode(audio).decode(),
+                                        "channels": 1,
+                                        "sample_rate": 24000,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ).encode(),
+                {},
+            )
+        ]
+    )
+    adapter = GeminiExactTextTTSAdapter(deployment.provider, transport)
+    request = VoiceSynthesisRequest(
+        text="Halo, Dee. Aku Aether.",
+        language="id-ID",
+        correlation_id="turn-gemini-no-mime",
+        delivery_instruction=compiled.director_instruction,
+    )
+
+    try:
+        adapter.synthesize(request, lambda ref: "gemini-api-secret")
+    except ValueError as exc:
+        assert "missing mime_type" in str(exc)
+    else:
+        raise AssertionError("audio part without mime_type must be rejected")
 
 
 def test_founder_alpha_manifest_is_free_disclosed_and_cannot_auto_bill() -> None:
@@ -324,7 +573,14 @@ def test_success_receipt_contains_hashes_and_no_text_or_director_prompt() -> Non
             HttpResponse(
                 200,
                 json.dumps(
-                    {"output_audio": {"data": base64.b64encode(audio).decode()}}
+                    {
+                        "output_audio": {
+                            "data": base64.b64encode(audio).decode(),
+                            "mime_type": "audio/pcm;rate=24000",
+                            "sample_rate": 24000,
+                            "channels": 1,
+                        }
+                    }
                 ).encode(),
                 {},
             )
