@@ -468,6 +468,9 @@ def test_founder_acceptance_marker_is_hash_only_and_non_activating() -> None:
     )
     assert len(parsed["evidence"]["speech_text_sha256"]) == 64
     assert len(parsed["evidence"]["audio_sha256_pcm"]) == 64
+    assert len(parsed["evidence"]["wav_sha256"]) == 64
+    assert len(parsed["evidence"]["acceptance_receipt_sha256"]) == 64
+    assert parsed["evidence"]["artifact_wav_bytes"] == 130604
     assert parsed["evidence"]["provider_call_count"] == 1
     assert parsed["secret_suppression"] is True
     serialized = text.casefold()

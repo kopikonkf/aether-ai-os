@@ -256,14 +256,15 @@ Founder approval / release evidence
 
 ## Next Senses implementation slice
 
-The next step is the live non-activation evidence pass for slice 10 where it
-can be exercised without activating the LiveKit worker: a credentialed
-execution/fallback trial of the Gemini Founder Alpha voice path (env-resolved
-`GEMINI_API_KEY`, exact-text bounded turn, hash-only receipt, fallback proof)
-and a LiveKit grant issue→revoke→refuse trial against a real session. Keep
-Senses source-present and do not claim mobile, host, or capability conformance
-before that evidence exists. Slice 10 remains non-activated until its own
-evidence passes.
+The Gemini exact-text voice path has now passed its live credentialed canary
+(`PASS`, single Founder-approved call) and the voice `Aoede` has passed Founder
+audition (`AUDITION_ACCEPTED`, 2026-08-09). The remaining live evidence is the
+LiveKit provisioning + runtime wiring and an end-to-end LiveKit
+grant issue→revoke→disconnect→refuse trial against a real session, then the
+Android installed-PWA / acceptance matrix. Keep Senses source-present and do not
+claim mobile, host, or capability conformance before that evidence exists. Slice
+10 remains non-activated until its own evidence passes; the Gemini
+runtime path stays `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO` until then.
 
 ## Next operational step
 

@@ -20,11 +20,14 @@ evidence:
   speech_text_sha256: "2daebe564a3c17995ecf0ececd475d4c8b3093f3af11c116de05343cc91bbf31"
   audio_sha256_pcm: "e7afa460d078c49fc1c081710b49f4e50939b56d821bbe7215fa61e473f043b9"
   artifact_pcm_bytes: 128640
+  wav_sha256: "eae34e0b0b5158e8e92b3903a4ac42582fe18a36ac17d34e65cf0e23fca10333"
+  artifact_wav_bytes: 130604
   content_type: "audio/l16; rate=24000; channels=1"
   provider_call_count: 1
   execution_sha: "62a9725"
   applicability_chain: ["62a9725", "78a0951", "956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5"]
   promotion_sha: "956a48ac3a6f3d4aa2457b0ca10cf02b1e7fc8b5"
+  acceptance_receipt_sha256: "1c73f1685f41b8fad0b7b738f2b6c99e1a87a13de6ac88c9361619aa98403e47"
 
 secret_suppression: true
 source_receipt: "C:/ProgramData/Aether/runtime/senses/acceptance_runs/gemini_tts_founder_audition_accepted.json"
