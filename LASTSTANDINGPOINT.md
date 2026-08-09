@@ -216,6 +216,22 @@ Founder approval / release evidence
   and proof. Slice 9 does not activate a new capability adapter or raise any
   named capability to `ACTIVE` or `FOUNDER-PROVEN`.
 
+## Platform T0 (parallel workstream)
+
+- Platform T0 is source-present and proposal-only. A `PhaseObserver` subscribes
+  to the canonical EventBus, projects each durable event into a bounded
+  provider-neutral fact, and records a `knowledge_candidate` memory record in
+  the `phases` namespace (kind OBSERVATION, `promotion_status=not_promoted`,
+  provenance with the originating event IDs). It never promotes, mutates, or
+  self-approves; a reentrancy guard prevents echo loops from the observer's own
+  emitted `MEMORY_RECORDED` event.
+- The versioned `aether.work-packet.v1` schema is hash-bound and
+  transition-safe: every packet carries its schema version, exact status, and a
+  deterministic SHA-256 over the full unsigned payload; an integrity mismatch
+  or a foreign schema is rejected, and status transitions re-bind the hash.
+- Tests: `aether-core/tests/test_phases_t0.py` (6 passed). This workstream is
+  independent from the Senses slice-10 PR and ships on its own branch.
+
 ## Next Senses implementation slice
 
 After slice 9 is merged and deployed, run the Tier-1 Windows Chromium and
