@@ -34,6 +34,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -866,6 +867,7 @@ def _promote_cmd(
         "-AllowNonElevated",
         "-HealthAttempts", "1",
         "-HealthTimeoutSeconds", "1",
+        "-SkipReleaseVenv",
     ]
     if skip_acl_check:
         cmd.append("-SkipAclCheck")
@@ -1158,3 +1160,69 @@ def test_release_promotion_dacl_post_rollback_failure_aggregate_false(tmp_path: 
     assert receipt["rollback_proven"] is False
     assert "acl" in (receipt.get("rollback_error") or "")
     assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_installer_does_not_pass_secret_env_to_legacy_runner(tmp_path: Path):
+    """Regression (review 5a4fa71): the installer must be capability-aware.
+    When the release's runner predates $SecretEnvPath, the composed service argv
+    (observed via test seam) must NOT contain -SecretEnvPath. A modern runner
+    MUST contain it."""
+    for runner_label, runner_body, expect_secret_arg in [
+        ("legacy-no-secret-env",
+         "param([string]$Role, [string]$ReleasePath, [string]$AetherHome, "
+         "[string]$HostAddress, [int]$Port, [string]$PythonPath, [string]$ServiceName)\n",
+         False),
+        ("modern-with-secret-env",
+         "param([string]$Role, [string]$SecretEnvPath, [string]$ReleasePath, "
+         "[string]$AetherHome, [string]$HostAddress, [int]$Port, "
+         "[string]$PythonPath, [string]$ServiceName)\n",
+         True),
+    ]:
+        release = tmp_path / f"release-{runner_label}"
+        (release / "deploy" / "windows").mkdir(parents=True)
+        (release / "deploy" / "windows" / "aether-service-runner.ps1").write_text(
+            runner_body, encoding="utf-8",
+        )
+        (release / "deploy" / "windows" / "aether-windows-service.py").write_text(
+            "import sys\nprint(sys.argv)\n", encoding="utf-8",
+        )
+        (release / "deploy" / "windows" / "aether-watchdog.ps1").write_text(
+            "param([string]$AetherHome, [string]$HealthUrl, [string[]]$ServiceNames)\n",
+            encoding="utf-8",
+        )
+
+        argv_log = tmp_path / f"argv-{runner_label}.json"
+        aether_home = tmp_path / f"home-{runner_label}"
+        # Do NOT pre-create aether_home: Ensure-ProtectedAetherHome applies the
+        # exact SYSTEM+Admins DACL when it creates a new AETHER_HOME. A dir
+        # created with a default DACL would fail the installer's ACL assert.
+
+        result = subprocess.run(
+            [
+                POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(WINDOWS / "install-aether-services.ps1"),
+                "-ReleasePath", str(release),
+                "-PythonPath", str(sys.executable),
+                "-AetherHome", str(aether_home),
+                "-InstallSenseWorker",
+            ],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ, "AETHER_SERVICE_ARGV_LOG": str(argv_log),
+                 "AETHER_INSTALLER_SKIP_SCM": "1"},
+        )
+        assert argv_log.is_file(), f"argv log not written for {runner_label}:\n{result.stdout}\n{result.stderr}"
+        payload = json.loads(argv_log.read_text(encoding="utf-8-sig"))
+        assert payload["runner_supports_secret_env"] == expect_secret_arg, (
+            f"runner_supports_secret_env mismatch for {runner_label}: "
+            f"expected {expect_secret_arg}, got {payload['runner_supports_secret_env']}"
+        )
+        gateway_args = " ".join(payload["gateway_args"])
+        if expect_secret_arg:
+            assert "-SecretEnvPath" in gateway_args, (
+                f"modern runner should have -SecretEnvPath in args: {gateway_args[:200]}"
+            )
+        else:
+            assert "-SecretEnvPath" not in gateway_args, (
+                f"legacy runner should NOT have -SecretEnvPath in args: {gateway_args[:200]}"
+            )

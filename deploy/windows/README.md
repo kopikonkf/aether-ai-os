@@ -34,6 +34,25 @@ Optional LiveKit worker:
 
     .\deploy\windows\install-aether-services.ps1 -InstallSenseWorker -Start
 
+Both the Gateway and the LiveKit Sense Worker read their credentials from a
+canonical protected secret file at `C:\ProgramData\Aether\secrets\senses-livekit.env`.
+Provision it from a protected source env file OUTSIDE the repo (so rotated
+credentials never need to be stored in the dev tree):
+
+    .\scripts\provision-sense-worker-secrets.ps1 -SourceEnvPath C:\ProgramData\Aether\secrets\source-livekit.env
+
+The source file must be DACL-protected (SYSTEM + Administrators only, no
+inheritance) and must not be a reparse point. The provisioner writes a unique
+protected temp file, exact-verifies it, and atomically replaces the canonical
+file via `File.Replace`. Secrets are never accepted as command-line arguments.
+
+The service runner injects a role-scoped allowlist of keys into each service
+process (gateway: `LIVEKIT_URL/API_KEY/API_SECRET/AGENT_NAME/AETHER_SENSE_WORKER_TOKEN`;
+worker: same set). The runner refuses to load an unprotected file, an unexpected
+ACE, or a malformed/partial file, and never logs raw values. Never copy `.env`
+into a release, and never set LiveKit credentials as Machine-scope environment
+variables.
+
 Optional explicit Python path:
 
     .\deploy\windows\install-aether-services.ps1 -PythonPath C:\Aether\releases\Aether_OS_v0.19.2-founder-alpha-frozen.2\.venv\Scripts\python.exe -Start

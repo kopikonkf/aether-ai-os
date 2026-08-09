@@ -214,3 +214,115 @@ def test_service_host_argument_boundary_preserves_child_argv():
         "-File",
         r"C:\Aether\releases\abc\deploy\windows\aether-service-runner.ps1",
     ]
+
+
+def test_service_runner_accepts_secret_env_path_and_allowlists_keys():
+    runner = _read(WINDOWS_DIR / "aether-service-runner.ps1")
+    assert "SecretEnvPath" in runner
+    assert "LIVEKIT_URL" in runner
+    assert "LIVEKIT_API_KEY" in runner
+    assert "LIVEKIT_API_SECRET" in runner
+    assert "AETHER_SENSE_WORKER_TOKEN" in runner
+    assert "service.secretenv.blocked" in runner
+    assert "service.secretenv.loaded" in runner
+    # The runner must refuse an unprotected secret file (inheritance enabled).
+    assert "AreAccessRulesProtected" in runner
+    # Exact DACL: FullControl requirement, unexpected Deny ACE rejection.
+    assert "FullControl" in runner
+    assert "Deny" in runner
+    # CONFIG_BLOCKED fail-closed: reject unknown/duplicate/malformed/empty/missing.
+    assert "unknown key" in runner
+    assert "duplicate key" in runner
+    assert "malformed line" in runner
+    assert "empty value" in runner
+    assert "missing required key" in runner
+    # Malformed lines must not be logged raw (secret leakage).
+    assert "malformed line (no '='): $" not in runner
+    # Role enforcement: both gateway and sense-worker are valid.
+    assert 'SecretEnvPath is only valid for roles gateway or sense-worker' in runner
+    # Gateway allowlist includes LIVEKIT_* and worker token.
+    assert 'gateway' in runner
+    assert 'sense-worker' in runner
+
+
+def test_promotion_handles_worker_rollback_compat():
+    promote = _read(WINDOWS_DIR / "promote-aether-release.ps1")
+    assert "-IncludeSenseWorker" in promote
+    assert "worker_deactivated" in promote
+    assert "Build-ReleaseVenv" in promote
+    assert "rollbackSupportsSecretEnv" in promote
+    assert 'Stop-Service -Name "AetherSenseWorker"' in promote
+    assert "Set-Service -Name \"AetherSenseWorker\" -StartupType Manual" in promote
+    # Restart order: Gateway -> Worker -> Watchdog.
+    assert '@("AetherGateway")' in promote
+    assert '"AetherSenseWorker"' in promote
+    assert '"AetherWatchdog"' in promote
+
+
+def test_installer_wires_sense_worker_secret_env_path():
+    installer = _read(WINDOWS_DIR / "install-aether-services.ps1")
+    assert 'senses-livekit.env' in installer
+    assert "-SecretEnvPath" in installer
+    # The installer must be capability-aware: only pass -SecretEnvPath when the
+    # runner supports it (rollback detection via $SecretEnvPath content check).
+    assert 'runnerSupportsSecretEnv' in installer
+    assert '$SecretEnvPath' in installer
+    # Gateway also receives the canonical secret path (when runner supports it).
+    assert '"-Role", "gateway"' in installer
+    assert '"-Role", "sense-worker"' in installer
+    # Both gateway and sense-worker args are built conditionally.
+    assert 'if ($runnerSupportsSecretEnv)' in installer
+
+
+def test_promotion_asserts_release_venv():
+    promote = _read(WINDOWS_DIR / "promote-aether-release.ps1")
+    assert "Assert-ReleaseVenv" in promote
+    assert "Build-ReleaseVenv" in promote
+    # Assert-ReleaseVenv must verify marker, sha, version, and imports.
+    assert "release_sha" in promote
+    assert "livekit_agents" in promote
+    assert "livekit.api" in promote
+    # -SkipReleaseVenv must only skip the BUILD step, not the assertion.
+    assert 'Assert-ReleaseVenv' in promote
+    # Staging builds venv before publish.
+    assert 'Build-ReleaseVenv -ReleasePath $staging' in promote
+
+
+def test_provision_sense_worker_secrets_script_has_no_secret_values():
+    script = _read(ROOT / "scripts" / "provision-sense-worker-secrets.ps1")
+    assert "senses-livekit.env" in script
+    assert "New-ProtectedFileAcl" in script
+    assert "AreAccessRulesProtected" in script
+    # Secrets must NOT be accepted as command-line arguments; only via
+    # -SourceEnvPath (a protected file outside the repo).
+    assert "SourceEnvPath" in script
+    assert "LiveKitUrl" not in script
+    assert "LiveKitApiKey" not in script
+    assert "LiveKitApiSecret" not in script
+    assert "WorkerToken" not in script
+    # Owner must be set explicitly.
+    assert "SetOwner" in script
+    # Atomic replace: File.Replace or File.Move, unique temp, cleanup finally.
+    assert "File.Replace" in script or "File::Replace" in script
+    assert "Guid" in script
+    assert "finally" in script
+    for line in script.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() in {
+            "LIVEKIT_URL",
+            "LIVEKIT_API_KEY",
+            "LIVEKIT_API_SECRET",
+            "AETHER_SENSE_WORKER_TOKEN",
+            "LiveKitUrl",
+            "LiveKitApiKey",
+            "LiveKitApiSecret",
+            "WorkerToken",
+        }:
+            value = value.removesuffix("`r`n").strip()
+            # Values come from parameters/`$envMap`, never hard-coded.
+            assert value.startswith("$") or value == "", (
+                f"hard-coded credential value in provisioning script: {key}"
+            )

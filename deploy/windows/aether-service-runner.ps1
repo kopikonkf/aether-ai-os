@@ -13,7 +13,8 @@ param(
     [string]$AetherHome = "C:\ProgramData\Aether",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
-    [int]$RestartDelaySeconds = 5
+    [int]$RestartDelaySeconds = 5,
+    [string]$SecretEnvPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -84,6 +85,142 @@ New-Item -ItemType Directory -Force -Path $servicesDir, $logsDir | Out-Null
 $script:ServiceEventsPath = Join-Path $servicesDir "service-events.jsonl"
 
 Set-AetherProcessEnvironment
+
+# --- Secret env injection (role-scoped allowlist) ---
+# Canonical secret file: AETHER_HOME\secrets\senses-livekit.env. Both the Gateway
+# and the Sense Worker read it, but each role only receives the keys it needs.
+$ALLOWED_SECRET_KEYS = switch ($Role) {
+    "gateway" { @("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "LIVEKIT_AGENT_NAME", "AETHER_SENSE_WORKER_TOKEN") }
+    "sense-worker" { @("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "LIVEKIT_AGENT_NAME", "AETHER_SENSE_WORKER_TOKEN") }
+    default { @() }
+}
+$REQUIRED_SECRET_KEYS = switch ($Role) {
+    "gateway" { @("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET") }
+    "sense-worker" { @("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "AETHER_SENSE_WORKER_TOKEN") }
+    default { @() }
+}
+
+if ($SecretEnvPath) {
+    if ($Role -notin @("gateway", "sense-worker")) {
+        $msg = "SecretEnvPath is only valid for roles gateway or sense-worker."
+        Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+        throw $msg
+    }
+    if (-not (Test-Path -LiteralPath $SecretEnvPath -PathType Leaf)) {
+        $msg = "SecretEnvPath $SecretEnvPath not found. Service cannot start without credentials."
+        Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+        throw $msg
+    }
+    # Reject reparse point (symlink, junction, mount point).
+    $fileInfo = Get-Item -LiteralPath $SecretEnvPath -Force -ErrorAction Stop
+    if ($fileInfo.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        $msg = "SecretEnvPath $SecretEnvPath is a reparse point. Refusing to load."
+        Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+        throw $msg
+    }
+    # Exact DACL verifier: SYSTEM + Administrators only, no inheritance, no
+    # unexpected Allow/Deny ACE, every allowed SID must have FullControl.
+    $acl = Get-Acl -LiteralPath $SecretEnvPath -ErrorAction Stop
+    if (-not $acl.AreAccessRulesProtected) {
+        $msg = "SecretEnvPath $SecretEnvPath has unprotected DACL (inheritance enabled). Refusing to load."
+        Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+        throw $msg
+    }
+    $expectedSids = @{ "S-1-5-18" = $false; "S-1-5-32-544" = $false }
+    $fullControl = [System.Security.AccessControl.FileSystemRights]::FullControl
+    foreach ($rule in $acl.Access) {
+        if ($rule.AccessControlType -eq "Deny") {
+            $msg = "SecretEnvPath $SecretEnvPath has a Deny ACE (unexpected). Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+        $sid = $rule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+        if ($sid -eq "S-1-5-18" -or $sid -eq "S-1-5-32-544") {
+            # Every allowed SID must be granted FullControl and nothing less.
+            if (($rule.FileSystemRights -band $fullControl) -ne $fullControl) {
+                $msg = "SecretEnvPath $SecretEnvPath grants $sid rights other than FullControl. Refusing to load."
+                Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+                throw $msg
+            }
+            # The ACE itself must not carry inheritance flags (it is on a file).
+            if ($rule.InheritanceFlags -ne [System.Security.AccessControl.InheritanceFlags]::None) {
+                $msg = "SecretEnvPath $SecretEnvPath has an inherited-flag ACE for $sid. Refusing to load."
+                Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+                throw $msg
+            }
+            $expectedSids[$sid] = $true
+        }
+        else {
+            $msg = "SecretEnvPath $SecretEnvPath has unexpected ACE for $sid. Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+    }
+    foreach ($sid in $expectedSids.Keys) {
+        if (-not $expectedSids[$sid]) {
+            $msg = "SecretEnvPath $SecretEnvPath is missing required SID $sid."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+    }
+    if ($acl.Owner -notmatch "(S-1-5-18|S-1-5-32-544|NT AUTHORITY\\SYSTEM|BUILTIN\\Administrators)") {
+        $msg = "SecretEnvPath $SecretEnvPath owner is not SYSTEM or Administrators. Refusing to load."
+        Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+        throw $msg
+    }
+    # Strict parser: reject unknown/duplicate/malformed/empty keys.
+    $keysSeen = @{}
+    $lines = Get-Content -LiteralPath $SecretEnvPath -Encoding UTF8 -ErrorAction Stop
+    foreach ($raw in $lines) {
+        $line = $raw.Trim()
+        if (-not $line) {
+            $msg = "SecretEnvPath $SecretEnvPath contains empty line. Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+        if ($line.StartsWith("#")) { continue }
+        $eq = $line.IndexOf("=")
+        if ($eq -le 0) {
+            $msg = "SecretEnvPath $SecretEnvPath contains a malformed line (no '='). Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+        $key = $line.Substring(0, $eq).Trim()
+        $value = $line.Substring($eq + 1).Trim()
+        if ($key -notin $ALLOWED_SECRET_KEYS) {
+            $msg = "SecretEnvPath $SecretEnvPath contains unknown key: $key. Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+        if ($keysSeen.ContainsKey($key)) {
+            $msg = "SecretEnvPath $SecretEnvPath contains duplicate key: $key. Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+        $keysSeen[$key] = $true
+        if (-not $value) {
+            $msg = "SecretEnvPath $SecretEnvPath has empty value for $key. Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+        if ($value -match "[\r\n]") {
+            $msg = "SecretEnvPath $SecretEnvPath contains malformed value for $key (newline). Refusing to load."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+        [Environment]::SetEnvironmentVariable($key, $value, "Process")
+    }
+    # Verify all required keys are present and non-empty.
+    foreach ($rk in $REQUIRED_SECRET_KEYS) {
+        if (-not $keysSeen.ContainsKey($rk)) {
+            $msg = "SecretEnvPath $SecretEnvPath is missing required key: $rk."
+            Write-AetherServiceEvent @{ event = "service.secretenv.blocked"; service = $ServiceName; reason = $msg }
+            throw $msg
+        }
+    }
+    Write-AetherServiceEvent @{ event = "service.secretenv.loaded"; service = $ServiceName; secret_env_path = $SecretEnvPath }
+}
+
 $python = Resolve-AetherPython
 $arguments = switch ($Role) {
     "gateway" { @("-m", "aether_gateway.api.server") }

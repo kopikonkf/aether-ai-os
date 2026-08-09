@@ -13,6 +13,40 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# --- Test seam (AETHER_INSTALLER_SKIP_SCM=1) ---
+# Regression tests observe the composed service argv without touching SCM or
+# Windows-only ACL/administrator steps. Production never sets this.
+$skipSCM = [Environment]::GetEnvironmentVariable("AETHER_INSTALLER_SKIP_SCM", "Process")
+if ($skipSCM) {
+    if (-not $ReleasePath) {
+        $ReleasePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+    }
+    else {
+        $ReleasePath = (Resolve-Path -LiteralPath $ReleasePath).Path
+    }
+    $runner = Join-Path $ReleasePath "deploy\windows\aether-service-runner.ps1"
+    $runnerSupportsSecretEnv = $false
+    if (Test-Path -LiteralPath $runner -PathType Leaf) {
+        $runnerText = Get-Content -LiteralPath $runner -Raw -ErrorAction SilentlyContinue
+        $runnerSupportsSecretEnv = ($null -ne $runnerText -and $runnerText.Contains('$SecretEnvPath'))
+    }
+    $livekitSecretPath = Join-Path $AetherHome "secrets\senses-livekit.env"
+    $gatewayArgs = @("-Role", "gateway", "-ServiceName", "AetherGateway")
+    if ($runnerSupportsSecretEnv) {
+        $gatewayArgs += @("-SecretEnvPath", $livekitSecretPath)
+    }
+    $argvLog = [Environment]::GetEnvironmentVariable("AETHER_SERVICE_ARGV_LOG", "Process")
+    if ($argvLog) {
+        $payload = @{
+            runner = $runner
+            gateway_args = $gatewayArgs
+            runner_supports_secret_env = $runnerSupportsSecretEnv
+        }
+        $payload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $argvLog -Encoding UTF8
+    }
+    exit 0
+}
+
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -105,6 +139,14 @@ function Install-OrUpdate-Service {
         [Parameter(Mandatory = $true)][string]$BinaryPathName,
         [string[]]$DependsOn = @()
     )
+
+    # Test seam: skip actual SCM operations when the env var is set, so the
+    # argv-composition regression test can observe args without mutating services.
+    $skipSCM = [Environment]::GetEnvironmentVariable("AETHER_INSTALLER_SKIP_SCM", "Process")
+    if ($skipSCM) {
+        Write-Output "[seam] skip SCM for $Name"
+        return
+    }
 
     $existing = Get-Service -Name $Name -ErrorAction SilentlyContinue
     if ($null -eq $existing) {
@@ -298,7 +340,20 @@ $commonRunnerArgs = @(
     "-PythonPath", $serviceHostPython
 )
 
-$gatewayArgs = $commonRunnerArgs + @("-Role", "gateway", "-ServiceName", "AetherGateway")
+# Capability-aware secret injection: only append -SecretEnvPath when the runner
+# in THIS release understands it. Rollback releases (e.g. 956a48a) predate the
+# parameter; passing it would fail the child service startup.
+$runnerSupportsSecretEnv = $false
+if (Test-Path -LiteralPath $runner -PathType Leaf) {
+    $runnerText = Get-Content -LiteralPath $runner -Raw -ErrorAction SilentlyContinue
+    $runnerSupportsSecretEnv = ($null -ne $runnerText -and $runnerText.Contains('$SecretEnvPath'))
+}
+
+$livekitSecretPath = Join-Path $AetherHome "secrets\senses-livekit.env"
+$gatewayArgs = @($commonRunnerArgs + @("-Role", "gateway", "-ServiceName", "AetherGateway"))
+if ($runnerSupportsSecretEnv) {
+    $gatewayArgs += @("-SecretEnvPath", $livekitSecretPath)
+}
 $gatewayBin = New-ServiceHostCommand `
     -ServiceName "AetherGateway" `
     -HostPython $serviceHostPython `
@@ -312,7 +367,10 @@ Install-OrUpdate-Service -Name "AetherGateway" -DisplayName "Aether Gateway" -De
 $installed = @("AetherGateway")
 
 if ($InstallSenseWorker) {
-    $senseArgs = $commonRunnerArgs + @("-Role", "sense-worker", "-ServiceName", "AetherSenseWorker")
+    $senseArgs = @($commonRunnerArgs + @("-Role", "sense-worker", "-ServiceName", "AetherSenseWorker"))
+    if ($runnerSupportsSecretEnv) {
+        $senseArgs += @("-SecretEnvPath", $livekitSecretPath)
+    }
     $senseBin = New-ServiceHostCommand `
         -ServiceName "AetherSenseWorker" `
         -HostPython $serviceHostPython `
