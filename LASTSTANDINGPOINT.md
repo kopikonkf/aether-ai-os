@@ -228,8 +228,8 @@ Founder approval / release evidence
   the active LiveKit worker path, `Aoede` is not Founder-auditioned or locked,
   real browser/PWA installation and launch evidence, real-device capability
   cancellation/reconciliation trials, and Founder host evidence still require
-  their own wiring and proof. Slice 10 does not activate a new capability
-  adapter or raise any named capability to `ACTIVE` or `FOUNDER-PROVEN`.
+  their own wiring and proof. Slice 10 does not activate a new capability adapter
+  or raise any named capability to `ACTIVE` or `FOUNDER-PROVEN`.
 
 ## Next Senses implementation slice
 

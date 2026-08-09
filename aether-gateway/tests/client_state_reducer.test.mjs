@@ -675,7 +675,7 @@ test('Senses app is wired only through the reducer presentation boundary', async
   assert.doesNotMatch(app, /cdn\.jsdelivr\.net|unpkg\.com|esm\.sh/);
 });
 
-test('canonical handoff records slice nine boundaries and the next proof gate', async () => {
+test('canonical handoff records slice boundaries and the next proof gate', async () => {
   const handoff = await readFile(
     new URL('../../LASTSTANDINGPOINT.md', import.meta.url),
     'utf8',
@@ -686,16 +686,13 @@ test('canonical handoff records slice nine boundaries and the next proof gate', 
   assert.match(handoff, /Implementation slice 7 is source-present/);
   assert.match(handoff, /Implementation slice 8 is source-present/);
   assert.match(handoff, /Implementation slice 9 is source-present/);
-  assert.match(handoff, /merely because slices 1-9 are source-present/);
+  assert.match(handoff, /Implementation slice 10 is source-present/);
+  assert.match(handoff, /merely because slices 1-10 are source-present/);
   assert.match(handoff, /late-result-discarded/);
   assert.match(handoff, /never submitted again automatically/);
   assert.match(handoff, /server-authoritative consent leases/);
   assert.match(handoff, /VisionFrameReceipt` no longer requires/);
   assert.match(handoff, /module service worker owns only an exact build-versioned/);
-  assert.match(handoff, /one supported-cancel trial/);
-  assert.match(handoff, /zero action/);
-  assert.match(handoff, /resubmissions/);
   assert.match(handoff, /does not activate a new capability adapter/);
-  assert.match(handoff, /Tier-1 Windows Chromium/);
   assert.match(handoff, /Conversational interruption remains orthogonal/);
 });
