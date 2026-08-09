@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -40,6 +41,16 @@ from .runtime import (
 DEFAULT_MANIFEST = "configs/runtime/gemini_tts_founder_alpha.yaml"
 DEFAULT_PERSONA = "aether-core/configs/persona.yaml"
 _EXECUTE_FLAG = "AETHER_VOICE_WORKER_EXECUTE"
+
+
+def _safe_stem(value: str) -> str:
+    """Sanitize a caller-supplied identifier into a single safe path component."""
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]", "_", str(value or "")).strip("._-")
+    if not cleaned:
+        cleaned = "credentialed-worker"
+    if cleaned in {"", ".", ".."} or "/" in cleaned or "\\" in cleaned:
+        cleaned = "credentialed-worker"
+    return cleaned[:120]
 
 
 @dataclass(frozen=True)
@@ -152,7 +163,11 @@ class CredentialedVoiceWorker:
         artifact: VoiceArtifact | None = result.artifact
         if output_audio and artifact is not None and self.output_root is not None:
             self.output_root.mkdir(parents=True, exist_ok=True)
-            path = self.output_root / f"{receipt.correlation_id}.{artifact.extension}"
+            path = self.output_root / (
+                f"{_safe_stem(receipt.correlation_id)}.{artifact.extension}"
+            )
+            if self.output_root.resolve() not in path.resolve().parents:
+                raise ValueError("voice worker artifact path escapes the output root")
             path.write_bytes(artifact.audio)
             artifact_path = str(path)
         return WorkerOutcome(

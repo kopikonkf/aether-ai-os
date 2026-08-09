@@ -227,3 +227,24 @@ def test_cli_dry_run_never_calls_provider(tmp_path: Path, monkeypatch, capsys) -
     assert code == 0
     assert payload["status"] == "dry-run"
     assert payload["execute_allowed"] is False
+
+
+def test_worker_artifact_path_cannot_escape_output_root(tmp_path: Path) -> None:
+    """correlation_id must never introduce a path traversal into the artifact path."""
+    worker = _worker(
+        tmp_path,
+        [HttpResponse(200, _ok_audio(), {})],
+        output_root=tmp_path / "out",
+    )
+    outcome = worker.run(
+        "Path traversal drill.",
+        correlation_id="../../escape",
+        founder_alpha_consent=True,
+    )
+
+    assert outcome.artifact_path is not None
+    artifact = Path(outcome.artifact_path)
+    assert artifact.parent.resolve() == (tmp_path / "out").resolve()
+    assert (tmp_path / "escape.mp3").exists() is False
+    assert artifact.exists() is True
+

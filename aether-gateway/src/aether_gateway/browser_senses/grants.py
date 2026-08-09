@@ -13,6 +13,7 @@ server API is configured and the SDK is available; otherwise the ledger records
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -38,13 +39,17 @@ class LiveKitRevokePort:
     """Best-effort LiveKit-side participant disconnect.
 
     When the LiveKit server API is configured and the SDK is available, this
-    port removes the participant from the room. Otherwise it honestly reports
+    port removes the participant from the room using the official async
+    ``LiveKitAPI.room.remove_participant(RoomParticipantIdentity)`` with a
+    bounded timeout and ``aclose()``. Otherwise it honestly reports
     ``livekit_side=not-wired``: the local authorization ledger still revokes
     the grant, but no server-side disconnect is performed or claimed. A
     provider failure/timeout is reported as ``revoke-failed`` with
     ``confirmed=false`` — ``confirmed=true`` is only ever produced by a
     successful LiveKit server call, never inferred.
     """
+
+    REVOKE_TIMEOUT_SECONDS = 10.0
 
     def __init__(
         self,
@@ -77,6 +82,57 @@ class LiveKitRevokePort:
             raise RuntimeError("livekit-api sdk missing") from exc
         return api
 
+    @staticmethod
+    def _run_coro(coro: Any) -> Any:
+        """Run an async coroutine from a sync call site safely.
+
+        Uses ``asyncio.run`` when no loop is running; otherwise runs the
+        coroutine on a fresh thread-owned loop so a FastAPI sync route in a
+        threadpool (or an async context) can still perform the disconnect.
+        """
+        try:
+            asyncio.get_running_loop()
+            running = True
+        except RuntimeError:
+            running = False
+        if not running:
+            return asyncio.run(coro)
+        import threading
+
+        result: dict[str, Any] = {}
+
+        def _runner() -> None:
+            result["value"] = asyncio.run(coro)
+
+        thread = threading.Thread(target=_runner, name="livekit-revoke", daemon=True)
+        thread.start()
+        thread.join()
+        return result["value"]
+
+    async def _revoke_async(
+        self, *, room_name: str, participant_identity: str, reason: str
+    ) -> dict[str, Any]:
+        api = self._load_sdk()
+        livekit_api = api.LiveKitAPI(self.url, self.api_key, self.api_secret)
+        try:
+            participant = api.RoomParticipantIdentity(
+                room=room_name, identity=participant_identity
+            )
+            await asyncio.wait_for(
+                livekit_api.room.remove_participant(participant),
+                timeout=self.REVOKE_TIMEOUT_SECONDS,
+            )
+            return {
+                "livekit_side": "revoked",
+                "confirmed": True,
+                "reason": str(reason)[:160],
+            }
+        finally:
+            try:
+                await asyncio.wait_for(livekit_api.aclose(), timeout=5.0)
+            except Exception:  # noqa: BLE001 - closing is best-effort
+                pass
+
     def revoke(
         self,
         *,
@@ -91,17 +147,18 @@ class LiveKitRevokePort:
                 "reason": "livekit not configured; local authorization-ledger revocation only",
             }
         try:
-            api = self._load_sdk()
-            room_service = api.RoomServiceClient(
-                self.url, self.api_key, self.api_secret
+            return self._run_coro(
+                self._revoke_async(
+                    room_name=room_name,
+                    participant_identity=participant_identity,
+                    reason=reason,
+                )
             )
-            room_service.remove_participant(
-                room_name, participant_identity
-            )
+        except asyncio.TimeoutError:
             return {
-                "livekit_side": "revoked",
-                "confirmed": True,
-                "reason": str(reason)[:160],
+                "livekit_side": "revoke-failed",
+                "confirmed": False,
+                "reason": "livekit revoke timed out",
             }
         except Exception as exc:  # noqa: BLE001 - vendor failures are reported honestly
             return {

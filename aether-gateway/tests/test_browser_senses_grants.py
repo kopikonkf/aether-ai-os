@@ -185,15 +185,27 @@ def test_revoke_port_reports_failure_without_confirming(tmp_path: Path, monkeypa
     """A provider-revoke failure/timeout must never yield confirmed=true."""
 
     def broken_sdk():
+        class RoomParticipantIdentity:
+            def __init__(self, room, identity):
+                self.room = room
+                self.identity = identity
+
+        class Room:
+            async def remove_participant(self, participant):
+                raise RuntimeError("simulated provider timeout")
+
+        class LiveKitAPI:
+            def __init__(self, url, api_key, api_secret):
+                self.room = Room()
+
+            async def aclose(self):
+                pass
+
         class FakeApi:
-            class RoomServiceClient:
-                def __init__(self, url, api_key, api_secret):
-                    pass
+            pass
 
-                @staticmethod
-                def remove_participant(room, identity):
-                    raise RuntimeError("simulated provider timeout")
-
+        FakeApi.LiveKitAPI = LiveKitAPI
+        FakeApi.RoomParticipantIdentity = RoomParticipantIdentity
         return FakeApi
 
     port = LiveKitRevokePort(
@@ -227,15 +239,30 @@ def test_revoke_port_reports_failure_without_confirming(tmp_path: Path, monkeypa
 
 
 def test_revoke_port_confirmed_only_on_success(tmp_path: Path) -> None:
+    observed: list[tuple[str, str]] = []
+
     def good_sdk():
+        class RoomParticipantIdentity:
+            def __init__(self, room, identity):
+                self.room = room
+                self.identity = identity
+
+        class Room:
+            async def remove_participant(self, participant):
+                observed.append((participant.room, participant.identity))
+
+        class LiveKitAPI:
+            def __init__(self, url, api_key, api_secret):
+                self.room = Room()
+
+            async def aclose(self):
+                pass
+
         class FakeApi:
-            class RoomServiceClient:
-                def __init__(self, url, api_key, api_secret):
-                    self.calls = []
+            pass
 
-                def remove_participant(self, room, identity):
-                    self.calls.append((room, identity))
-
+        FakeApi.LiveKitAPI = LiveKitAPI
+        FakeApi.RoomParticipantIdentity = RoomParticipantIdentity
         return FakeApi
 
     port = LiveKitRevokePort(
@@ -247,3 +274,4 @@ def test_revoke_port_confirmed_only_on_success(tmp_path: Path) -> None:
     outcome = port.revoke(room_name="room", participant_identity="founder", reason="r")
     assert outcome["livekit_side"] == "revoked"
     assert outcome["confirmed"] is True
+    assert observed == [("room", "founder")]
