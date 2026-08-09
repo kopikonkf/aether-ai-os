@@ -461,11 +461,15 @@ def test_founder_acceptance_marker_is_hash_only_and_non_activating() -> None:
     marker = REPO_ROOT / "configs" / "runtime" / "gemini_tts_founder_acceptance_marker.yaml"
     assert marker.is_file()
     text = marker.read_text(encoding="utf-8")
-    assert "AUDITION_ACCEPTED" in text
-    assert "speech_text_sha256 =" in text
-    assert "audio_sha256 (PCM) =" in text
-    assert "FOUNDER-PROVEN:NO" in text
-    assert "trade secret" not in text
+    parsed = yaml.safe_load(text)
+    assert parsed.get("audition_outcome") == "AUDITION_ACCEPTED"
+    assert parsed["canonical_status"]["senses_gemini_runtime_path"] == (
+        "WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO"
+    )
+    assert len(parsed["evidence"]["speech_text_sha256"]) == 64
+    assert len(parsed["evidence"]["audio_sha256_pcm"]) == 64
+    assert parsed["evidence"]["provider_call_count"] == 1
+    assert parsed["secret_suppression"] is True
     serialized = text.casefold()
     assert "AIza" not in serialized
     assert "AQ." not in serialized
