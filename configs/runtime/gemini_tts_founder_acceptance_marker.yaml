@@ -19,7 +19,7 @@ canonical_status:
 evidence:
   speech_text_sha256: "2daebe564a3c17995ecf0ececd475d4c8b3093f3af11c116de05343cc91bbf31"
   audio_sha256_pcm: "e7afa460d078c49fc1c081710b49f4e50939b56d821bbe7215fa61e473f043b9"
-  artifact_pcm_bytes: 128640
+  artifact_pcm_bytes: 130560
   wav_sha256: "eae34e0b0b5158e8e92b3903a4ac42582fe18a36ac17d34e65cf0e23fca10333"
   artifact_wav_bytes: 130604
   content_type: "audio/l16; rate=24000; channels=1"

@@ -472,7 +472,14 @@ def test_founder_acceptance_marker_is_hash_only_and_non_activating() -> None:
                 "acceptance_receipt_sha256"):
         assert re.fullmatch(r"[0-9a-f]{64}", evidence[key]), key
     assert re.fullmatch(r"[0-9a-f]{40}", evidence["execution_sha"])
+    assert re.fullmatch(r"[0-9a-f]{40}", evidence["promotion_sha"])
+    assert evidence["artifact_pcm_bytes"] == 130560
     assert evidence["artifact_wav_bytes"] == 130604
+    chain = evidence["applicability_chain"]
+    assert isinstance(chain, list) and len(chain) >= 2
+    assert all(re.fullmatch(r"[0-9a-f]{40}", entry) for entry in chain)
+    assert chain[0] == evidence["execution_sha"]
+    assert chain[-1] == evidence["promotion_sha"]
     assert evidence["provider_call_count"] == 1
     assert parsed["secret_suppression"] is True
     serialized = text.casefold()
