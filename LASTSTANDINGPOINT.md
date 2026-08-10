@@ -375,28 +375,28 @@ runtime path stays `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO` until then.
   origin `:80 -> :8080` on tunnel `8f53133` -> Dee authorizes public cutover ->
   public proof + recovery receipts CONFORMED.
 
-## Host state (2026-08-07) — migration COMPLETE; ingress source merged, host NOT CONFORMED
+## Host state (2026-08-10) — migration COMPLETE; ingress CONFORMED; release 956a48a active
 
 - **AETHER_HOME migration: COMPLETE**, do not re-run. Receipt
   `C:\aether\migration-evidence\20260806T221720Z\aether-quiescent-migration-20260806T221720Z.json`
   verdict `PASS_READY_FOR_PRODUCTION_SERVICE_INSTALL` (source `C:\aether\home` ->
   rollback preserved; canonical target `C:\ProgramData\Aether`, 20/20 DB,
   mismatches 0). `C:\aether\home` no longer exists.
-- **Active release on VPS: `81582f70c0ccd3d7b32d364b2be6784cff5ffc31`**
-  (immutable). Production services running: `AetherGateway` (:8000, health ok),
-  `AetherWatchdog`, `AetherCaddy` (:8080). `AetherSenseWorker` and
-  `AetherCloudflareTunnel` absent (per design: no sense-worker; shared tunnel).
-- **Founder ingress host: NOT CONFORMED.** `https://aethers.my.id` currently
-  serves IIS welcome page (tunnel config maps `aethers`/`www` -> `localhost:80`);
-  Caddy :8080 has no basic auth yet; `founder-auth.caddy` absent.
-- **AETHER_HOME DACL on the live host is NOT yet protected** (`AreAccessRulesProtected=false`,
-  extra SIDs: Owner S-1-3-0, Users S-1-5-32-545 ReadAndExecute/Write) because the
-  active release's installer still runs `icacls /inheritance:e`. The new installer
-  (PR #40) is fail-closed, so Fase A (exact ACL setter + tree-wide postcondition)
-  MUST run before any promote.
+- **Active release on VPS: `956a48a`** (PROMOTION 956a48a PASS, 2026-08-09),
+  immutable. Production services running: `AetherGateway` (:8000, health ok),
+  `AetherWatchdog`, `AetherCaddy` (:8080). `AetherSenseWorker` absent/Stopped
+  (per non-activation: LiveKit wiring is source-present, capability states
+  `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO`). Shared Cloudflare tunnel `8f53133f`
+  is RUNNING with `aethers`/`www` -> `localhost:8080`.
+- **Founder ingress host: CONFORMED.** `https://aethers.my.id` -> Caddy :8080
+  with founder Basic auth (bcrypt, ADR-0053); `founder-auth.caddy` present;
+  `https://aethers.my.id/senses` -> 401 + Basic challenge, authenticated 200.
+- **AETHER_HOME DACL on the live host IS protected** (Fase A hardening PASS,
+  SYSTEM + Administrators only, inheritance disabled, tree-wide exact).
 - **Release-promotion / shared-tunnel source is MERGED to main at `5256751`
-  (PR #40). Host mutation is NOT executed and awaits Founder authorization.**
-  Source behaviour:
+  (PR #40). Host mutation for the current release (956a48a) is PROMOTED and
+  CONFORMED; do NOT repeat Fase A-E or cut over :80 -> :8080 again.**
+  Source behaviour (kept for provenance):
   - `install-aether-services.ps1`: removed `/inheritance:e`; `Ensure-ProtectedAetherHome`
     (new=apply protected exact, existing=assert only); `-TargetSha` bound to manifest.
   - `promote-aether-release.ps1`: `-ExpectedTargetSha` is mandatory (provenance guard);
@@ -435,9 +435,11 @@ runtime path stays `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO` until then.
     target-installer failure, rollback failure, health failure, running-path failure,
     old-live-PID after binPath change, restart failure, omitted `-Start`, and live
     service-manifest SHA mismatch.
-  - No DNS CNAME change needed — cutover is origin mapping only.
-- **Next (after Founder authorizes host mutation):** Fase A (ACL hardening) -> stage exact
-  latest reviewed `main` SHA (`-ExpectedTargetSha`) -> promote services (no migration)
-  -> bcrypt hash interactive -> Caddy basic auth (ADR-0053) -> local auth proof ->
-  shared-tunnel origin cutover (`:80 -> :8080`) -> Dee authorizes public cutover ->
-  public proof + recovery receipts.
+  - No DNS CNAME change needed — cutover is origin mapping only (already applied
+    on the live host: `aethers`/`www` -> `localhost:8080`).
+- **Next (source-level):** merge PR #55 after REV8 PASS -> Gate A: provision
+  `source-livekit.env` (rotated credentials) -> `provision-sense-worker-secrets.ps1
+  -SourceEnvPath` -> promote exact main with `-IncludeSenseWorker` -> start worker
+  -> readiness -> Gate B live trial (issue -> revoke -> disconnect -> refuse) ->
+  Founder acceptance. Merge gate stays `ACTIVE:NO / FOUNDER-PROVEN:NO` until the
+  real LiveKit trial + device evidence pass.
