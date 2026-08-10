@@ -34,10 +34,17 @@ Optional LiveKit worker:
 
     .\deploy\windows\install-aether-services.ps1 -InstallSenseWorker -Start
 
-Both the Gateway and the LiveKit Sense Worker read their credentials from a
-canonical protected secret file at `C:\ProgramData\Aether\secrets\senses-livekit.env`.
-Provision it from a protected source env file OUTSIDE the repo (so rotated
-credentials never need to be stored in the dev tree):
+LiveKit wiring is OPTIONAL (BREV7 / review REV7 Blocker 2): without
+`-InstallSenseWorker` the Gateway keeps its secret-independent startup path and
+never reads the secret file. With the flag, the secrets must exist and be valid
+BEFORE any service mutation; a missing or malformed file fails the install
+pre-mutation rather than crash-looping services after they are rebound.
+
+Both the Gateway (when LiveKit-enabled) and the LiveKit Sense Worker read their
+credentials from a canonical protected secret file at
+`C:\ProgramData\Aether\secrets\senses-livekit.env`. Provision it from a
+protected source env file OUTSIDE the repo (so rotated credentials never need
+to be stored in the dev tree):
 
     .\scripts\provision-sense-worker-secrets.ps1 -SourceEnvPath C:\ProgramData\Aether\secrets\source-livekit.env
 
@@ -53,9 +60,16 @@ ACE, or a malformed/partial file, and never logs raw values. Never copy `.env`
 into a release, and never set LiveKit credentials as Machine-scope environment
 variables.
 
-Optional explicit Python path:
+Service python: an immutable release is bound to its own verified virtual
+environment `<release>\.venv\Scripts\python.exe` (built in staging and asserted
+before any service mutation). The bootstrap python that created the venv is
+never bound as the service python. Rollback to a legacy pre-venv release falls
+back to an explicit `-PythonPath`; the promotion receipt records the exact
+python bound per service.
 
-    .\deploy\windows\install-aether-services.ps1 -PythonPath C:\Aether\releases\Aether_OS_v0.19.2-founder-alpha-frozen.2\.venv\Scripts\python.exe -Start
+A `-PythonPath` may be supplied to override the release venv fallback for a
+legacy rollback release only; a release that has a venv ALWAYS binds
+`<release>\.venv\Scripts\python.exe` (self-contained immutable release).
 
 The installer is idempotent for existing service registrations. It rewrites the
 binary path, startup mode, recovery actions, and dependency configuration. In

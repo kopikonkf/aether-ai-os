@@ -1,8 +1,38 @@
 # LAST STANDING POINT - Aether OS
 
-**Canonical date:** 2026-08-08
+**Canonical date:** 2026-08-10
 **Release:** MVP v0.20 - Governed Shipping + Measured Demand Operations
 **State:** source-present, host-proof pending
+
+## LiveKit wiring (PR #55) — source-present / NON-ACTIVATED
+
+- PR #55 `agent/livekit-wiring` head `6a68f43` (base `main` `41bdd40`) is
+  **source-present and NON-ACTIVATED**. Review REV7 (Chief Architect,
+  2026-08-10) raised two deployment invariants plus a security follow-up;
+  all are addressed in the new head (this file is updated in the same commit):
+  - **Blocker 1 — verified release venv is the python services run.** The
+    installer now binds the service host + child runner to exactly
+    `<release>\.venv\Scripts\python.exe` (release venv always wins over any
+    bootstrap `-PythonPath`); rollback to a pre-venv release falls back to the
+    requested python; the promotion receipt reports `service_python` /
+    `rollback_service_python` (exact bound python per service). Executable
+    regression: external `-PythonPath` cannot be bound as the service python.
+  - **Blocker 2 — optional LiveKit wiring is capability-gated.** `-SecretEnvPath`
+    is only passed when `-InstallSenseWorker` is explicitly selected AND the
+    runner supports it. Without the flag the Gateway keeps its secret-independent
+    startup path. With the flag the secrets must be valid BEFORE any SCM
+    mutation (runner `-ValidateOnly` preflight); missing/malformed/unprotected
+    secrets fail pre-mutation instead of crash-looping after rebinding.
+    Executable regressions: base install without the secret file succeeds;
+    LiveKit-enabled install without the secret file fails pre-mutation.
+  - **Follow-up — one credential boundary.** `worker.py` no longer accepts the
+    weaker `--env-file` parser; credentials come exclusively from the service
+    runner's strict role-scoped injector.
+- Capability truth preserved: `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO`.
+  The LiveKit worker service stays Stopped/Manual; the canonical secret file is
+  still not provisioned; no join/revoke trial has been executed.
+- Merge gate: keep `ACTIVE:NO / FOUNDER-PROVEN:NO` until the real LiveKit
+  issue→revoke→disconnect→refuse trial and device evidence pass.
 
 ## Canonical architecture
 
@@ -271,9 +301,11 @@ runtime path stays `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO` until then.
 - **Phase B exact `742631871ee2967583c2e2f0e5a9f02c91c880a6` has PASS** (promotion
   receipt, services bound to `C:\aether\releases\74263187...`, /health /senses
   /api/browser-senses/status 200, ACL protected, Caddy public 401 with the
-  live host-agnostic hot-fix).
-- **Phase C (Senses) stays HOLD until PR #47 is merged.**
-- After merge: controlled Caddy reconcile (no bcrypt/tunnel/Gateway/AETHER_HOME
+  live host-agnostic hot-fix). PR #47 is MERGED; the Cloudflare ingress
+  host-agnostic Caddy listener is canonicalized at `main` and its real-Caddy
+  boundary proof passed (see section below), so Phase C is no longer held for
+  PR #47.
+- Next: controlled Caddy reconcile (no bcrypt/tunnel/Gateway/AETHER_HOME
   change) -> local/public proof -> device matrix (Windows Chromium + Android PWA).
 - Do NOT repeat Phase A/B or any full Fase A–E.
 

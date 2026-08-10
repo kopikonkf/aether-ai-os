@@ -11,7 +11,6 @@ import os
 import sys
 import uuid
 from dataclasses import asdict, dataclass, replace
-from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 import requests
@@ -535,28 +534,12 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
 
 
 def main() -> int:
-    args: list[str] = list(sys.argv[1:])
-    env_file: str | None = None
-    if "--env-file" in args:
-        index = args.index("--env-file")
-        if index + 1 >= len(args):
-            print("error: --env-file requires a path", file=sys.stderr)
-            return 2
-        env_file = args[index + 1]
-        del args[index:index + 2]
-    if env_file:
-        env_path = Path(env_file).expanduser()
-        if not env_path.is_file():
-            print(f"error: env-file not found: {env_path}", file=sys.stderr)
-            return 2
-        for raw in env_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip())
+    # Credentials are injected exclusively by the service runner from the
+    # canonical protected secret file (role-scoped allowlist, strict parser).
+    # There is intentionally NO --env-file flag here: a second, weaker parser
+    # would create a second credential boundary (review REV7 follow-up).
     config = LiveKitWorkerConfig.from_env()
-    if len(args) == 0 or args[0] == "status":
+    if len(sys.argv) == 1 or sys.argv[1] == "status":
         print(json.dumps(config.readiness(), indent=2))
         return 0 if config.readiness()["ready"] else 2
     run_livekit_worker(config)

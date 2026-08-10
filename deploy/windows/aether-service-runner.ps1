@@ -14,7 +14,8 @@ param(
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
     [int]$RestartDelaySeconds = 5,
-    [string]$SecretEnvPath = ""
+    [string]$SecretEnvPath = "",
+    [switch]$ValidateOnly
 )
 
 Set-StrictMode -Version Latest
@@ -219,6 +220,16 @@ if ($SecretEnvPath) {
         }
     }
     Write-AetherServiceEvent @{ event = "service.secretenv.loaded"; service = $ServiceName; secret_env_path = $SecretEnvPath }
+}
+
+# --- ValidateOnly: exercise the exact secret boundary without starting the
+# child process. Used by the installer as the pre-SCM-mutation preflight (the
+# promotion gates LiveKit wiring behind -InstallSenseWorker, so an installer
+# running without that flag never reads this file). Failures above already
+# threw; a successful validation exits cleanly.
+if ($ValidateOnly) {
+    Write-AetherServiceEvent @{ event = "service.secretenv.validateonly"; service = $ServiceName; ok = $true }
+    exit 0
 }
 
 $python = Resolve-AetherPython

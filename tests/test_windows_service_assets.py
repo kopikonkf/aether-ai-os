@@ -271,7 +271,27 @@ def test_installer_wires_sense_worker_secret_env_path():
     assert '"-Role", "gateway"' in installer
     assert '"-Role", "sense-worker"' in installer
     # Both gateway and sense-worker args are built conditionally.
-    assert 'if ($runnerSupportsSecretEnv)' in installer
+    assert '$runnerSupportsSecretEnv' in installer
+    assert '$livekitEnabled' in installer
+
+
+def test_installer_gates_livekit_secrets_behind_capability_flag():
+    # Blocker 2 (review REV7): LiveKit wiring is OPTIONAL. The Gateway must keep
+    # its secret-independent startup path unless -InstallSenseWorker is selected;
+    # secrets must be valid BEFORE any SCM mutation (never after rebinding).
+    installer = _read(WINDOWS_DIR / "install-aether-services.ps1")
+    # LiveKit secret injection is gated behind the explicit capability flag.
+    assert "livekitEnabled" in installer
+    assert "`$InstallSenseWorker -and `$runnerSupportsSecretEnv" in installer or \
+        "($InstallSenseWorker -and $runnerSupportsSecretEnv)" in installer
+    # Pre-mutation secret validation exists.
+    assert "Assert-LiveKitSecretPreflight" in installer
+    assert "LiveKit secrets not provisioned" in installer
+    assert "-ValidateOnly" in installer
+    # The runner can validate secrets without starting the child process.
+    runner = _read(WINDOWS_DIR / "aether-service-runner.ps1")
+    assert "ValidateOnly" in runner
+    assert "service.secretenv.validateonly" in runner
 
 
 def test_promotion_asserts_release_venv():
@@ -286,6 +306,22 @@ def test_promotion_asserts_release_venv():
     assert 'Assert-ReleaseVenv' in promote
     # Staging builds venv before publish.
     assert 'Build-ReleaseVenv -ReleasePath $staging' in promote
+
+
+def test_promotion_binds_service_python_to_release_venv():
+    # Blocker 1 (review REV7): the bootstrap python that CREATED the venv must
+    # never be bound as the service python. After the venv is verified, service
+    # host + child runner bind exactly <release>\.venv\Scripts\python.exe; the
+    # receipt reports the exact python bound per service.
+    promote = _read(WINDOWS_DIR / "promote-aether-release.ps1")
+    installer = _read(WINDOWS_DIR / "install-aether-services.ps1")
+    assert "service_python" in promote
+    assert "rollback_service_python" in promote
+    assert "Get-BoundServicePython" in promote
+    assert "service_python = $serviceHostPython" in installer
+    # Release venv takes priority over the requested bootstrap python.
+    assert ".venv\\Scripts\\python.exe" in installer
+    assert 'if (Test-Path -LiteralPath $releasePython -PathType Leaf)' in installer
 
 
 def test_provision_sense_worker_secrets_script_has_no_secret_values():

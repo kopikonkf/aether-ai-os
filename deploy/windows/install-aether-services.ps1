@@ -2,6 +2,7 @@
 param(
     [string]$ReleasePath = "",
     [string]$PythonPath = "",
+    [string]$ServicePythonPath = "",
     [string]$AetherHome = "C:\ProgramData\Aether",
     [string]$HostAddress = "127.0.0.1",
     [int]$Port = 8000,
@@ -12,40 +13,6 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-
-# --- Test seam (AETHER_INSTALLER_SKIP_SCM=1) ---
-# Regression tests observe the composed service argv without touching SCM or
-# Windows-only ACL/administrator steps. Production never sets this.
-$skipSCM = [Environment]::GetEnvironmentVariable("AETHER_INSTALLER_SKIP_SCM", "Process")
-if ($skipSCM) {
-    if (-not $ReleasePath) {
-        $ReleasePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
-    }
-    else {
-        $ReleasePath = (Resolve-Path -LiteralPath $ReleasePath).Path
-    }
-    $runner = Join-Path $ReleasePath "deploy\windows\aether-service-runner.ps1"
-    $runnerSupportsSecretEnv = $false
-    if (Test-Path -LiteralPath $runner -PathType Leaf) {
-        $runnerText = Get-Content -LiteralPath $runner -Raw -ErrorAction SilentlyContinue
-        $runnerSupportsSecretEnv = ($null -ne $runnerText -and $runnerText.Contains('$SecretEnvPath'))
-    }
-    $livekitSecretPath = Join-Path $AetherHome "secrets\senses-livekit.env"
-    $gatewayArgs = @("-Role", "gateway", "-ServiceName", "AetherGateway")
-    if ($runnerSupportsSecretEnv) {
-        $gatewayArgs += @("-SecretEnvPath", $livekitSecretPath)
-    }
-    $argvLog = [Environment]::GetEnvironmentVariable("AETHER_SERVICE_ARGV_LOG", "Process")
-    if ($argvLog) {
-        $payload = @{
-            runner = $runner
-            gateway_args = $gatewayArgs
-            runner_supports_secret_env = $runnerSupportsSecretEnv
-        }
-        $payload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $argvLog -Encoding UTF8
-    }
-    exit 0
-}
 
 function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -88,16 +55,23 @@ function Resolve-ServiceHostPython {
         [Parameter(Mandatory = $true)][string]$ResolvedReleasePath
     )
 
+    # The verified release venv is the authoritative runtime Python for the
+    # immutable release. A promotion that built/verified <release>\.venv MUST
+    # bind the service host + child runner to exactly that venv (bootstrap
+    # python is only for CREATING the venv, never for running services).
+    $releasePython = Join-Path $ResolvedReleasePath ".venv\Scripts\python.exe"
+    if (Test-Path -LiteralPath $releasePython -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $releasePython).Path
+    }
+
+    # No release venv: fall back to the requested bootstrap/legacy python, then
+    # to a system python. This keeps rollback to a pre-venv release working and
+    # still fails closed rather than silently binding something unexpected.
     if ($RequestedPath) {
         if (-not (Test-Path -LiteralPath $RequestedPath -PathType Leaf)) {
             throw "Python executable not found: $RequestedPath"
         }
         return (Resolve-Path -LiteralPath $RequestedPath).Path
-    }
-
-    $releasePython = Join-Path $ResolvedReleasePath ".venv\Scripts\python.exe"
-    if (Test-Path -LiteralPath $releasePython -PathType Leaf) {
-        return (Resolve-Path -LiteralPath $releasePython).Path
     }
 
     $python = Get-Command python.exe -ErrorAction SilentlyContinue
@@ -296,6 +270,82 @@ function Ensure-ProtectedAetherHome {
     return $homeExistedBefore
 }
 
+function Assert-LiveKitSecretPreflight {
+    <#
+    Blocker 2 (review REV7): LiveKit wiring is OPTIONAL. When -InstallSenseWorker
+    is NOT selected, the Gateway keeps its secret-independent startup path (no
+    -SecretEnvPath, no dependency on the canonical secret file). When it IS
+    selected, the secret file must be valid BEFORE any SCM mutation, not after
+    services are rebound. This preflight invokes the runner's own exact
+    validator (-ValidateOnly) so there is exactly ONE credential boundary.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Runner,
+        [Parameter(Mandatory = $true)][string]$SecretPath,
+        [Parameter(Mandatory = $true)][string]$ReleasePath,
+        [Parameter(Mandatory = $true)][string]$AetherHome
+    )
+    if (-not (Test-Path -LiteralPath $SecretPath -PathType Leaf)) {
+        throw "LiveKit secrets not provisioned: $SecretPath. Run provision-sense-worker-secrets.ps1 before installing with -InstallSenseWorker."
+    }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Runner `
+        -Role gateway `
+        -ReleasePath $ReleasePath `
+        -AetherHome $AetherHome `
+        -SecretEnvPath $SecretPath `
+        -ValidateOnly | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "LiveKit secret preflight failed (exit $LASTEXITCODE): $SecretPath"
+    }
+}
+
+# --- Test seam (AETHER_INSTALLER_SKIP_SCM=1) ---
+# Regression tests observe the composed service argv without touching SCM or
+# Windows-only ACL/administrator steps. Production never sets this.
+$skipSCM = [Environment]::GetEnvironmentVariable("AETHER_INSTALLER_SKIP_SCM", "Process")
+if ($skipSCM) {
+    if (-not $ReleasePath) {
+        $ReleasePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+    }
+    else {
+        $ReleasePath = (Resolve-Path -LiteralPath $ReleasePath).Path
+    }
+    $runner = Join-Path $ReleasePath "deploy\windows\aether-service-runner.ps1"
+    $runnerSupportsSecretEnv = $false
+    if (Test-Path -LiteralPath $runner -PathType Leaf) {
+        $runnerText = Get-Content -LiteralPath $runner -Raw -ErrorAction SilentlyContinue
+        $runnerSupportsSecretEnv = ($null -ne $runnerText -and $runnerText.Contains('$SecretEnvPath'))
+    }
+    $gatewayArgs = @("-Role", "gateway", "-ServiceName", "AetherGateway")
+    $senseArgs = @()
+    if ($InstallSenseWorker -and $runnerSupportsSecretEnv) {
+        $livekitSecretPath = Join-Path $AetherHome "secrets\senses-livekit.env"
+        $gatewayArgs += @("-SecretEnvPath", $livekitSecretPath)
+        $senseArgs = @("-Role", "sense-worker", "-ServiceName", "AetherSenseWorker", "-SecretEnvPath", $livekitSecretPath)
+        # Optional executable preflight hook (test host): the seam simulates the
+        # production pre-SCM gate. Production never sets this env var.
+        if ([Environment]::GetEnvironmentVariable("AETHER_INSTALLER_ENFORCE_PREFLIGHT", "Process")) {
+            Assert-LiveKitSecretPreflight -Runner $runner -SecretPath $livekitSecretPath -ReleasePath $ReleasePath -AetherHome $AetherHome
+        }
+    }
+    # Blocker 1 (review REV7): the seam reports the python the real installer
+    # would bind for the service host, so the regression can assert the release
+    # venv wins over any bootstrap -PythonPath.
+    $seamHostPython = Resolve-ServiceHostPython -RequestedPath $PythonPath -ResolvedReleasePath $ReleasePath
+    $argvLog = [Environment]::GetEnvironmentVariable("AETHER_SERVICE_ARGV_LOG", "Process")
+    if ($argvLog) {
+        $payload = @{
+            runner = $runner
+            gateway_args = $gatewayArgs
+            sense_args = $senseArgs
+            runner_supports_secret_env = $runnerSupportsSecretEnv
+            service_python = $seamHostPython
+        }
+        $payload | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $argvLog -Encoding UTF8
+    }
+    exit 0
+}
+
 Assert-Administrator
 
 $homePreExists = Ensure-ProtectedAetherHome -Path $AetherHome
@@ -340,18 +390,30 @@ $commonRunnerArgs = @(
     "-PythonPath", $serviceHostPython
 )
 
-# Capability-aware secret injection: only append -SecretEnvPath when the runner
-# in THIS release understands it. Rollback releases (e.g. 956a48a) predate the
+# Capability-aware secret injection (Blocker 2, review REV7): -SecretEnvPath is
+# an OPTIONAL LiveKit capability. It is only passed when BOTH the capability is
+# explicitly enabled (-InstallSenseWorker) AND the runner in THIS release
+# understands it. A plain deploy without -InstallSenseWorker must keep the
+# Gateway on its secret-independent startup path (no dependency on the
+# canonical senses-livekit.env). Rollback releases (e.g. 956a48a) predate the
 # parameter; passing it would fail the child service startup.
 $runnerSupportsSecretEnv = $false
 if (Test-Path -LiteralPath $runner -PathType Leaf) {
     $runnerText = Get-Content -LiteralPath $runner -Raw -ErrorAction SilentlyContinue
     $runnerSupportsSecretEnv = ($null -ne $runnerText -and $runnerText.Contains('$SecretEnvPath'))
 }
-
+$livekitEnabled = ($InstallSenseWorker -and $runnerSupportsSecretEnv)
 $livekitSecretPath = Join-Path $AetherHome "secrets\senses-livekit.env"
+
+# With the capability flag the secrets must be valid BEFORE any SCM mutation
+# (fail before services are rebound, never after). Without the flag the
+# Gateway never reads the file, so no preflight is needed.
+if ($livekitEnabled) {
+    Assert-LiveKitSecretPreflight -Runner $runner -SecretPath $livekitSecretPath -ReleasePath $ReleasePath -AetherHome $AetherHome
+}
+
 $gatewayArgs = @($commonRunnerArgs + @("-Role", "gateway", "-ServiceName", "AetherGateway"))
-if ($runnerSupportsSecretEnv) {
+if ($livekitEnabled) {
     $gatewayArgs += @("-SecretEnvPath", $livekitSecretPath)
 }
 $gatewayBin = New-ServiceHostCommand `
@@ -368,7 +430,7 @@ $installed = @("AetherGateway")
 
 if ($InstallSenseWorker) {
     $senseArgs = @($commonRunnerArgs + @("-Role", "sense-worker", "-ServiceName", "AetherSenseWorker"))
-    if ($runnerSupportsSecretEnv) {
+    if ($livekitEnabled) {
         $senseArgs += @("-SecretEnvPath", $livekitSecretPath)
     }
     $senseBin = New-ServiceHostCommand `
@@ -411,6 +473,7 @@ $manifest = [ordered]@{
     host = $HostAddress
     port = $Port
     service_host = $serviceHost
+    service_python = $serviceHostPython
     services = $installed + @("AetherWatchdog")
     heartbeat_path = (Join-Path $servicesDir "heartbeats.jsonl")
 }

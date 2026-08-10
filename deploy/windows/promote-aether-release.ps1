@@ -305,6 +305,8 @@ $receipt = [ordered]@{
     published_this_run = $false
     partial_publish_removed = $false
     reconciled = @()
+    service_python = $null
+    rollback_service_python = $null
     running_paths_proven = $false
     service_mutation_started = $false
     restart_proven = $false
@@ -477,11 +479,17 @@ function Invoke-Installer {
         "-HostAddress", $HostAddress,
         "-Port", [string]$Port
     )
-    if ($PythonPath) {
-        $installerArgs += @("-PythonPath", $PythonPath)
-    }
     if ($IncludeSenseWorker) {
         $installerArgs += @("-InstallSenseWorker")
+    }
+    # Blocker 1 (review REV7): the bootstrap python that CREATED the venv must
+    # never be bound as the service python. The installer resolves the release
+    # venv itself (<release>\.venv\Scripts\python.exe) and binds service host +
+    # child runner to exactly that. For rollback to a pre-venv release the
+    # installer falls back to -PythonPath when the release has no venv; the
+    # receipt records the exact python bound per service.
+    if ($PythonPath -and -not (Test-Path -LiteralPath (Join-Path $ReleasePath ".venv\Scripts\python.exe") -PathType Leaf)) {
+        $installerArgs += @("-PythonPath", $PythonPath)
     }
     & powershell.exe @installerArgs | Out-Null
     if ($LASTEXITCODE -ne 0) {
@@ -555,6 +563,20 @@ function Test-RollbackManifest {
     }
     catch {
         return $false
+    }
+}
+
+function Get-BoundServicePython {
+    # Blocker 1 (review REV7): the receipt must report the EXACT python bound
+    # per service. Read the live service-manifest written by the installer.
+    $manifestPath = Join-Path $AetherHome "services\service-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $null }
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        return [string]$manifest.service_python
+    }
+    catch {
+        return $null
     }
 }
 
@@ -632,6 +654,9 @@ function Invoke-UniversalRollback {
 
     $manifestOk = Test-RollbackManifest
     $receipt.rollback_manifest_proven = $manifestOk
+
+    # Blocker 1 (review REV7): report the EXACT python bound per service.
+    $receipt.rollback_service_python = Get-BoundServicePython
 
     $proven = ($runningPathOk -and $healthOk -and $aclOk -and $manifestOk)
     $receipt.rollback_proven = $proven
@@ -711,6 +736,9 @@ try {
     if ($IncludeSenseWorker) {
         $receipt.reconciled += "AetherSenseWorker"
     }
+    # Blocker 1 (review REV7): report the EXACT python bound per service (must
+    # be the verified release venv, never the bootstrap python that built it).
+    $receipt.service_python = Get-BoundServicePython
 
     # --- Restart in governed order, then prove live processes bind the release. ---
     Restart-GatewayServices -ReleasePath $targetRelease -IncludeSenseWorker:$IncludeSenseWorker
