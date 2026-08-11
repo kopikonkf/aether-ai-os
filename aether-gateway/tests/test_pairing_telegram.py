@@ -125,6 +125,8 @@ def test_bridge_subscribes_to_pairing_requested_event() -> None:
     )
     assert bus.subscribed == ["browser-sense.bootstrap.requested"]
 
+    loop = asyncio.new_event_loop()
+    bridge._loop = loop
     bridge._on_pairing_requested(
         FakeEvent({
             "bootstrap_id": BOOTSTRAP_ID,
@@ -135,7 +137,10 @@ def test_bridge_subscribes_to_pairing_requested_event() -> None:
             "expires_at": "2026-08-11T18:00:00Z",
         })
     )
-    asyncio.get_event_loop().run_until_complete(asyncio.sleep(0.05))
+    try:
+        loop.run_until_complete(asyncio.sleep(0.05))
+    finally:
+        loop.close()
     assert len(sent) == 1
     assert sent[0]["chat_id"] == 6051954942
     assert CODE in sent[0]["text"]

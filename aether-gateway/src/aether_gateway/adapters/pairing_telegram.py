@@ -118,6 +118,7 @@ class BrowserSensePairingTelegramBridge:
         self._update_edit = None
         self._send_message: Callable | None = None
         self._edit_message_text: Callable | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     def start(
         self,
@@ -128,6 +129,10 @@ class BrowserSensePairingTelegramBridge:
         edit_message_text: Callable[[int, int, str], Any],
     ) -> None:
         """Wire the bridge to the browser-sense event bus and Telegram bot."""
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:  # pragma: no cover - fallback
+            self._loop = asyncio.get_event_loop_policy().get_event_loop()
         self._event_bus = event_bus
         self._bot = bot
         self._send_message = send_message
@@ -177,7 +182,12 @@ class BrowserSensePairingTelegramBridge:
                 coro = self._send_message(
                     chat_id, text, self._keyboard(bootstrap_id, confirmation_code)
                 )
-                asyncio.ensure_future(self._safe_send(coro, chat_id))
+                if self._loop is not None:
+                    asyncio.run_coroutine_threadsafe(
+                        self._safe_send(coro, chat_id), self._loop
+                    )
+                else:  # pragma: no cover - same-loop fallback
+                    asyncio.ensure_future(self._safe_send(coro, chat_id))
             except Exception as exc:  # pragma: no cover - delivery best-effort
                 log.warning("Pairing approval delivery failed: %s", exc)
 
