@@ -73,6 +73,7 @@ class TelegramSenseAdapter(SenseAdapter):
         token: str | None = None,
         enabled: bool | None = None,
         adapter_id: str = "sense.telegram",
+        pairing_bridge: Any | None = None,
     ) -> None:
         self.sense_path = sense_path
         self.behavior_monitor = behavior_monitor
@@ -108,6 +109,8 @@ class TelegramSenseAdapter(SenseAdapter):
         self._adapter_id = adapter_id
         self._queue: asyncio.Queue[Perception] = asyncio.Queue()
         self._bot: Any | None = None
+        self.pairing_bridge = pairing_bridge
+        self.pairing_event_bus = None
         self.model_preferences: dict[int, str] = {}
 
         allowed = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")
@@ -236,6 +239,13 @@ class TelegramSenseAdapter(SenseAdapter):
         if self._bot is None:
             raise RuntimeError("Telegram transport is not initialized")
         await self._bot.send_message(chat_id=chat_id, text=text)
+
+    async def _edit_text(self, chat_id: int, message_id: int, text: str) -> None:
+        if self._bot is None:
+            raise RuntimeError("Telegram transport is not initialized")
+        await self._bot.edit_message_text(
+            chat_id=chat_id, message_id=message_id, text=text
+        )
 
     async def _send_pending_approval(self, chat_id: int, expression: Expression) -> None:
         metadata = dict(expression.metadata.get("pending_approval") or {})
@@ -699,6 +709,16 @@ class TelegramSenseAdapter(SenseAdapter):
 
         application = Application.builder().token(self.token).build()
         self._bot = application.bot
+        if self.pairing_bridge is not None:
+            try:
+                self.pairing_bridge.start(
+                    self.pairing_event_bus,
+                    bot=self._bot,
+                    send_message=self._send_text,
+                    edit_message_text=self._edit_text,
+                )
+            except Exception as exc:  # pragma: no cover - best-effort wiring
+                log.warning("Pairing Telegram bridge wiring failed: %s", exc)
         for command_name, handler_name in self._command_registry.bindings():
             handler = getattr(self, handler_name, None)
             if handler is None:
@@ -706,6 +726,12 @@ class TelegramSenseAdapter(SenseAdapter):
             application.add_handler(CommandHandler(command_name, handler))
         if CallbackQueryHandler is not None:
             application.add_handler(CallbackQueryHandler(self.approval_callback, pattern=r"^a1\|"))
+            if self.pairing_bridge is not None:
+                application.add_handler(
+                    CallbackQueryHandler(
+                        self.pairing_bridge.handle_callback, pattern=r"^p1\|"
+                    )
+                )
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text_update))
         application.add_handler(MessageHandler(filters.VOICE, self.handle_voice_update))
 

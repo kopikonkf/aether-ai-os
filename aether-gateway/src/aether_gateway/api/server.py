@@ -78,6 +78,10 @@ from aether_gateway.approvals import (
     ApprovalCoordinator, ApprovalInboxService, OperatorAuthError, OperatorAuthenticator, pending_to_dict,
 )
 from aether_gateway.adapters import DirectTextSenseAdapter, LocalProcessRuntimeAdapter
+from aether_gateway.adapters.pairing_telegram import (
+    BrowserSensePairingTelegramBridge,
+    TelegramPairingCallbackCodec,
+)
 from aether_gateway.adapters.telegram_bot import TelegramSenseAdapter
 from aether_gateway.providers import ConfiguredModelProvider
 from aether_gateway.evolution import EvolutionWorkspaceError, LocalArtifactPromoter, LocalEvolutionSandbox
@@ -470,12 +474,34 @@ def _executive_reasoner(prompt: str) -> str:
 
 
 executive_engine = CircadianExecutiveEngine(root_dir, reasoner=_executive_reasoner)
+_pairing_allowlist = [
+    int(part.strip())
+    for part in str(
+        os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")
+    ).split(",")
+    if part.strip().isdigit()
+]
+_pairing_secret = (
+    os.environ.get("AETHER_TELEGRAM_CALLBACK_SECRET")
+    or os.environ.get("AETHER_OPERATOR_TOKEN")
+    or os.environ.get("AUTH_SECRET_KEY")
+    or _browser_secret
+)
+if len(str(_pairing_secret).encode("utf-8")) < 16:
+    _pairing_secret = _browser_secret
+_pairing_bridge = BrowserSensePairingTelegramBridge(
+    browser_sense_bootstrap,
+    secret=_pairing_secret,
+    allowed_chat_ids=_pairing_allowlist,
+)
 telegram_adapter = TelegramSenseAdapter(
     sense_path,
     behavior_monitor=behavior_monitor,
     session_reset=cognitive_gateway.clear_session,
     approval_inbox=approval_inbox,
+    pairing_bridge=_pairing_bridge,
 )
+telegram_adapter.pairing_event_bus = browser_sense_event_bus
 
 
 def get_db() -> sqlite3.Connection:
