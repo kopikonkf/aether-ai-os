@@ -142,6 +142,8 @@ class LiveKitWorkerConfig:
     tts_fallback_voices: tuple[str, ...]
     greeting: str
     turn_detector: str
+    stt_provider: str
+    groq_api_key: str
 
     @classmethod
     def from_env(cls) -> "LiveKitWorkerConfig":
@@ -150,7 +152,7 @@ class LiveKitWorkerConfig:
             worker_token=str(os.environ.get("AETHER_SENSE_WORKER_TOKEN") or ""),
             agent_name=str(os.environ.get("LIVEKIT_AGENT_NAME") or "aether-sense"),
             stt_model=str(os.environ.get("AETHER_STT_MODEL") or "deepgram/nova-3"),
-            stt_language=str(os.environ.get("AETHER_STT_LANGUAGE") or "multi"),
+            stt_language=str(os.environ.get("AETHER_STT_LANGUAGE") or "id"),
             tts_model=str(os.environ.get("AETHER_TTS_MODEL") or "cartesia/sonic-3"),
             tts_voice=str(os.environ.get("AETHER_TTS_VOICE") or "794f9389-aac1-45b6-b726-9d9369183238"),
             stt_fallback_models=_csv_env("AETHER_STT_FALLBACK_MODELS"),
@@ -158,6 +160,8 @@ class LiveKitWorkerConfig:
             tts_fallback_voices=_csv_env("AETHER_TTS_FALLBACK_VOICES"),
             greeting=str(os.environ.get("AETHER_SENSE_GREETING") or "Saya Aether. Saya mendengarkan."),
             turn_detector=str(os.environ.get("AETHER_TURN_DETECTOR") or "multilingual"),
+            stt_provider=str(os.environ.get("AETHER_STT_PROVIDER") or "livekit-inference"),
+            groq_api_key=str(os.environ.get("GROQ_API_KEY") or ""),
         )
 
     def readiness(self) -> dict[str, Any]:
@@ -402,15 +406,6 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             pass
         session_kwargs: dict[str, Any] = {
             "vad": silero.VAD.load(),
-            "stt": inference.STT(
-                config.stt_model,
-                language=config.stt_language,
-                **(
-                    {"fallback": config.stt_fallback()}
-                    if config.stt_fallback()
-                    else {}
-                ),
-            ),
             "tts": inference.TTS(
                 config.tts_model,
                 voice=config.tts_voice,
@@ -421,6 +416,24 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
                 ),
             ),
         }
+        if config.stt_provider == "groq":
+            from livekit.plugins import groq as groq_plugin
+
+            session_kwargs["stt"] = groq_plugin.STT(
+                model=config.stt_model,
+                api_key=config.groq_api_key or None,
+                language=config.stt_language,
+            )
+        else:
+            session_kwargs["stt"] = inference.STT(
+                config.stt_model,
+                language=config.stt_language,
+                **(
+                    {"fallback": config.stt_fallback()}
+                    if config.stt_fallback()
+                    else {}
+                ),
+            )
         if config.turn_detector == "multilingual" and TurnDetector is not None:
             session_kwargs["turn_handling"] = TurnHandlingOptions(
                 turn_detection="vad"
