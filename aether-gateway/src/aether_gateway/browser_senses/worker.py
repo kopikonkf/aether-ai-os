@@ -358,7 +358,7 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
         async def llm_node(self, chat_ctx: Any, tools: list[Any], model_settings: ModelSettings):
             del tools, model_settings
             text = _latest_user_text(chat_ctx)
-            print(f"[AETHER-VOICE] llm_node invoked text={text!r} items={len(list(getattr(chat_ctx, 'items', ()) or ()))}", flush=True)
+            print(f"[AETHER-VOICE] llm_node text={text!r} items_len={len(list(getattr(chat_ctx, 'items', ()) or ()))}", flush=True)
             if not text:
                 return
             turn = self.turns.begin()
@@ -440,10 +440,8 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
                     else {}
                 ),
             )
-        if config.turn_detector == "multilingual" and TurnDetector is not None:
-            session_kwargs["turn_handling"] = TurnHandlingOptions(
-                turn_detection="stt"
-            )
+        # Keep the default turn endpointing from the SDK. Custom
+        # turn_handling modes previously failed to commit user turns.
         session = AgentSession(**session_kwargs)
 
         @session.on("user_input_transcribed")
