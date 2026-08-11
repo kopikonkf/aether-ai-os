@@ -394,12 +394,20 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             "stt": inference.STT(
                 config.stt_model,
                 language=config.stt_language,
-                fallback=config.stt_fallback() or None,
+                **(
+                    {"fallback": config.stt_fallback()}
+                    if config.stt_fallback()
+                    else {}
+                ),
             ),
             "tts": inference.TTS(
                 config.tts_model,
                 voice=config.tts_voice,
-                fallback=config.tts_fallback() or None,
+                **(
+                    {"fallback": config.tts_fallback()}
+                    if config.tts_fallback()
+                    else {}
+                ),
             ),
         }
         if config.turn_detector == "multilingual" and TurnDetector is not None:
