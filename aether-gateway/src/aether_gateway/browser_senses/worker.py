@@ -316,6 +316,16 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
     )
     from livekit.plugins import silero
 
+    try:
+        from livekit.agents.llm import ChatContext, ChatMessage
+    except ImportError:  # pragma: no cover
+        from livekit.agents import ChatContext, ChatMessage
+
+    try:
+        from livekit.agents.voice.audio_recognition import audio_recognition
+    except ImportError:  # pragma: no cover
+        audio_recognition = None
+
     if config.stt_provider == "groq":
         # Imported on the main thread: plugins must register before any job
         # runs, and importing inside an async job raises
@@ -402,6 +412,10 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             print("[AETHER-VOICE] session entered, greeting=", repr(config.greeting), flush=True)
             if config.greeting:
                 await self.session.say(config.greeting, add_to_chat_ctx=False)
+
+        async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
+            text = str(getattr(new_message, "text_content", "") or "")
+            print(f"[AETHER-VOICE] user_turn_completed text={text!r}", flush=True)
 
     @server.rtc_session(agent_name=config.agent_name)
     async def aether_sense_session(ctx: JobContext) -> None:
@@ -521,13 +535,35 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
                 # reconciliation remains unconfirmed and is never fabricated.
                 return
 
+        # Manual turn commit workaround: the automatic end-of-turn pipeline
+        # does not trigger llm_node for the final transcript, so we force it.
+        _had_speech_since_commit = False
+
+        async def _manual_commit() -> None:
+            nonlocal _had_speech_since_commit
+            _had_speech_since_commit = False
+            try:
+                if audio_recognition is not None:
+                    # Use the public commit path. This responds the turn directly.
+                    transcript = await session.commit_user_turn(
+                        transcript_timeout=3.0, stt_flush_duration=1.0
+                    )
+                    print(f"[AETHER-VOICE] manual commit -> {transcript!r}", flush=True)
+            except Exception as exc:
+                print(f"[AETHER-VOICE] commit_user_turn failed: {exc!r}", flush=True)
+
         @session.on("user_state_changed")
         def on_user_state_changed(event: Any) -> None:
+            nonlocal _had_speech_since_commit
             new_state = str(getattr(event, "new_state", ""))
             old_state = str(getattr(event, "old_state", ""))
             print(f"[AETHER-VOICE] user_state {old_state} -> {new_state}", flush=True)
-            if str(getattr(event, "new_state", "")) == "speaking":
+            if new_state == "speaking":
+                _had_speech_since_commit = True
                 asyncio.create_task(interrupt_pipeline("user_barge_in"))
+            elif new_state == "listening" and _had_speech_since_commit:
+                _had_speech_since_commit = False
+                asyncio.create_task(_manual_commit())
 
         previous_agent_state = ""
 
