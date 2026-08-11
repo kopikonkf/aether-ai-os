@@ -232,13 +232,17 @@ class TelegramSenseAdapter(SenseAdapter):
             return
         await self._send_text(chat_id, text)
 
-    async def _send_text(self, chat_id: int, text: str) -> None:
+    async def _send_text(
+        self, chat_id: int, text: str, reply_markup: Any | None = None
+    ) -> None:
         if self._text_sender:
             await self._text_sender(chat_id, text)
             return
         if self._bot is None:
             raise RuntimeError("Telegram transport is not initialized")
-        await self._bot.send_message(chat_id=chat_id, text=text)
+        await self._bot.send_message(
+            chat_id=chat_id, text=text, reply_markup=reply_markup
+        )
 
     async def _edit_text(self, chat_id: int, message_id: int, text: str) -> None:
         if self._bot is None:
