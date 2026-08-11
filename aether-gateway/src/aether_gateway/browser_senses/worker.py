@@ -442,15 +442,15 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             )
         if config.turn_detector == "multilingual" and TurnDetector is not None:
             session_kwargs["turn_handling"] = TurnHandlingOptions(
-                turn_detection="vad"
+                turn_detection="stt"
             )
         session = AgentSession(**session_kwargs)
 
-        @session.on("user_transcription")
-        def on_user_transcription(transcript: Any) -> None:
-            text = getattr(transcript, "text", "") or ""
-            state = getattr(transcript, "is_final", None)
-            print(f"[AETHER-VOICE] user_transcription final={state} text={text!r}", flush=True)
+        @session.on("user_input_transcribed")
+        def on_user_transcribed(transcript: Any) -> None:
+            text = getattr(transcript, "transcript", "") or ""
+            is_final = bool(getattr(transcript, "is_final", False))
+            print(f"[AETHER-VOICE] user_input_transcribed final={is_final} text={text!r}", flush=True)
 
         async def notify_turn(payload: dict[str, Any]) -> None:
             try:
