@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging as log
 import os
 import sys
 import uuid
@@ -316,6 +317,14 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
     )
     from livekit.plugins import silero
 
+    log.basicConfig(
+        level=log.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        stream=sys.stderr,
+    )
+    for name in ("livekit", "aether", "browser_senses.worker"):
+        log.getLogger(name).setLevel(log.DEBUG)
+
     try:
         from livekit.agents.llm import ChatContext, ChatMessage
     except ImportError:  # pragma: no cover
@@ -458,11 +467,35 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
         # turn_handling modes previously failed to commit user turns.
         session = AgentSession(**session_kwargs)
 
+    # Force user-turn commit whenever a final transcript arrives. The default
+    # turn-detection pipeline did not invoke llm_node for these transcripts.
+    # This is done by calling the public AgentSession.commit_user_turn(). We
+    # do not try to emulate the built-in eou flow.
+    last_committed: str = ""
+
+    async def _commit_final_transcript(text: str) -> None:
+        nonlocal last_committed
+        text = text.strip()
+        if not text or text == last_committed:
+            return
+        last_committed = text
+        try:
+            if audio_recognition is not None and hasattr(session, "commit_user_turn"):
+                await session.commit_user_turn(
+                    transcript_timeout=3.0,
+                    stt_flush_duration=1.0,
+                )
+                print(f"[AETHER-VOICE] commit_user_turn(text={text!r}) -> OK", flush=True)
+        except Exception as exc:
+            print(f"[AETHER-VOICE] commit_user_turn failed: {exc!r}", flush=True)
+
         @session.on("user_input_transcribed")
         def on_user_transcribed(transcript: Any) -> None:
             text = getattr(transcript, "transcript", "") or ""
             is_final = bool(getattr(transcript, "is_final", False))
             print(f"[AETHER-VOICE] user_input_transcribed final={is_final} text={text!r}", flush=True)
+            if is_final and text:
+                asyncio.create_task(_commit_final_transcript(text))
 
         async def notify_turn(payload: dict[str, Any]) -> None:
             try:
