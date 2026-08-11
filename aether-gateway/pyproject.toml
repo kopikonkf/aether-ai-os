@@ -40,7 +40,7 @@ livekit = [
 aether-gateway = "aether_gateway.api.server:start_server"
 aether-sense-worker = "aether_gateway.browser_senses.worker:main"
 aether-mcp = "aether_gateway.mcp.server:main"
-aether-living-mcp = "aether_gateway.mcp.living_server_entry:main"
+aether-living-mcp = "aether_gateway.mcp.living_server_entry_v2:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
