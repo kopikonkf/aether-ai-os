@@ -300,7 +300,16 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
     if not readiness["ready"]:
         raise RuntimeError("LiveKit worker is not ready: " + json.dumps(readiness, sort_keys=True))
 
-    from livekit.agents import Agent, AgentServer, AgentSession, JobContext, ModelSettings, cli, inference
+    from livekit.agents import (
+        Agent,
+        AgentServer,
+        AgentSession,
+        JobContext,
+        ModelSettings,
+        TurnHandlingOptions,
+        cli,
+        inference,
+    )
     from livekit.plugins import silero
 
     try:
@@ -411,7 +420,9 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             ),
         }
         if config.turn_detector == "multilingual" and TurnDetector is not None:
-            session_kwargs["turn_detection"] = TurnDetector()
+            session_kwargs["turn_handling"] = TurnHandlingOptions(
+                turn_detection="vad"
+            )
         session = AgentSession(**session_kwargs)
 
         async def notify_turn(payload: dict[str, Any]) -> None:
