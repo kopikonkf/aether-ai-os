@@ -316,6 +316,12 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
     )
     from livekit.plugins import silero
 
+    if config.stt_provider == "groq":
+        # Imported on the main thread: plugins must register before any job
+        # runs, and importing inside an async job raises
+        # "Plugins must be registered on the main thread".
+        from livekit.plugins import groq as _groq_plugin  # noqa: F401
+
     try:
         from livekit.agents import RoomOptions
     except ImportError:  # compatibility with SDK versions before unified RoomOptions

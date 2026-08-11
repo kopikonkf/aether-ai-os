@@ -115,6 +115,8 @@ class LiveKitWorkerTurnTests(unittest.TestCase):
             tts_fallback_voices=(),
             greeting="hello",
             turn_detector="multilingual",
+            stt_provider="livekit-inference",
+            groq_api_key="",
         )
         client = worker.AetherGatewayVoiceClient(config)
         turn = worker.LiveKitTurnGeneration("turn-1", "corr-1")
