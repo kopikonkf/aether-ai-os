@@ -348,6 +348,7 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
         async def llm_node(self, chat_ctx: Any, tools: list[Any], model_settings: ModelSettings):
             del tools, model_settings
             text = _latest_user_text(chat_ctx)
+            print(f"[AETHER-VOICE] llm_node invoked text={text!r} items={len(list(getattr(chat_ctx, 'items', ()) or ()))}", flush=True)
             if not text:
                 return
             turn = self.turns.begin()
@@ -388,6 +389,7 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             yield reply
 
         async def on_enter(self) -> None:
+            print("[AETHER-VOICE] session entered, greeting=", repr(config.greeting), flush=True)
             if config.greeting:
                 await self.session.say(config.greeting, add_to_chat_ctx=False)
 
@@ -424,6 +426,12 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
                 turn_detection="vad"
             )
         session = AgentSession(**session_kwargs)
+
+        @session.on("user_transcription")
+        def on_user_transcription(transcript: Any) -> None:
+            text = getattr(transcript, "text", "") or ""
+            state = getattr(transcript, "is_final", None)
+            print(f"[AETHER-VOICE] user_transcription final={state} text={text!r}", flush=True)
 
         async def notify_turn(payload: dict[str, Any]) -> None:
             try:
@@ -498,6 +506,9 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
 
         @session.on("user_state_changed")
         def on_user_state_changed(event: Any) -> None:
+            new_state = str(getattr(event, "new_state", ""))
+            old_state = str(getattr(event, "old_state", ""))
+            print(f"[AETHER-VOICE] user_state {old_state} -> {new_state}", flush=True)
             if str(getattr(event, "new_state", "")) == "speaking":
                 asyncio.create_task(interrupt_pipeline("user_barge_in"))
 
