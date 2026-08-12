@@ -24,6 +24,7 @@ Inbox, so the request is visible and decidable in the Gateway HTML /approvals pa
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from typing import Any, Optional
@@ -48,12 +49,41 @@ from .registry import get_registry
 from .token_store import TokenStore
 
 # ---------------------------------------------------------------------------
+# Scope enforcement — Tool-to-Scope mapping (ADR-0056 P0 #2)
+# ---------------------------------------------------------------------------
+
+TOOL_SCOPE_MAP: dict[str, list[str]] = {
+    # READ tools (aether.read)
+    "file_read": ["aether.read"],
+    "file_hash": ["aether.read"],
+    "workspace_tree": ["aether.read"],
+    "workspace_list": ["aether.read"],
+    "git_status": ["aether.read"],
+    "git_log": ["aether.read"],
+    "git_diff": ["aether.read"],
+    "logs_tail": ["aether.read"],
+    "runtime_status": ["aether.read"],
+    "runtime_adapters": ["aether.read"],
+    "service_status": ["aether.read"],
+    "aether_living_capabilities": ["aether.read"],
+    # DIAGNOSTIC tools (aether.diagnostic)
+    "run_verification": ["aether.diagnostic"],
+    "runtime_telemetry": ["aether.diagnostic"],
+    # MUTATE tools (aether.mutate — operator token required)
+    "workspace_edit": ["aether.mutate"],
+    "decide_and_resume": ["aether.mutate"],
+}
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 PUBLIC_BASE_URL = os.getenv("AETHER_OAUTH_PUBLIC_BASE_URL", "https://aethers.my.id")
 MCP_UPSTREAM = os.getenv("AETHER_MCP_UPSTREAM", "http://127.0.0.1:8787")
 MCP_TOKEN = os.getenv("AETHER_MCP_TOKEN", "")
+# P1 #8: OAuth edge administration (list pending) uses a SEPARATE credential —
+# never the shared MCP upstream token.
+OAUTH_ADMIN_TOKEN = os.getenv("AETHER_OAUTH_ADMIN_TOKEN", "")
 PORT = int(os.getenv("AETHER_OAUTH_EDGE_PORT", "8789"))
 
 app = FastAPI(title="Aether MCP OAuth Edge", version="1.0.0", docs_url=None, redoc_url=None)
@@ -95,7 +125,12 @@ async def oauth_metadata() -> JSONResponse:
 
 @app.post("/oauth/register")
 async def register_client(request: Request) -> JSONResponse:
-    """Accept dynamic registration only for pre-approved client_ids in the registry."""
+    """Pre-approved client registration (RFC 7591 shape, not unrestricted).
+
+    P1 #6: this is NOT arbitrary dynamic registration — only client_ids that
+    already exist in configs/principal_registry.yaml are accepted. Unknown
+    clients are rejected with invalid_client_metadata.
+    """
     body = await request.json()
     client_id = body.get("client_id", "")
     registry = get_registry()
@@ -155,6 +190,10 @@ async def authorize(
 
     if not code_challenge:
         return HTMLResponse(_error_page("invalid_request", "PKCE code_challenge is required."), status_code=400)
+
+    # P1 #5: enforce S256 PKCE method — reject plain otherwise
+    if code_challenge_method != "S256":
+        return HTMLResponse(_error_page("invalid_request", "Only PKCE S256 is supported."), status_code=400)
 
     requested_scopes = [s.strip() for s in scope.split() if s.strip()]
     effective_scopes = principal.effective_scopes(requested_scopes)
@@ -410,7 +449,7 @@ async def token_endpoint(
     if grant_type == "authorization_code":
         return await _handle_code_exchange(store, code, redirect_uri, client_id, code_verifier)
     elif grant_type == "refresh_token":
-        return await _handle_refresh(store, refresh_token)
+        return await _handle_refresh(store, refresh_token, client_id or "")
     else:
         return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
 
@@ -425,11 +464,18 @@ async def _handle_code_exchange(
     if not code:
         return JSONResponse({"error": "invalid_request", "error_description": "code is required"}, status_code=400)
 
-    pending = store.consume_auth_code(code)
+    # P0 #4: Non-destructive lookup — validate all binding + PKCE BEFORE consuming.
+    pending = store.get_pending_auth_by_code(code)
     if pending is None:
         return JSONResponse({"error": "invalid_grant", "error_description": "Invalid or expired authorization code"}, status_code=400)
 
-    # Validate PKCE S256
+    # P0 #3: Validate client_id and redirect_uri binding to the authorization request.
+    if pending.client_id != client_id:
+        return JSONResponse({"error": "invalid_grant", "error_description": "client_id mismatch"}, status_code=400)
+    if pending.redirect_uri != redirect_uri:
+        return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}, status_code=400)
+
+    # Validate PKCE S256 (before consuming code — P0 #4)
     if pending.code_challenge_method == "S256" and code_verifier:
         import base64
         digest = hashlib.sha256(code_verifier.encode()).digest()
@@ -437,8 +483,13 @@ async def _handle_code_exchange(
         if challenge != pending.code_challenge:
             return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
 
+    # All validations passed — now atomically consume the code (single-use).
+    consumed = store.consume_auth_code(code)
+    if consumed is None:
+        return JSONResponse({"error": "invalid_grant", "error_description": "Authorization code already used"}, status_code=400)
+
     access_token, expires_in = store.issue_access_token(pending.principal_id, pending.scopes)
-    refresh_token_plain = store.issue_refresh_token(pending.principal_id, pending.scopes)
+    refresh_token_plain = store.issue_refresh_token(pending.principal_id, pending.scopes, client_id=pending.client_id)
 
     log_token_issued(pending.principal_id, pending.scopes, expires_in)
 
@@ -451,17 +502,17 @@ async def _handle_code_exchange(
     })
 
 
-async def _handle_refresh(store: TokenStore, refresh_token: Optional[str]) -> JSONResponse:
+async def _handle_refresh(store: TokenStore, refresh_token: Optional[str], client_id: str = "") -> JSONResponse:
     if not refresh_token:
         return JSONResponse({"error": "invalid_request", "error_description": "refresh_token is required"}, status_code=400)
 
-    result = store.consume_refresh_token(refresh_token)
+    result = store.consume_refresh_token(refresh_token, client_id=client_id)
     if result is None:
         return JSONResponse({"error": "invalid_grant", "error_description": "Invalid or expired refresh token"}, status_code=400)
 
     principal_id, scopes = result
     access_token, expires_in = store.issue_access_token(principal_id, scopes)
-    new_refresh = store.issue_refresh_token(principal_id, scopes)
+    new_refresh = store.issue_refresh_token(principal_id, scopes, client_id=client_id)
 
     log_token_refreshed(principal_id, scopes)
 
@@ -531,7 +582,7 @@ def _verify_internal_token(authorization: Optional[str]) -> bool:
     if not authorization.lower().startswith("bearer "):
         return False
     token = authorization[7:].strip()
-    expected = MCP_TOKEN
+    expected = OAUTH_ADMIN_TOKEN
     if not expected:
         return False
     return _hmac.compare_digest(token, expected)
@@ -565,6 +616,25 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
 
     principal_id: str = payload.get("principal_id", "unknown")
     scopes: list[str] = payload.get("scopes", [])
+
+    # Scope enforcement (P0 #2) — check tool against TOOL_SCOPE_MAP BEFORE proxy
+    body = await request.body()
+    if body and request.method == "POST":
+        try:
+            body_json = json.loads(body)
+            method = body_json.get("method", "")
+            # MCP tools/call method: params.name = tool name
+            if method == "tools/call":
+                tool_name = body_json.get("params", {}).get("name", "")
+                required_scopes = TOOL_SCOPE_MAP.get(tool_name, [])
+                if required_scopes and not all(s in scopes for s in required_scopes):
+                    log_scope_denied(principal_id, tool_name)
+                    return JSONResponse(
+                        {"error": "insufficient_scope", "error_description": f"Tool '{tool_name}' requires {required_scopes}, token has {scopes}"},
+                        status_code=403
+                    )
+        except Exception:
+            pass  # Body parse error → let upstream handle malformed request
 
     # Build upstream URL
     upstream_path = f"/mcp/{path}" if path else "/mcp"

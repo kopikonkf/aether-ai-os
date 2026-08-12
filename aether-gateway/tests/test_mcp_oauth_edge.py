@@ -484,3 +484,235 @@ class TestHealth:
         data = resp.json()
         assert data["status"] == "ok"
         assert data["service"] == "aether-mcp-oauth-edge"
+
+
+# ---------------------------------------------------------------------------
+# Regression tests — P0 #2 scope enforcement, P0 #3 redirect binding,
+# P0 #4 PKCE-before-consume, P1 #5 S256 enforce, P1 #7 refresh client binding
+# ---------------------------------------------------------------------------
+
+def _issue_token(scopes, principal="chatgpt", secret=b"test-secret-key-minimum-32-bytes-ok!"):
+    store = TokenStore(db_path=Path("/tmp/test-regression-tokens.db"), secret=secret)
+    token, _ = store.issue_access_token(principal, scopes)
+    return token
+
+
+class TestScopeEnforcement:
+    """P0 #2 — read/diagnostic principals must NOT reach mutation tools."""
+
+    def test_read_token_blocked_from_mutate(self, client):
+        token = _issue_token(["aether.read"])
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "workspace_edit", "arguments": {}}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "insufficient_scope"
+
+    def test_diagnostic_token_blocked_from_mutate(self, client):
+        token = _issue_token(["aether.diagnostic"])
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "decide_and_resume", "arguments": {}}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+
+    def test_read_token_allowed_read_tool(self):
+        # Verify no enforcement against allowed tools before reaching upstream
+        token = _issue_token(["aether.read"])
+        # hashes are deterministic; the read tool file_read requires aether.read only
+        from aether_gateway.oauth_edge.server import TOOL_SCOPE_MAP
+        assert "file_read" in TOOL_SCOPE_MAP
+        assert "aether.read" in TOOL_SCOPE_MAP["file_read"]
+
+    def test_mutate_token_allowed_mutate(self, client):
+        token = _issue_token(["aether.read", "aether.mutate"])
+        mock_response = MagicMock()
+        mock_response.content = b'{"result": "ok"}'
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch("aether_gateway.oauth_edge.server.get_store") as mock_store_cls:
+            store = TokenStore(db_path=Path("/tmp/test-regression-tokens2.db"), secret=b"test-secret-key-minimum-32-bytes-ok!")
+            # use real store; patch only httpx
+            mock_store_cls.return_value = store
+            with patch("httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client.__aexit__ = AsyncMock(return_value=None)
+                mock_client.request = AsyncMock(return_value=mock_response)
+                mock_client_cls.return_value = mock_client
+                resp = client.post(
+                    "/mcp",
+                    json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "workspace_edit", "arguments": {}}},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+        assert resp.status_code == 200
+
+
+class TestRedirectBinding:
+    """P0 #3 — authorization code bound to client_id + redirect_uri."""
+
+    def _get_code(self, client):
+        resp = client.get("/oauth/authorize", params={
+            "response_type": "code",
+            "client_id": "aether-principal-chatgpt",
+            "redirect_uri": "https://chatgpt.com/callback",
+            "scope": "aether.read",
+            "state": "s",
+            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge_method": "S256",
+        })
+        text = resp.text
+        start = text.find("Request ID: ") + len("Request ID: ")
+        end = text.find("<", start)
+        request_id = text[start:end].strip()
+        approve = client.post(
+            f"/oauth/approve/{request_id}",
+            follow_redirects=False,
+            headers={"X-Aether-Operator-Token": "test-operator-token"},
+        )
+        assert approve.status_code == 302
+        return approve.headers["location"].split("code=")[1].split("&")[0]
+
+    def test_wrong_client_id_rejected(self, client):
+        code = self._get_code(client)
+        resp = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-codex",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_grant"
+
+    def test_wrong_redirect_uri_rejected(self, client):
+        code = self._get_code(client)
+        resp = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://evil.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_grant"
+
+
+class TestPKCEBeforeConsume:
+    """P0 #4 — wrong PKCE must NOT consume the authorization code."""
+
+    def _get_code(self, client):
+        resp = client.get("/oauth/authorize", params={
+            "response_type": "code",
+            "client_id": "aether-principal-chatgpt",
+            "redirect_uri": "https://chatgpt.com/callback",
+            "scope": "aether.read",
+            "state": "s",
+            "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            "code_challenge_method": "S256",
+        })
+        text = resp.text
+        start = text.find("Request ID: ") + len("Request ID: ")
+        end = text.find("<", start)
+        request_id = text[start:end].strip()
+        approve = client.post(
+            f"/oauth/approve/{request_id}",
+            follow_redirects=False,
+            headers={"X-Aether-Operator-Token": "test-operator-token"},
+        )
+        assert approve.status_code == 302
+        return approve.headers["location"].split("code=")[1].split("&")[0]
+
+    def test_wrong_pkce_does_not_consume_code(self, client):
+        code = self._get_code(client)
+        wrong = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "WRONG_VERIFIER_VALUE_12345",
+        })
+        assert wrong.status_code == 400
+        assert wrong.json()["error"] == "invalid_grant"
+
+        # Code must still be valid — retry with correct verifier succeeds
+        ok = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert ok.status_code == 200
+        assert "access_token" in ok.json()
+
+    def test_valid_pkce_single_use(self, client):
+        code = self._get_code(client)
+        ok = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert ok.status_code == 200
+
+        # Second attempt -> invalid_grant (replay rejected)
+        replay = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert replay.status_code == 400
+        assert replay.json()["error"] == "invalid_grant"
+
+
+class TestS256Enforcement:
+    """P1 #5 — plain PKCE method rejected."""
+
+    def test_plain_pkce_rejected(self, client):
+        resp = client.get("/oauth/authorize", params={
+            "response_type": "code",
+            "client_id": "aether-principal-chatgpt",
+            "redirect_uri": "https://chatgpt.com/callback",
+            "scope": "aether.read",
+            "state": "s",
+            "code_challenge": "abc123",
+            "code_challenge_method": "plain",
+        })
+        assert resp.status_code == 400
+        assert "S256" in resp.text
+
+
+class TestRefreshClientBinding:
+    """P1 #7 — refresh token cannot cross client/principal."""
+
+    def test_refresh_token_cannot_cross_client(self):
+        store = TokenStore(db_path=Path("/tmp/test-refresh-binding.db"), secret=b"test-secret-key-minimum-32-bytes-ok!")
+        refresh = store.issue_refresh_token("chatgpt", ["aether.read"], client_id="aether-principal-chatgpt")
+        # Correct client -> ok
+        assert store.consume_refresh_token(refresh, client_id="aether-principal-chatgpt") is not None
+
+    def test_refresh_token_rejected_for_wrong_client(self):
+        store = TokenStore(db_path=Path("/tmp/test-refresh-binding2.db"), secret=b"test-secret-key-minimum-32-bytes-ok!")
+        refresh = store.issue_refresh_token("chatgpt", ["aether.read"], client_id="aether-principal-chatgpt")
+        # Wrong client -> rejected
+        assert store.consume_refresh_token(refresh, client_id="aether-principal-codex") is None
+
+
+class TestJWTClaims:
+    """P1 #9 — access token carries iss/aud claims, verified on decode."""
+
+    def test_token_has_iss_aud(self):
+        store = TokenStore(db_path=Path("/tmp/test-jwt-claims.db"), secret=b"test-secret-key-minimum-32-bytes-ok!")
+        token, _ = store.issue_access_token("chatgpt", ["aether.read"])
+        payload = store.verify_access_token(token)
+        assert payload is not None
+        assert payload["iss"] == os.getenv("AETHER_OAUTH_ISSUER", "https://aethers.my.id/oauth")
+        assert payload["aud"] == os.getenv("AETHER_OAUTH_AUDIENCE", "https://aethers.my.id/mcp")

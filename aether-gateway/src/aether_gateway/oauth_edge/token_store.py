@@ -131,6 +131,7 @@ class TokenStore:
                 CREATE TABLE IF NOT EXISTS refresh_tokens (
                     jti TEXT PRIMARY KEY,
                     principal_id TEXT NOT NULL,
+                    client_id TEXT NOT NULL DEFAULT '',
                     scopes TEXT NOT NULL,
                     token_hash TEXT NOT NULL,
                     issued_at REAL NOT NULL,
@@ -141,6 +142,11 @@ class TokenStore:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_rt_hash ON refresh_tokens(token_hash)
             """)
+            # Migration (P1 #7): existing databases created before client_id binding
+            # lack the column — add it if missing rather than failing on INSERT.
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(refresh_tokens)").fetchall()]
+            if "client_id" not in cols:
+                conn.execute("ALTER TABLE refresh_tokens ADD COLUMN client_id TEXT NOT NULL DEFAULT ''")
 
     # ------------------------------------------------------------------ #
     # Pending authorization requests                                       #
@@ -203,6 +209,19 @@ class TokenStore:
                 return req
         return None
 
+    def get_pending_auth_by_code(self, code: str) -> Optional[PendingAuth]:
+        """Non-destructive lookup by authorization code (P0 #4).
+
+        Validates PKCE/client binding BEFORE the code is consumed, so a failed
+        PKCE check does not invalidate the code. Atomic single-use semantics
+        are preserved by consume_auth_code() remaining the only destructive path.
+        """
+        for req in self._pending.values():
+            if req.auth_code == code and req.approved is True:
+                if time.time() - req.created_at <= AUTH_CODE_TTL:
+                    return req
+        return None
+
     def list_pending_auths(self) -> list[PendingAuth]:
         now = time.time()
         result = []
@@ -225,6 +244,8 @@ class TokenStore:
             "iat": now,
             "exp": now + ACCESS_TOKEN_TTL,
             "jti": str(uuid.uuid4()),
+            "iss": os.getenv("AETHER_OAUTH_ISSUER", "https://aethers.my.id/oauth"),
+            "aud": os.getenv("AETHER_OAUTH_AUDIENCE", "https://aethers.my.id/mcp"),
         }
         token = _hmac_sign(payload, self._secret)
         return token, ACCESS_TOKEN_TTL
@@ -236,13 +257,20 @@ class TokenStore:
             return None
         if payload.get("exp", 0) < time.time():
             return None
+        # P1 #9: verify iss/aud claims
+        expected_iss = os.getenv("AETHER_OAUTH_ISSUER", "https://aethers.my.id/oauth")
+        expected_aud = os.getenv("AETHER_OAUTH_AUDIENCE", "https://aethers.my.id/mcp")
+        if payload.get("iss") != expected_iss:
+            return None
+        if payload.get("aud") != expected_aud:
+            return None
         return payload
 
     # ------------------------------------------------------------------ #
     # Refresh tokens                                                        #
     # ------------------------------------------------------------------ #
 
-    def issue_refresh_token(self, principal_id: str, scopes: list[str]) -> str:
+    def issue_refresh_token(self, principal_id: str, scopes: list[str], client_id: str = "") -> str:
         """Issue a refresh token. Plaintext returned only here; stored as SHA-256."""
         # aether.mutate is never auto-renewed via refresh
         safe_scopes = [s for s in scopes if s != "aether.mutate"]
@@ -254,28 +282,34 @@ class TokenStore:
         with self._conn() as conn:
             conn.execute(
                 """
-                INSERT INTO refresh_tokens (jti, principal_id, scopes, token_hash, issued_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO refresh_tokens (jti, principal_id, client_id, scopes, token_hash, issued_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (jti, principal_id, json.dumps(safe_scopes), token_hash, now, now + REFRESH_TOKEN_TTL),
+                (jti, principal_id, client_id, json.dumps(safe_scopes), token_hash, now, now + REFRESH_TOKEN_TTL),
             )
         return plaintext
 
-    def consume_refresh_token(self, plaintext: str) -> Optional[tuple[str, list[str]]]:
-        """Validate and rotate a refresh token. Returns (principal_id, scopes) or None."""
+    def consume_refresh_token(self, plaintext: str, client_id: str = "") -> Optional[tuple[str, list[str]]]:
+        """Validate and rotate a refresh token. Returns (principal_id, scopes) or None.
+
+        P1 #7: refresh tokens are bound to client_id — a token issued for one
+        OAuth client cannot be used by another.
+        """
         token_hash = hashlib.sha256(plaintext.encode()).hexdigest()
         with self._conn() as conn:
             row = conn.execute(
                 """
-                SELECT jti, principal_id, scopes, expires_at, revoked
+                SELECT jti, principal_id, client_id, scopes, expires_at, revoked
                 FROM refresh_tokens WHERE token_hash = ?
                 """,
                 (token_hash,),
             ).fetchone()
             if row is None:
                 return None
-            jti, principal_id, scopes_json, expires_at, revoked = row
+            jti, principal_id, rt_client_id, scopes_json, expires_at, revoked = row
             if revoked or time.time() > expires_at:
+                return None
+            if client_id and rt_client_id and client_id != rt_client_id:
                 return None
             # Revoke the consumed token (rotation)
             conn.execute("UPDATE refresh_tokens SET revoked = 1 WHERE jti = ?", (jti,))
