@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
-from aether.contracts import ActionApproval, ActionProposal, ActionRisk, ActionScope, ActionTarget
+from aether.contracts import ActionProposal, ActionRisk, ActionScope, ActionTarget
 from aether.contracts.coding_runtime import WorkspaceBinding
 
 _SECRET_NAME = re.compile(r"(^|[._-])(\.env|env|secret|credential|credentials|token|password|passwd|apikey|api-key|private-key|id_rsa|id_ed25519)($|[._-])", re.I)
@@ -43,7 +43,7 @@ def safe_json(value: Any) -> Any:
 class LivingMachineMCPService:
     schema = "aether.mcp.living-machine.v1"
 
-    def __init__(self, *, project_root: Path, aether_home: Path, workspace_roots: Iterable[Path], workspace_bindings: Any, runtime_registry: Any, runtime_telemetry: Any, action_path: Any) -> None:
+    def __init__(self, *, project_root: Path, aether_home: Path, workspace_roots: Iterable[Path], workspace_bindings: Any, runtime_registry: Any, runtime_telemetry: Any, action_path: Any, coding_runtime_key: str | None = None) -> None:
         self.project_root = project_root.resolve()
         self.aether_home = aether_home.resolve()
         self.roots = tuple(dict.fromkeys([p.expanduser().resolve() for p in workspace_roots] + [self.project_root, self.aether_home]))
@@ -51,6 +51,7 @@ class LivingMachineMCPService:
         self.registry = runtime_registry
         self.telemetry = runtime_telemetry
         self.action_path = action_path
+        self.coding_runtime_key = coding_runtime_key
         self.max_file_bytes = int(os.getenv("AETHER_MCP_MAX_FILE_BYTES", "262144"))
         self.max_results = int(os.getenv("AETHER_MCP_MAX_RESULTS", "100"))
         self.max_log_bytes = int(os.getenv("AETHER_MCP_MAX_LOG_BYTES", "262144"))
@@ -91,7 +92,7 @@ class LivingMachineMCPService:
         return path
 
     def capability_manifest(self) -> dict[str, Any]:
-        return {"schema": self.schema, "authority": "Aether governance", "capability_classes": ["READ", "DIAGNOSTIC", "VERIFY", "MUTATE"], "default_remote_scopes": ["read", "diagnostic"], "mutation_authority": "dedicated operator token + GovernedActionPath", "shell": False, "secrets": False, "tools": ["workspace_list", "workspace_tree", "file_read", "file_search", "file_glob", "file_hash", "runtime_status", "runtime_health", "runtime_adapters", "runtime_telemetry", "service_status", "logs_tail", "run_verification", "get_verification_receipt", "get_runtime_task", "workspace_edit", "workspace_apply_patch", "workspace_rollback", "git_status", "git_diff", "git_log"], "resources": ["aether://runtime/status", "aether://runtime/adapters", "aether://runtime/telemetry", "aether://workspace/{workspace_id}/manifest"]}
+        return {"schema": self.schema, "authority": "Aether governance", "capability_classes": ["READ", "DIAGNOSTIC", "VERIFY", "MUTATE"], "default_remote_scopes": ["read", "diagnostic"], "mutation_authority": "operator token submission + GovernedActionPath + Trusted Approval Inbox (human decision required)", "shell": False, "secrets": False, "tools": ["workspace_list", "workspace_tree", "file_read", "file_search", "file_glob", "file_hash", "runtime_status", "runtime_health", "runtime_adapters", "runtime_telemetry", "service_status", "logs_tail", "run_verification", "get_verification_receipt", "get_runtime_task", "workspace_edit", "workspace_apply_patch", "workspace_rollback", "git_status", "git_diff", "git_log"], "resources": ["aether://runtime/status", "aether://runtime/adapters", "aether://runtime/telemetry", "aether://workspace/{workspace_id}/manifest"]}
 
     @staticmethod
     def binding_dict(binding: WorkspaceBinding) -> dict[str, Any]:
@@ -210,11 +211,35 @@ class LivingMachineMCPService:
         return {"found": False, "task_id": task_id}
 
     async def workspace_edit(self, *, workspace_id: str, session_id: str, edits: list[Mapping[str, Any]], verification_commands: list[Mapping[str, Any]], reason: str, operator: str, operator_token: str | None) -> dict[str, Any]:
+        # The operator token is request-level authentication: it authorizes the
+        # right to SUBMIT a mutation, never to approve one. No ActionApproval is
+        # synthesized here - if one were constructed from the operator token the
+        # ActionGovernor would classify it as "human-approved" even though no
+        # human decided anything (requester and approver would be the same entity).
+        #
+        # Instead the proposal is submitted WITHOUT an approval. Because
+        # `write`/`execute` scopes are in action_policy.yaml approval_required and
+        # the policy default is deny, the GovernedActionPath (which carries a
+        # PendingActionStore) enqueues a durable pending-approval record. Only a
+        # trusted human decision through the Trusted Approval Inbox / Telegram
+        # may execute the edit. This is the same governed path used by every other
+        # Aether mutation.
         self._operator(operator_token); binding = self.bindings.resolve(workspace_id, session_id)
-        proposal = ActionProposal(target=ActionTarget.RUNTIME, operation="coding.task.execute", arguments={"task": {"task_id": __import__("uuid").uuid4().hex, "workspace_id": workspace_id, "session_id": session_id, "edits": edits, "verification_commands": verification_commands}, "workspace_binding": safe_json(binding)}, required_scopes=(ActionScope.WRITE, ActionScope.EXECUTE), reason=reason, risk=ActionRisk.MEDIUM, reversible=True, metadata={"mcp": True, "workspace_id": workspace_id})
-        from aether.contracts.actions import canonical_action_hash
-        approval = ActionApproval(principal=operator, scopes=(ActionScope.WRITE, ActionScope.EXECUTE), reason="explicit MCP operator authorization", action_hash=canonical_action_hash(proposal), channel="mcp")
-        return safe_json(await self.action_path.execute(proposal, approval))
+        metadata: dict[str, Any] = {"mcp": True, "workspace_id": workspace_id, "channel": "mcp", "operator": operator, "session_id": session_id}
+        if self.coding_runtime_key:
+            metadata["runtime_id"] = self.coding_runtime_key
+        proposal = ActionProposal(target=ActionTarget.RUNTIME, operation="coding.task.execute", arguments={"task": {"task_id": __import__("uuid").uuid4().hex, "workspace_id": workspace_id, "session_id": session_id, "edits": edits, "verification_commands": verification_commands}, "workspace_binding": safe_json(binding)}, required_scopes=(ActionScope.WRITE, ActionScope.EXECUTE), reason=reason, risk=ActionRisk.MEDIUM, reversible=True, metadata=metadata)
+        result = await self.action_path.execute(proposal, None)
+        if isinstance(result, Mapping):
+            return result
+        return {
+            "action_id": result.action_id,
+            "ok": bool(result.ok),
+            "status": str(result.status),
+            "error": result.error,
+            "failure_fingerprint": result.failure_fingerprint,
+            "metadata": safe_json(result.metadata),
+        }
 
     async def workspace_apply_patch(self, **kwargs: Any) -> dict[str, Any]: return await self.workspace_edit(**kwargs)
 

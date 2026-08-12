@@ -84,15 +84,18 @@ service = LivingMachineMCPService(
     runtime_registry=gateway.runtime_registry,
     runtime_telemetry=gateway.runtime_telemetry,
     action_path=gateway.action_path,
+    coding_runtime_key=gateway.coding_dispatch_adapter.routing_key,
 )
 
 mcp = FastMCP(
     "Aether Living Machine MCP",
     instructions=(
         "Controlled access to the live Aether machine. READ/DIAGNOSTIC are bounded; "
-        "verification is allowlisted; mutation is routed through GovernedActionPath "
-        "and the existing LocalStructuredCodingRuntimeAdapter. Never assume shell, "
-        "secret access, or governance authority."
+        "verification is allowlisted; mutation is submitted by an operator credential "
+        "but execution REQUIRES a trusted human decision through the Trusted Approval "
+        "Inbox (pending-approval is returned, never self-approving). Mutation routes "
+        "through GovernedActionPath and the existing LocalStructuredCodingRuntimeAdapter. "
+        "Never assume shell, secret access, or governance authority."
     ),
     host="127.0.0.1",
     port=int(os.getenv("AETHER_MCP_PORT", "8787")),

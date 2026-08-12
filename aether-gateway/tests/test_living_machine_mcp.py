@@ -34,8 +34,19 @@ class FakeRegistry:
 
 
 class FakeActionPath:
-    async def execute(self, proposal, approval):
-        return {"ok": True, "proposal": proposal.action_id}
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    async def execute(self, proposal, approval=None):
+        self.calls.append((proposal, approval))
+        return {
+            "action_id": proposal.action_id,
+            "ok": False,
+            "status": "pending-approval",
+            "error": "Trusted operator approval is required.",
+            "metadata": {"approval_id": "approval-abc", "action_hash": "h", "expires_at": "t"},
+            "failure_fingerprint": None,
+        }
 
 
 class Binding:
@@ -62,6 +73,7 @@ def service(tmp_path: Path) -> LivingMachineMCPService:
         runtime_registry=FakeRegistry(),
         runtime_telemetry=FakeTelemetry(),
         action_path=FakeActionPath(),
+        coding_runtime_key="runtime://coding/dispatch",
     )
 
 
@@ -106,3 +118,29 @@ def test_git_is_read_only_surface(tmp_path):
     assert "git_status" in result["tools"]
     assert result["shell"] is False
     assert result["secrets"] is False
+
+
+def test_operator_token_does_not_self_approve_mutation(tmp_path, monkeypatch):
+    # P0 fix: the MCP operator token authenticates SUBMISSION only. The proposal
+    # must reach the GovernedActionPath WITHOUT a synthesized ActionApproval, so
+    # the pending-approval / Trusted Approval Inbox path governs execution.
+    svc = service(tmp_path)
+    monkeypatch.setenv("AETHER_MCP_OPERATOR_TOKEN", "operator-secret")
+    import asyncio
+    result = asyncio.run(svc.workspace_edit(
+        workspace_id="ws-1",
+        session_id="session-1",
+        edits=[{"path": "safe.txt", "content": "changed", "expected_sha256": None}],
+        verification_commands=[],
+        reason="test",
+        operator="mcp-operator",
+        operator_token="operator-secret",
+    ))
+    assert len(svc.action_path.calls) == 1
+    proposal, approval = svc.action_path.calls[0]
+    assert approval is None, "mutation must not carry a synthesized approval"
+    assert proposal.operation == "coding.task.execute"
+    assert proposal.metadata.get("channel") == "mcp"
+    assert proposal.metadata.get("runtime_id") == "runtime://coding/dispatch"
+    assert result["status"] == "pending-approval"
+    assert "approval_id" in result["metadata"]

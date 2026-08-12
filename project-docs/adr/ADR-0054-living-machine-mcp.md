@@ -1,4 +1,4 @@
-# ADR-0052 — Aether Living Machine MCP Capability Plane
+# ADR-0054 — Aether Living Machine MCP Capability Plane
 
 - Status: Implemented as a separate capability server
 - Date: 2026-08-11
@@ -28,8 +28,8 @@ The MCP layer never becomes a filesystem superuser and never bypasses Aether gov
 ## Security
 
 - `AETHER_MCP_TOKEN` authenticates normal read/diagnostic access.
-- `AETHER_MCP_OPERATOR_TOKEN` authenticates the explicit mutation/operator channel.
-- Mutation still creates an `ActionProposal` and `ActionApproval` and is evaluated by `GovernedActionPath`/`ActionGovernor`.
+- `AETHER_MCP_OPERATOR_TOKEN` authenticates the explicit mutation submission channel.
+- Mutation creates an `ActionProposal` (never a fabricated `ActionApproval`). Because `write`/`execute` are in `action_policy.yaml` `approval_required` and the policy default is deny, the proposal is enqueued as a durable **pending-approval** record. Only a trusted human decision through the Trusted Approval Inbox / Telegram executes it via `GovernedActionPath`/`ActionGovernor`. The operator token authorizes submission only; it is never an approval source and cannot self-approve a mutation.
 - File reads/search/glob/hash are constrained to repository, AETHER_HOME, and configured coding workspace roots.
 - Secret-looking paths are denied by default.
 - Symlink/junction escape is rejected after path resolution.
