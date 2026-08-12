@@ -39,17 +39,19 @@ def log_auth_requested(request_id: str, principal_id: str, scopes: list[str]) ->
     })
 
 
-def log_auth_approved(request_id: str, principal_id: str) -> None:
+def log_auth_approved(request_id: str, principal_id: str, approving_principal: Optional[str] = None) -> None:
     _write("auth_approved", {
         "request_id": request_id,
         "principal_id": principal_id,
+        "approving_principal": approving_principal,
     })
 
 
-def log_auth_rejected(request_id: str, principal_id: str) -> None:
+def log_auth_rejected(request_id: str, principal_id: str, approving_principal: Optional[str] = None) -> None:
     _write("auth_rejected", {
         "request_id": request_id,
         "principal_id": principal_id,
+        "approving_principal": approving_principal,
     })
 
 

@@ -15,6 +15,8 @@ from fastapi.testclient import TestClient
 import os
 os.environ["AETHER_OAUTH_EDGE_SECRET"] = "test-secret-key-minimum-32-bytes-ok!"
 os.environ["AETHER_MCP_TOKEN"] = "test-mcp-token-for-unit-tests"
+os.environ["AETHER_OPERATOR_TOKEN"] = "test-operator-token"
+os.environ["AETHER_OPERATOR_ID"] = "founder"
 # tests/ is at aether-gateway/tests/ — repo root is 3 levels up
 os.environ["AETHER_PRINCIPAL_REGISTRY"] = str(
     Path(__file__).parent.parent.parent / "configs" / "principal_registry.yaml"
@@ -26,13 +28,17 @@ _reg_module._registry = None  # reset singleton before first import resolves it
 from aether_gateway.oauth_edge.server import app
 from aether_gateway.oauth_edge.token_store import TokenStore, _hmac_sign, _hmac_verify
 from aether_gateway.oauth_edge.registry import PrincipalRegistry, get_registry
+from aether_gateway.oauth_edge import approval_inbox
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def client():
+def client(tmp_path):
+    # Isolate the governed Trusted Approval Inbox per test.
+    approval_inbox.reset()
+    os.environ["AETHER_OAUTH_GOVERNANCE_DB"] = str(tmp_path / "governance.sqlite3")
     with TestClient(app, raise_server_exceptions=True) as c:
         yield c
 
@@ -275,9 +281,11 @@ class TestApproveReject:
         end = text.find("<", start)
         return text[start:end].strip()
 
+    _FOUNDER = {"X-Aether-Operator-Token": "test-operator-token"}
+
     def test_approve_redirects_with_code(self, client):
         request_id = self._create_pending(client)
-        resp = client.post(f"/oauth/approve/{request_id}", follow_redirects=False)
+        resp = client.post(f"/oauth/approve/{request_id}", follow_redirects=False, headers=self._FOUNDER)
         assert resp.status_code == 302
         location = resp.headers["location"]
         assert "code=" in location
@@ -285,14 +293,97 @@ class TestApproveReject:
 
     def test_reject_redirects_with_error(self, client):
         request_id = self._create_pending(client)
-        resp = client.post(f"/oauth/reject/{request_id}", follow_redirects=False)
+        resp = client.post(f"/oauth/reject/{request_id}", follow_redirects=False, headers=self._FOUNDER)
         assert resp.status_code == 302
         location = resp.headers["location"]
         assert "error=access_denied" in location
 
     def test_invalid_request_id_returns_400(self, client):
-        resp = client.post("/oauth/approve/nonexistent-id")
+        resp = client.post("/oauth/approve/nonexistent-id", headers=self._FOUNDER)
         assert resp.status_code == 400
+
+
+class TestApprovalSecurity:
+    """P0 #1 regression: no unauthenticated Founder authorization."""
+
+    _FOUNDER = {"X-Aether-Operator-Token": "test-operator-token"}
+    _AUTHORIZE = {
+        "response_type": "code",
+        "client_id": "aether-principal-chatgpt",
+        "redirect_uri": "https://chatgpt.com/callback",
+        "scope": "aether.read",
+        "state": "state123",
+        "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+        "code_challenge_method": "S256",
+    }
+
+    def _create_pending(self, client):
+        resp = client.get("/oauth/authorize", params=self._AUTHORIZE)
+        assert resp.status_code == 200
+        text = resp.text
+        start = text.find("Request ID: ") + len("Request ID: ")
+        end = text.find("<", start)
+        return text[start:end].strip()
+
+    def test_approve_without_token_returns_401(self, client):
+        """An anonymous caller holding only request_id cannot mint a code."""
+        request_id = self._create_pending(client)
+        resp = client.post(f"/oauth/approve/{request_id}", follow_redirects=False)
+        assert resp.status_code == 401
+
+        # The governed proposal must still be pending — nothing was decided.
+        assert approval_inbox.get_approval_status(request_id) == "pending"
+
+    def test_approve_with_wrong_token_returns_401(self, client):
+        """A forged/incorrect Founder credential is rejected."""
+        request_id = self._create_pending(client)
+        resp = client.post(
+            f"/oauth/approve/{request_id}",
+            follow_redirects=False,
+            headers={"X-Aether-Operator-Token": "wrong-token"},
+        )
+        assert resp.status_code == 401
+        assert approval_inbox.get_approval_status(request_id) == "pending"
+
+    def test_reject_without_token_returns_401(self, client):
+        request_id = self._create_pending(client)
+        resp = client.post(f"/oauth/reject/{request_id}", follow_redirects=False)
+        assert resp.status_code == 401
+        assert approval_inbox.get_approval_status(request_id) == "pending"
+
+    def test_approve_with_operator_token_issues_code(self, client):
+        """Authenticated Founder approval still yields the GitHub-OAuth redirect."""
+        request_id = self._create_pending(client)
+        resp = client.post(f"/oauth/approve/{request_id}", follow_redirects=False, headers=self._FOUNDER)
+        assert resp.status_code == 302
+        location = resp.headers["location"]
+        assert "code=" in location
+        assert "state=state123" in location
+        assert approval_inbox.get_approval_status(request_id) == "approved"
+
+    def test_authorize_creates_governed_pending_action(self, client):
+        """Every authorize surfaces as a governed ActionProposal in the inbox."""
+        request_id = self._create_pending(client)
+        approval_id = approval_inbox.find_approval_id_by_request(request_id)
+        assert approval_id is not None
+        assert approval_inbox.get_approval_status(request_id) == "pending"
+
+    def test_authenticated_decision_recorded_on_reject(self, client):
+        request_id = self._create_pending(client)
+        resp = client.post(f"/oauth/reject/{request_id}", follow_redirects=False, headers=self._FOUNDER)
+        assert resp.status_code == 302
+        assert "error=access_denied" in resp.headers["location"]
+        assert approval_inbox.get_approval_status(request_id) == "rejected"
+
+    def test_failed_approval_does_not_consume_request(self, client):
+        """401 must not burn the pending request — a later Founder decision works."""
+        request_id = self._create_pending(client)
+        denied = client.post(f"/oauth/approve/{request_id}", follow_redirects=False)
+        assert denied.status_code == 401
+
+        approved = client.post(f"/oauth/approve/{request_id}", follow_redirects=False, headers=self._FOUNDER)
+        assert approved.status_code == 302
+        assert "code=" in approved.headers["location"]
 
 
 class TestTokenEndpoint:
@@ -312,7 +403,12 @@ class TestTokenEndpoint:
         end = text.find("<", start)
         request_id = text[start:end].strip()
 
-        approve_resp = client.post(f"/oauth/approve/{request_id}", follow_redirects=False)
+        approve_resp = client.post(
+            f"/oauth/approve/{request_id}",
+            follow_redirects=False,
+            headers={"X-Aether-Operator-Token": "test-operator-token"},
+        )
+        assert approve_resp.status_code == 302
         location = approve_resp.headers["location"]
         code = location.split("code=")[1].split("&")[0]
         return code

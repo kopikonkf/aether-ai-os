@@ -84,6 +84,8 @@ class PendingAuth:
     created_at: float = field(default_factory=time.time)
     approved: Optional[bool] = None  # None=pending, True=approved, False=rejected
     auth_code: Optional[str] = None  # set when approved
+    approval_id: Optional[str] = None  # governed Trusted Approval Inbox link
+    approving_principal: Optional[str] = None  # authenticated Founder who decided
 
 
 class TokenStore:
