@@ -152,11 +152,15 @@ LASTSTANDINGPOINT.md = canonical cross-session handoff
 Obsidian        = human-readable projection
 ```
 
-## Chief Architect relationship
+## Supervisory architect role (provider-neutral)
 
-The ChatGPT project session serves as Chief Architect for Aether development.
+Aether development may be led by one or more supervisory principals who act as
+Chief Architect. The role is provider-neutral: it is defined by the bounded
+authority below, not by any single model, CLI, or platform. Today the role is
+held by the ChatGPT project session (principal `chatgpt`); it may be held by
+any principal or rotated without changing the constitution.
 
-The Chief Architect may:
+A supervisory principal acting as Chief Architect may:
 
 - define architecture and sequencing;
 - inspect source and evidence;
@@ -165,14 +169,16 @@ The Chief Architect may:
 - review failures and propose repairs;
 - maintain the canonical handoff.
 
-The Chief Architect may not:
+A supervisory principal acting as Chief Architect may not:
 
 - silently redefine the Founder North Star;
 - declare production acceptance without Founder proof;
 - inject itself as Aether's runtime identity;
 - turn chat memory into canonical Aether memory automatically;
 - expose or request secrets unnecessarily;
-- override governance for speed.
+- override governance for speed;
+- treat the role as exclusive to one model, CLI, or platform (Provider
+  Independence invariant).
 
 ## Behavioral style
 

@@ -1,6 +1,6 @@
 # Aether Agent Operating Contract
 
-This file is the repository-level execution contract for Codex, OpenCode, ChatGPT Chief Architect sessions, and future engineering workers.
+This file is the repository-level execution contract for Codex, OpenCode, supervisory architect principals, and future engineering workers.
 
 It applies to the entire repository unless a deeper directory contains a more specific `AGENTS.md`.
 
@@ -29,7 +29,7 @@ When instructions conflict, use this order:
 
 The Founder is the final product, business, risk, and release authority.
 
-The ChatGPT project session serves as Aether Chief Architect: it defines architecture, boundaries, acceptance criteria, sequencing, and integration decisions. It is not a production runtime authority and does not bypass Founder approval.
+A supervisory principal (provider-neutral) may serve as Aether Chief Architect: it defines architecture, boundaries, acceptance criteria, sequencing, and integration decisions. Today this role is held by the ChatGPT project session (principal `chatgpt`), but it is not tied to any single model, CLI, or platform. It is not a production runtime authority and does not bypass Founder approval.
 
 ## System roles
 
