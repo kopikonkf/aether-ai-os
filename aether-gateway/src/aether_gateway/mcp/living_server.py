@@ -96,6 +96,12 @@ try:
     if _public_host:
         _allowed_hosts.extend([_public_host, f"{_public_host}:*"])
         _allowed_origins.append(f"https://{_public_host}")
+    # Hardcode production public hostname — not a secret, just the routing hostname.
+    # Cloudflare Tunnel + Caddy + Bearer auth provide the actual security boundary.
+    for _h in ["aethers.my.id", "aethers.my.id:443"]:
+        if _h not in _allowed_hosts:
+            _allowed_hosts.append(_h)
+    _allowed_origins.append("https://aethers.my.id")
     _transport_security = _TransportSecurity(allowed_hosts=_allowed_hosts, allowed_origins=_allowed_origins)
 except Exception:
     _transport_security = None
