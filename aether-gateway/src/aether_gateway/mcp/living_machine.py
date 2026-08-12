@@ -96,7 +96,7 @@ class LivingMachineMCPService:
 
     @staticmethod
     def binding_dict(binding: WorkspaceBinding) -> dict[str, Any]:
-        return {"workspace_id": binding.workspace_id, "binding_id": binding.binding_id, "root_path": binding.root_path, "allowed_relative_paths": list(binding.allowed_relative_paths), "writable": binding.writable, "metadata": safe_json(binding.metadata)}
+        return {"workspace_id": binding.workspace_id, "binding_id": binding.binding_id, "session_id": binding.session_id, "root_path": binding.root_path, "allowed_relative_paths": list(binding.allowed_relative_paths), "writable": binding.writable, "metadata": safe_json(binding.metadata)}
 
     def workspace_list(self, limit: int = 100) -> dict[str, Any]:
         rows = self.bindings.list_bindings(limit=max(1, min(int(limit), 1000)))
@@ -228,7 +228,7 @@ class LivingMachineMCPService:
         metadata: dict[str, Any] = {"mcp": True, "workspace_id": workspace_id, "channel": "mcp", "operator": operator, "session_id": session_id}
         if self.coding_runtime_key:
             metadata["runtime_id"] = self.coding_runtime_key
-        proposal = ActionProposal(target=ActionTarget.RUNTIME, operation="coding.task.execute", arguments={"task": {"task_id": __import__("uuid").uuid4().hex, "workspace_id": workspace_id, "session_id": session_id, "edits": edits, "verification_commands": verification_commands}, "workspace_binding": safe_json(binding)}, required_scopes=(ActionScope.WRITE, ActionScope.EXECUTE), reason=reason, risk=ActionRisk.MEDIUM, reversible=True, metadata=metadata)
+        proposal = ActionProposal(target=ActionTarget.RUNTIME, operation="coding.task.execute", arguments={"task": {"task_id": __import__("uuid").uuid4().hex, "workspace_id": workspace_id, "session_id": session_id, "edits": edits, "verification_commands": verification_commands}, "workspace_binding": self.binding_dict(binding)}, required_scopes=(ActionScope.WRITE, ActionScope.EXECUTE), reason=reason, risk=ActionRisk.MEDIUM, reversible=True, metadata=metadata)
         result = await self.action_path.execute(proposal, None)
         if isinstance(result, Mapping):
             return result
