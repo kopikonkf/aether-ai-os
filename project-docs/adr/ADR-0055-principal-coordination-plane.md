@@ -75,7 +75,10 @@ is introduced.
    `AGENTS.md` — either generalize the role to be provider-neutral, or
    explicitly scope it as one supervisory principal among several with
    clearly bounded authority, consistent with the Provider Independence
-   invariant.
+   invariant. **CLOSED** — `SOUL.md` and `AGENTS.md` now describe a
+   provider-neutral supervisory architect role, currently held by the
+   ChatGPT project session (principal `chatgpt`) and rotatable to any
+   principal without constitutional change (PR #63).
 4. Living Machine MCP mutation path reaches Founder-proven status (per the
    `IMPLEMENTED -> WIRED -> CONFORMED -> ACTIVE -> FOUNDER-PROVEN`
    progression) for a single principal before a second principal is
