@@ -36,11 +36,11 @@ livekit = [
     "livekit-plugins-turn-detector>=1.0,<2.0",
 ]
 
-
 [project.scripts]
 aether-gateway = "aether_gateway.api.server:start_server"
 aether-sense-worker = "aether_gateway.browser_senses.worker:main"
 aether-mcp = "aether_gateway.mcp.server:main"
+aether-living-mcp = "aether_gateway.mcp.living_server_entry_v3:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
