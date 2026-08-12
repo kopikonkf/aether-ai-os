@@ -4,15 +4,22 @@ ADR-0056: OAuth 2.0 Authorization Server facade in front of Living Machine MCP.
 
 Endpoints:
   GET  /.well-known/oauth-authorization-server   RFC 8414 discovery
-  POST /oauth/register                            RFC 7591 dynamic client registration
-  GET  /oauth/authorize                           Authorization endpoint (Founder approval gate)
-  POST /oauth/approve/<request_id>               Founder approves authorization request
-  POST /oauth/reject/<request_id>                Founder rejects authorization request
+  POST /oauth/register                            RFC 7591 client registration (pre-approved only)
+  GET  /oauth/authorize                           Authorization endpoint (HTML Founder consent, GitHub-OAuth style)
+  POST /oauth/approve/<request_id>               Founder approves (requires AETHER_OPERATOR_TOKEN)
+  POST /oauth/reject/<request_id>                Founder rejects (requires AETHER_OPERATOR_TOKEN)
   POST /oauth/token                               Token endpoint (code exchange + refresh)
   POST /oauth/revoke                              Token revocation
   GET  /oauth/pending                             List pending authorization requests (internal)
   ANY  /mcp                                       MCP proxy with token validation
   GET  /health                                    Health check
+
+Approval security (P0 #1): the HTML consent page is the ONLY approval surface
+(no Telegram). Approving/rejecting an authorization requires the trusted Founder
+operator credential (AETHER_OPERATOR_TOKEN) — the same identity the Gateway uses
+for every HTML approval decision. Each authorize additionally submits a governed
+ActionProposal (operation oauth.authorize) into the shared Trusted Approval
+Inbox, so the request is visible and decidable in the Gateway HTML /approvals page.
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ from .audit import (
     log_token_refreshed,
     log_token_revoked,
 )
+from . import approval_inbox
 from .registry import get_registry
 from .token_store import TokenStore
 
@@ -163,6 +171,24 @@ async def authorize(
     )
     log_auth_requested(pending.request_id, principal.id, effective_scopes)
 
+    # P0 #1: mirror the authorization into Aether's governed Trusted Approval
+    # Inbox so the request is a real governed action in the HTML /approvals page
+    # and the code-issuance decision is authenticated as the Founder.
+    try:
+        approval_id, _ = approval_inbox.submit_oauth_proposal(
+            request_id=pending.request_id,
+            principal_id=principal.id,
+            client_id=client_id,
+            scopes=effective_scopes,
+            redirect_uri=redirect_uri,
+            state=state,
+        )
+        pending.approval_id = approval_id
+    except Exception:
+        # Governance submission is advisory for the consent-page lifecycle; a
+        # transient inbox failure must not block rendering the consent screen.
+        pass
+
     return HTMLResponse(_approval_page(pending.request_id, principal, effective_scopes))
 
 
@@ -283,18 +309,44 @@ h1{{color:#f85149;margin-bottom:8px}}p{{color:#8b949e;font-size:14px}}</style></
 # ---------------------------------------------------------------------------
 
 @app.post("/oauth/approve/{request_id}")
-async def approve_auth(request_id: str) -> Response:
-    """Founder approves — generate auth code and redirect to client."""
+async def approve_auth(
+    request_id: str,
+    x_aether_operator_token: Optional[str] = Header(default=None),
+) -> Response:
+    """Founder approves — generate auth code and redirect to client.
+
+    P0 #1: this POST no longer constitutes Founder authorization by itself.
+    It requires the trusted Founder/operator credential (``AETHER_OPERATOR_TOKEN``),
+    the same identity used by every Gateway HTML approval decision. A caller that
+    only knows the request_id (but not the Founder credential) gets 401 and no
+    code is issued.
+    """
+    try:
+        operator = approval_inbox.authenticate_operator(x_aether_operator_token)
+    except Exception:
+        status = 503 if not approval_inbox.operator_configured() else 401
+        return JSONResponse({"error": "invalid_operator_token"}, status_code=status)
+
     store = get_store()
     pending = store.get_pending_auth(request_id)
     if pending is None:
         return HTMLResponse(_error_page("invalid_request", "Authorization request not found or expired."), status_code=400)
 
+    # Record the governed decision (durable, audited) against the linked proposal.
+    if pending.approval_id:
+        approval_inbox.mark_decision(
+            pending.approval_id,
+            approved=True,
+            principal=operator.principal,
+            reason="OAuth authorization approved by Founder via HTML consent",
+        )
+
     code = store.approve_auth(request_id)
     if code is None:
         return HTMLResponse(_error_page("invalid_request", "Could not approve request."), status_code=400)
 
-    log_auth_approved(request_id, pending.principal_id)
+    pending.approving_principal = operator.principal
+    log_auth_approved(request_id, pending.principal_id, operator.principal)
 
     # Redirect to client with code
     sep = "&" if "?" in pending.redirect_uri else "?"
@@ -303,19 +355,37 @@ async def approve_auth(request_id: str) -> Response:
 
 
 @app.post("/oauth/reject/{request_id}")
-async def reject_auth(request_id: str) -> Response:
-    """Founder rejects — redirect with error."""
+async def reject_auth(
+    request_id: str,
+    x_aether_operator_token: Optional[str] = Header(default=None),
+) -> Response:
+    """Founder rejects — redirect with error.
+
+    P0 #1: requires the trusted Founder/operator credential (``AETHER_OPERATOR_TOKEN``).
+    """
+    try:
+        operator = approval_inbox.authenticate_operator(x_aether_operator_token)
+    except Exception:
+        status = 503 if not approval_inbox.operator_configured() else 401
+        return JSONResponse({"error": "invalid_operator_token"}, status_code=status)
+
     store = get_store()
     pending = store.get_pending_auth(request_id)
     if pending is None:
         return HTMLResponse(_error_page("invalid_request", "Authorization request not found or expired."), status_code=400)
 
-    store.reject_auth(request_id)
+    # Record the governed decision (durable, audited) against the linked proposal.
+    if pending.approval_id:
+        approval_inbox.mark_decision(
+            pending.approval_id,
+            approved=False,
+            principal=operator.principal,
+            reason="OAuth authorization rejected by Founder via HTML consent",
+        )
 
-    registry = get_registry()
-    principal = registry.get_by_id(pending.principal_id)
-    if principal:
-        log_auth_rejected(request_id, pending.principal_id)
+    store.reject_auth(request_id)
+    pending.approving_principal = operator.principal
+    log_auth_rejected(request_id, pending.principal_id, operator.principal)
 
     sep = "&" if "?" in pending.redirect_uri else "?"
     redirect_url = f"{pending.redirect_uri}{sep}error=access_denied&state={pending.state}"
