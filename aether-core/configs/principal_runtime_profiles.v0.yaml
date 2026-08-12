@@ -1,0 +1,197 @@
+version: 1
+schema: aether.principal-runtime-profiles.v0
+
+defaults:
+  mutation_authority: false
+  direct_principal_messaging: false
+  requires_aether_work_item: true
+  requires_canonical_handoff: true
+  requires_verification_for_code_changes: true
+
+principals:
+  chatgpt:
+    role: systems_integration_principal
+    capabilities:
+      - architecture_synthesis
+      - systems_integration
+      - verification_strategy
+      - cross_subsystem_review
+    execution_profiles:
+      - remote:mcp:chatgpt
+      - herdr:codex
+    mutation_authority: false
+
+  claude:
+    role: architecture_principal
+    capabilities:
+      - architecture_review
+      - adr_design
+      - invariant_analysis
+      - diagnostic
+    execution_profiles:
+      - remote:mcp:claude
+      - herdr:claude
+    mutation_authority: false
+
+  gemini:
+    role: research_evidence_principal
+    capabilities:
+      - research
+      - evidence_gathering
+      - standards_analysis
+      - contradiction_analysis
+    execution_profiles:
+      - remote:mcp:gemini
+      - herdr:gemini
+    mutation_authority: false
+
+  qwen:
+    role: implementation_principal
+    capabilities:
+      - coding
+      - refactoring
+      - testing
+      - verification
+    execution_profiles:
+      - herdr:qwen
+      - herdr:kilo
+      - herdr:opencode-worker
+    mutation_authority: false
+
+  kimi:
+    role: adversarial_principal
+    capabilities:
+      - red_team
+      - failure_analysis
+      - security_review
+      - recovery_testing
+    execution_profiles:
+      - herdr:kimi
+    mutation_authority: false
+
+  deepseek:
+    role: alternative_reasoning_principal
+    capabilities:
+      - architecture_alternative
+      - optimization
+      - complexity_review
+      - tradeoff_analysis
+    execution_profiles:
+      - remote:mcp:deepseek
+      - herdr:deepseek
+    mutation_authority: false
+
+  opencode:
+    role: integration_runtime_coordinator
+    capabilities:
+      - local_runtime_integration
+      - worker_state_observation
+      - runtime_diagnostics
+      - bounded_integration
+    execution_profiles:
+      - herdr:opencode
+    mutation_authority: false
+    note: >-
+      OpenCode is a runtime/integration coordinator, not a sovereign Aether
+      principal. Workers launched beneath it retain their explicit Aether
+      principal attribution.
+
+execution_profiles:
+  herdr:claude:
+    herdr_agent_kind: claude
+    work_mode: task
+    direct_handoff: false
+
+  herdr:codex:
+    herdr_agent_kind: codex
+    work_mode: task
+    direct_handoff: false
+
+  herdr:kimi:
+    herdr_agent_kind: kimi
+    work_mode: task
+    direct_handoff: false
+
+  herdr:gemini:
+    herdr_agent_kind: gemini
+    work_mode: task
+    direct_handoff: false
+    availability: detected_not_fully_tested
+
+  herdr:opencode:
+    herdr_agent_kind: opencode
+    work_mode: integration
+    direct_handoff: false
+
+  herdr:qwen:
+    herdr_agent_kind: qwen
+    work_mode: task
+    direct_handoff: false
+    availability: custom_or_compatible_runtime
+
+  herdr:kilo:
+    herdr_agent_kind: kilo
+    work_mode: task
+    direct_handoff: false
+
+  herdr:deepseek:
+    herdr_agent_kind: deepseek
+    work_mode: task
+    direct_handoff: false
+    availability: custom_or_compatible_runtime
+
+  herdr:opencode-worker:
+    herdr_agent_kind: opencode
+    work_mode: worker
+    direct_handoff: false
+
+  remote:mcp:chatgpt:
+    transport: mcp
+    work_mode: remote_principal
+
+  remote:mcp:claude:
+    transport: mcp
+    work_mode: remote_principal
+
+  remote:mcp:gemini:
+    transport: mcp
+    work_mode: remote_principal
+
+  remote:mcp:deepseek:
+    transport: mcp
+    work_mode: remote_principal
+
+routing:
+  architecture: [claude, chatgpt]
+  research: [gemini, chatgpt]
+  implementation: [qwen, chatgpt]
+  adversarial: [kimi]
+  optimization: [deepseek, claude]
+  integration: [chatgpt, opencode]
+  runtime_verification: [chatgpt, opencode]
+
+handoff:
+  protocol: aether-canonical-artifact
+  direct_principal_message_bus: false
+  required_fields:
+    - from_principal
+    - to_principal
+    - mission_id
+    - work_id
+    - summary
+    - artifacts
+    - evidence
+    - verification
+    - open_questions
+    - blockers
+    - correlation_id
+
+herdr:
+  local_only: true
+  execution_receipt_required: true
+  dispatch_idempotency_key:
+    - work_id
+    - attempt_number
+    - principal_id
+  restart_reconcile_before_redispatch: true
+  principal_authority_source: aether
