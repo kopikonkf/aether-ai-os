@@ -516,7 +516,7 @@ class TestScopeEnforcement:
         token = _issue_token(["aether.diagnostic"])
         resp = client.post(
             "/mcp",
-            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "decide_and_resume", "arguments": {}}},
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "workspace_edit", "arguments": {}}},
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 403
@@ -987,12 +987,38 @@ class TestUnknownToolDenied:
         mock_client.request.assert_not_called()
 
     def test_all_living_machine_tools_classified(self):
-        """Every tool advertised by the Living MCP manifest has a scope map entry."""
+        """Every tool advertised by the Living MCP manifest has a scope map entry.
+
+        The authoritative list is derived by PARSING the manifest source
+        (aether_gateway/mcp/living_server.py — every ``@mcp.tool()`` function
+        name), never from a hard-coded count. This keeps the source manifest
+        the single source of truth (P0 #7, ChatGPT note on sync).
+        """
+        import ast
         from aether_gateway.oauth_edge.server import LIVING_MACHINE_TOOLS, TOOL_SCOPE_MAP
 
-        missing = sorted(LIVING_MACHINE_TOOLS - set(TOOL_SCOPE_MAP.keys()))
+        manifest_path = (
+            Path(__file__).parent.parent / "src" / "aether_gateway" / "mcp" / "living_server.py"
+        ).resolve()
+        tree = ast.parse(manifest_path.read_text(encoding="utf-8"))
+
+        def _tool_names(body):
+            for node in body:
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for dec in node.decorator_list:
+                    if isinstance(dec, ast.Attribute) and dec.attr == "tool":
+                        yield node.name
+                    elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr == "tool":
+                        yield node.name
+
+        actual_tools = frozenset(_tool_names(tree.body))
+        assert actual_tools == LIVING_MACHINE_TOOLS, (
+            f"LIVING_MACHINE_TOOLS ({len(LIVING_MACHINE_TOOLS)}) drifted from manifest ({len(actual_tools)}): "
+            f"missing={sorted(actual_tools - LIVING_MACHINE_TOOLS)}, extra={sorted(LIVING_MACHINE_TOOLS - actual_tools)}"
+        )
+        missing = sorted(actual_tools - set(TOOL_SCOPE_MAP.keys()))
         assert not missing, f"advertised tools missing scope classification: {missing}"
-        assert len(LIVING_MACHINE_TOOLS) == 22
 
 
 class TestGovernanceFailClosed:

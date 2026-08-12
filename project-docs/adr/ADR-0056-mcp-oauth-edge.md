@@ -151,7 +151,7 @@ supported.
 |---|---|
 | `aether.read` | file_read, git_status, logs_tail, runtime_status, runtime_adapters, service_status, health checks |
 | `aether.diagnostic` | run_verification, runtime diagnostics, telemetry reads |
-| `aether.mutate` | workspace_edit (operator token path), decide_and_resume |
+| `aether.mutate` | workspace_edit, workspace_apply_patch, workspace_rollback (all operator-token paths) |
 
 `aether.mutate` requires `mutation_authority: true` in the principal registry
 AND Founder approval at the authorization step. It is not issuable via
@@ -193,7 +193,8 @@ automated refresh.
 IMPLEMENTED  → service boots, discovery + registration endpoints live
 WIRED        → Caddy routes /oauth/* and /mcp through edge
 CONFORMED    → token issuance, refresh, revocation verified by curl
-ACTIVE       → ChatGPT connector configured, Scan Tools returns 22 tools
+ACTIVE       → ChatGPT connector configured, Scan Tools returns the Living
+               MCP manifest tool set (see LIVING_MACHINE_TOOLS)
 FOUNDER-PROVEN → ChatGPT calls runtime_status via edge; principal_id=chatgpt
                in audit log; ActionProposal carries principal attribution
 ```
@@ -237,9 +238,12 @@ is authorized, per ADR-0055 prerequisite §4.
 - **PKCE S256 is mandatory at the token endpoint** (P0 #5): a token exchange
   without a `code_verifier` is `invalid_grant` — it never silently passes.
 - **Scope classification is deny-by-default** (P0 #7): every tool advertised by
-  the Living MCP manifest (`LIVING_MACHINE_TOOLS`, 22 tools) must have an
-  entry in `TOOL_SCOPE_MAP`; a `tools/call` for an unknown/unclassified tool
-  is rejected with `403 unclassified_tool` before any proxying occurs.
+  the Living MCP manifest (`LIVING_MACHINE_TOOLS`, synced from the manifest
+  source at ``aether_gateway/mcp/living_server.py``) must have an entry in
+  `TOOL_SCOPE_MAP`; a `tools/call` for an unknown/unclassified tool is rejected
+  with `403 unclassified_tool` before any proxying occurs. The coverage test
+  derives the authoritative tool list by parsing the manifest source — no
+  hard-coded tool count is an invariant.
 - Audit JSONL is append-only and written to `AETHER_HOME` with the same
   ACL protection as other runtime artifacts (SYSTEM + Administrators only).
 - Public endpoint remains `https://aethers.my.id/mcp` (through Caddy).
