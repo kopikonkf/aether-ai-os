@@ -25,6 +25,7 @@ principals:
     client_id: aether-principal-chatgpt
     redirect_uris:
       - https://chatgpt.com/connector/oauth/callback
+      - https://chatgpt.com/connector/oauth/3HwC9iYiJyfe
       - https://auth.openai.com/connector/oauth/callback
       - https://chatgpt.com/callback
     allowed_scopes:
