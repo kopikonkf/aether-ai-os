@@ -101,13 +101,14 @@ TOOL_SCOPE_MAP: dict[str, list[str]] = {
     "workspace_edit": ["aether.mutate"],
     "workspace_apply_patch": ["aether.mutate"],
     "workspace_rollback": ["aether.mutate"],
-    "decide_and_resume": ["aether.mutate"],
 }
 
-# The exact set of tools advertised by the Living Machine MCP manifest (22 tools
-# as of ADR-0056). Scope enforcement is DENY-BY-DEFAULT: every advertised tool
-# MUST have a classification, and a tools/call for anything NOT in the map is
-# rejected before proxying (P0 #7 — no unclassified tool reaches the upstream).
+# The exact set of tools advertised by the Living Machine MCP manifest (see
+# aether_gateway/mcp/living_server.py — every ``@mcp.tool()`` function). Scope
+# enforcement is DENY-BY-DEFAULT (P0 #7): a tools/call for anything NOT in
+# TOOL_SCOPE_MAP is rejected before proxying. Keep this set in sync with the
+# manifest; the coverage test derives the authoritative list by parsing the
+# manifest source so no hard-coded count can drift.
 LIVING_MACHINE_TOOLS: frozenset[str] = frozenset({
     "aether_living_capabilities",
     "workspace_list",
