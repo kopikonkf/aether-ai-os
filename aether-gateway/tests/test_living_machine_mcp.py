@@ -120,6 +120,37 @@ def test_git_is_read_only_surface(tmp_path):
     assert result["secrets"] is False
 
 
+def test_capability_manifest_without_lifecycle_tracker(tmp_path):
+    svc = service(tmp_path)
+    result = svc.capability_manifest()
+    assert "lifecycle" not in result
+
+
+def test_capability_manifest_exposes_lifecycle_when_wired(tmp_path):
+    from aether.capabilities.lifecycle import CapabilityLifecycle
+
+    svc = LivingMachineMCPService(
+        project_root=tmp_path,
+        aether_home=tmp_path / "home",
+        workspace_roots=(tmp_path / "workspace",),
+        workspace_bindings=FakeBindings(Binding()),
+        runtime_registry=FakeRegistry(),
+        runtime_telemetry=FakeTelemetry(),
+        action_path=FakeActionPath(),
+        coding_runtime_key="runtime://coding/dispatch",
+        capability_lifecycle=CapabilityLifecycle(tmp_path / "lifecycle.jsonl"),
+    )
+    result = svc.capability_manifest()
+    lifecycle = result["lifecycle"]
+    assert lifecycle["schema"] == "aether.capability-lifecycle.v1"
+    assert lifecycle["surface"] == "living-mcp.mutation"
+    assert lifecycle["founder_proven_principal"] is None
+    assert lifecycle["principals"] == []
+    # manifest must be read-only: no mutation surface advances by observation
+    from pathlib import Path as _Path
+    assert not _Path(tmp_path / "lifecycle.jsonl").exists()
+
+
 def test_operator_token_does_not_self_approve_mutation(tmp_path, monkeypatch):
     # P0 fix: the MCP operator token authenticates SUBMISSION only. The proposal
     # must reach the GovernedActionPath WITHOUT a synthesized ActionApproval, so

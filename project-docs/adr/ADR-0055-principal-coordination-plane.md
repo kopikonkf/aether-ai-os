@@ -1,6 +1,6 @@
 # ADR-0055 — Aether Principal Coordination Plane
 
-- Status: Proposed (blocked on prerequisites below)
+- Status: Proposed (prerequisites P1-P4 closed; see below)
 - Date: 2026-08-11
 - Decision owner: Founder / Aether architecture
 - Related: ADR-0008 (Governed Action Path), ADR-0010 (Trusted Approval Inbox),
@@ -82,7 +82,20 @@ is introduced.
 4. Living Machine MCP mutation path reaches Founder-proven status (per the
    `IMPLEMENTED -> WIRED -> CONFORMED -> ACTIVE -> FOUNDER-PROVEN`
    progression) for a single principal before a second principal is
-   authorized against the same mutation surface.
+   authorized against the same mutation surface. **CLOSED** — a deterministic
+   capability lifecycle (`aether.capabilities.lifecycle`,
+   `aether.capability-lifecycle.v1`) now records the mutation surface
+   (`living-mcp.mutation`) lifecycle per principal with observation-derived
+   evidence at each stage, enforces the single-principal gate (one
+   founder-proven principal per surface; a second principal cannot become
+   ACTIVE until the first is proven), and is exposed read-only through the
+   Living Machine MCP capability manifest. The first principal (`chatgpt`)
+   is recorded through the full chain on the production runtime, with the
+   end-to-end mutation evidence (governed `workspace_edit` through the
+   Trusted Approval Inbox and the existing local-structured coding runtime)
+   and OAuth audit attribution (`principal_id=chatgpt`, `auth_source=oauth`)
+   already on the host. The mutation surface is still single-operator in
+   practice: no second principal is authorized against it.
 
 ## Non-goals
 

@@ -23,6 +23,30 @@ IMPLEMENTED -> WIRED -> CONFORMED -> ACTIVE -> FOUNDER-PROVEN
 - Camera keyframe vision.
 - Browser speech output.
 - Authenticated browser-sense session.
+- Living Machine MCP mutation surface (`living-mcp.mutation`) — single
+  principal `chatgpt` recorded through the full chain
+  (`IMPLEMENTED -> WIRED -> CONFORMED -> ACTIVE -> FOUNDER-PROVEN`) on the
+  production runtime (ADR-0055 prerequisite P4). Evidence: governed
+  `workspace_edit` via Trusted Approval Inbox + local-structured coding
+  runtime, OAuth audit attribution `principal_id=chatgpt`. The surface is
+  single-operator: no second principal is authorized against it.
+
+## Lifecycle mechanism
+
+- `aether.capabilities.lifecycle` (`aether.capability-lifecycle.v1`) is the
+  deterministic tracker for mutation-surface lifecycle per principal. It
+  records transitions (append-only JSONL) with observation-derived evidence,
+  enforces consecutive stage transitions (fail-closed), and enforces the
+  ADR-0055 P4 single-principal gate: at most one founder-proven principal per
+  surface, and a second principal cannot become ACTIVE until the first is
+  founder-proven. It grants no authority — ActionGovernor and the Trusted
+  Approval Inbox remain the sole authority evaluators. Exposed read-only via
+  the Living Machine MCP capability manifest (`lifecycle` key).
+  Implemented: contract + code exist (aether-core). Wired: runtime
+  constructs it and the manifest path is reachable (aether-gateway).
+  Conformed: deterministic tests cover transitions, fail-closed evidence,
+  and the single-principal gate. Active: recorded per-principal on the host.
+  Founder-proven: first principal `chatgpt` recorded end-to-end.
 
 ## Wired and test-proven, but not all Founder-proven
 

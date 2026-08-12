@@ -43,7 +43,7 @@ def safe_json(value: Any) -> Any:
 class LivingMachineMCPService:
     schema = "aether.mcp.living-machine.v1"
 
-    def __init__(self, *, project_root: Path, aether_home: Path, workspace_roots: Iterable[Path], workspace_bindings: Any, runtime_registry: Any, runtime_telemetry: Any, action_path: Any, coding_runtime_key: str | None = None) -> None:
+    def __init__(self, *, project_root: Path, aether_home: Path, workspace_roots: Iterable[Path], workspace_bindings: Any, runtime_registry: Any, runtime_telemetry: Any, action_path: Any, coding_runtime_key: str | None = None, capability_lifecycle: Any = None) -> None:
         self.project_root = project_root.resolve()
         self.aether_home = aether_home.resolve()
         self.roots = tuple(dict.fromkeys([p.expanduser().resolve() for p in workspace_roots] + [self.project_root, self.aether_home]))
@@ -52,6 +52,7 @@ class LivingMachineMCPService:
         self.telemetry = runtime_telemetry
         self.action_path = action_path
         self.coding_runtime_key = coding_runtime_key
+        self.capability_lifecycle = capability_lifecycle
         self.max_file_bytes = int(os.getenv("AETHER_MCP_MAX_FILE_BYTES", "262144"))
         self.max_results = int(os.getenv("AETHER_MCP_MAX_RESULTS", "100"))
         self.max_log_bytes = int(os.getenv("AETHER_MCP_MAX_LOG_BYTES", "262144"))
@@ -92,7 +93,13 @@ class LivingMachineMCPService:
         return path
 
     def capability_manifest(self) -> dict[str, Any]:
-        return {"schema": self.schema, "authority": "Aether governance", "capability_classes": ["READ", "DIAGNOSTIC", "VERIFY", "MUTATE"], "default_remote_scopes": ["read", "diagnostic"], "mutation_authority": "operator token submission + GovernedActionPath + Trusted Approval Inbox (human decision required)", "shell": False, "secrets": False, "tools": ["workspace_list", "workspace_tree", "file_read", "file_search", "file_glob", "file_hash", "runtime_status", "runtime_health", "runtime_adapters", "runtime_telemetry", "service_status", "logs_tail", "run_verification", "get_verification_receipt", "get_runtime_task", "workspace_edit", "workspace_apply_patch", "workspace_rollback", "git_status", "git_diff", "git_log"], "resources": ["aether://runtime/status", "aether://runtime/adapters", "aether://runtime/telemetry", "aether://workspace/{workspace_id}/manifest"]}
+        manifest = {"schema": self.schema, "authority": "Aether governance", "capability_classes": ["READ", "DIAGNOSTIC", "VERIFY", "MUTATE"], "default_remote_scopes": ["read", "diagnostic"], "mutation_authority": "operator token submission + GovernedActionPath + Trusted Approval Inbox (human decision required)", "shell": False, "secrets": False, "tools": ["workspace_list", "workspace_tree", "file_read", "file_search", "file_glob", "file_hash", "runtime_status", "runtime_health", "runtime_adapters", "runtime_telemetry", "service_status", "logs_tail", "run_verification", "get_verification_receipt", "get_runtime_task", "workspace_edit", "workspace_apply_patch", "workspace_rollback", "git_status", "git_diff", "git_log"], "resources": ["aether://runtime/status", "aether://runtime/adapters", "aether://runtime/telemetry", "aether://workspace/{workspace_id}/manifest"]}
+        if self.capability_lifecycle is not None:
+            try:
+                manifest["lifecycle"] = self.capability_lifecycle.surface_state("living-mcp.mutation")
+            except Exception:
+                manifest["lifecycle"] = {"schema": "aether.capability-lifecycle.v1", "surface": "living-mcp.mutation", "principals": [], "founder_proven_principal": None, "error": "unavailable"}
+        return manifest
 
     @staticmethod
     def binding_dict(binding: WorkspaceBinding) -> dict[str, Any]:
