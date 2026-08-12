@@ -28,6 +28,17 @@ submission is AUTHORITATIVE: if the governed proposal cannot be created, the
 authorization does not proceed (503, no consent page, no code). Issuing an
 authorization code requires the governed proposal to be durably APPROVED —
 governance failure is never treated as approval (fail-closed, P0-remaining).
+
+Additional boundary invariants (P0 #5/#6/#7):
+  * PKCE S256 is mandatory at the token endpoint: a missing ``code_verifier``
+    is invalid_grant, never a silent pass (P0 #5).
+  * ``redirect_uri`` must be on the principal's EXACT allowlist
+    (``redirect_uris`` in principal_registry.yaml) BEFORE a pending
+    authorization is created (P0 #6).
+  * MCP scope enforcement is deny-by-default: every tool advertised by the
+    Living MCP manifest (``LIVING_MACHINE_TOOLS``) must have a classification
+    in ``TOOL_SCOPE_MAP``; a tools/call for an unknown tool is denied 403 and
+    never proxied (P0 #7).
 """
 from __future__ import annotations
 
@@ -61,30 +72,66 @@ from .registry import get_registry
 from .token_store import TokenStore
 
 # ---------------------------------------------------------------------------
-# Scope enforcement — Tool-to-Scope mapping (ADR-0056 P0 #2)
+# Scope enforcement — Tool-to-Scope mapping (ADR-0056 P0 #2 + P0 #7)
 # ---------------------------------------------------------------------------
 
 TOOL_SCOPE_MAP: dict[str, list[str]] = {
     # READ tools (aether.read)
-    "file_read": ["aether.read"],
-    "file_hash": ["aether.read"],
-    "workspace_tree": ["aether.read"],
+    "aether_living_capabilities": ["aether.read"],
     "workspace_list": ["aether.read"],
+    "workspace_tree": ["aether.read"],
+    "file_read": ["aether.read"],
+    "file_search": ["aether.read"],
+    "file_glob": ["aether.read"],
+    "file_hash": ["aether.read"],
+    "runtime_status": ["aether.read"],
+    "runtime_health": ["aether.read"],
+    "runtime_adapters": ["aether.read"],
+    "service_status": ["aether.read"],
+    "logs_tail": ["aether.read"],
+    "get_verification_receipt": ["aether.read"],
+    "get_runtime_task": ["aether.read"],
     "git_status": ["aether.read"],
     "git_log": ["aether.read"],
     "git_diff": ["aether.read"],
-    "logs_tail": ["aether.read"],
-    "runtime_status": ["aether.read"],
-    "runtime_adapters": ["aether.read"],
-    "service_status": ["aether.read"],
-    "aether_living_capabilities": ["aether.read"],
     # DIAGNOSTIC tools (aether.diagnostic)
     "run_verification": ["aether.diagnostic"],
     "runtime_telemetry": ["aether.diagnostic"],
     # MUTATE tools (aether.mutate — operator token required)
     "workspace_edit": ["aether.mutate"],
+    "workspace_apply_patch": ["aether.mutate"],
+    "workspace_rollback": ["aether.mutate"],
     "decide_and_resume": ["aether.mutate"],
 }
+
+# The exact set of tools advertised by the Living Machine MCP manifest (22 tools
+# as of ADR-0056). Scope enforcement is DENY-BY-DEFAULT: every advertised tool
+# MUST have a classification, and a tools/call for anything NOT in the map is
+# rejected before proxying (P0 #7 — no unclassified tool reaches the upstream).
+LIVING_MACHINE_TOOLS: frozenset[str] = frozenset({
+    "aether_living_capabilities",
+    "workspace_list",
+    "workspace_tree",
+    "file_read",
+    "file_search",
+    "file_glob",
+    "file_hash",
+    "runtime_status",
+    "runtime_health",
+    "runtime_adapters",
+    "runtime_telemetry",
+    "service_status",
+    "logs_tail",
+    "run_verification",
+    "get_verification_receipt",
+    "get_runtime_task",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "workspace_edit",
+    "workspace_apply_patch",
+    "workspace_rollback",
+})
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -200,6 +247,19 @@ async def authorize(
 
     if not redirect_uri:
         return HTMLResponse(_error_page("invalid_request", "redirect_uri is required."), status_code=400)
+
+    # P0 #6: redirect_uri must be on the principal's EXACT allowlist BEFORE any
+    # pending authorization or Founder approval is created. A known client_id
+    # with an arbitrary redirect_uri is rejected here.
+    if not principal.allows_redirect_uri(redirect_uri):
+        return HTMLResponse(
+            _error_page(
+                "unauthorized_client",
+                f"redirect_uri is not registered for client '{client_id}'. "
+                "Only Founder-registered redirect URIs are accepted.",
+            ),
+            status_code=400,
+        )
 
     if not code_challenge:
         return HTMLResponse(_error_page("invalid_request", "PKCE code_challenge is required."), status_code=400)
@@ -719,13 +779,21 @@ async def _handle_code_exchange(
     if pending.redirect_uri != redirect_uri:
         return JSONResponse({"error": "invalid_grant", "error_description": "redirect_uri mismatch"}, status_code=400)
 
+    # P0 #5: PKCE S256 is REQUIRED at the token endpoint. A missing code_verifier
+    # is invalid_grant — it must never fall through to issue tokens. Only S256
+    # challenges are minted (enforced at authorize), so any pending here is S256.
+    if not code_verifier:
+        return JSONResponse(
+            {"error": "invalid_grant", "error_description": "PKCE code_verifier is required"},
+            status_code=400,
+        )
+
     # Validate PKCE S256 (before consuming code — P0 #4)
-    if pending.code_challenge_method == "S256" and code_verifier:
-        import base64
-        digest = hashlib.sha256(code_verifier.encode()).digest()
-        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-        if challenge != pending.code_challenge:
-            return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
+    import base64
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    if challenge != pending.code_challenge:
+        return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"}, status_code=400)
 
     # All validations passed — now atomically consume the code (single-use).
     consumed = store.consume_auth_code(code)
@@ -861,7 +929,10 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
     principal_id: str = payload.get("principal_id", "unknown")
     scopes: list[str] = payload.get("scopes", [])
 
-    # Scope enforcement (P0 #2) — check tool against TOOL_SCOPE_MAP BEFORE proxy
+    # Scope enforcement (P0 #2 + P0 #7) — check tool against TOOL_SCOPE_MAP
+    # BEFORE proxy. P0 #7: an unknown/unmapped tool is DENIED, never forwarded —
+    # the security boundary is deny-by-default and every advertised Living MCP
+    # tool must have a classification (see LIVING_MACHINE_TOOLS).
     body = await request.body()
     if body and request.method == "POST":
         try:
@@ -870,7 +941,21 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
             # MCP tools/call method: params.name = tool name
             if method == "tools/call":
                 tool_name = body_json.get("params", {}).get("name", "")
-                required_scopes = TOOL_SCOPE_MAP.get(tool_name, [])
+                if not tool_name:
+                    return JSONResponse(
+                        {"error": "invalid_request", "error_description": "tools/call requires params.name"},
+                        status_code=400,
+                    )
+                if tool_name not in TOOL_SCOPE_MAP:
+                    log_scope_denied(principal_id, tool_name)
+                    return JSONResponse(
+                        {
+                            "error": "unclassified_tool",
+                            "error_description": f"Tool '{tool_name}' is not classified in the Aether scope map and is denied.",
+                        },
+                        status_code=403,
+                    )
+                required_scopes = TOOL_SCOPE_MAP[tool_name]
                 if required_scopes and not all(s in scopes for s in required_scopes):
                     log_scope_denied(principal_id, tool_name)
                     return JSONResponse(

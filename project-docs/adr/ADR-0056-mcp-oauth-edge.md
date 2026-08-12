@@ -120,25 +120,30 @@ principals:
   - id: chatgpt
     display_name: ChatGPT (OpenAI)
     client_id: aether-principal-chatgpt
+    redirect_uris:
+      - https://chatgpt.com/connector/oauth/callback
+      - https://auth.openai.com/connector/oauth/callback
+      - https://chatgpt.com/callback
     allowed_scopes: [aether.read, aether.diagnostic]
     mutation_authority: false
 
   - id: codex
     display_name: Codex (OpenAI CLI)
     client_id: aether-principal-codex
+    redirect_uris:
+      - http://127.0.0.1:1455/auth/callback
     allowed_scopes: [aether.read, aether.diagnostic, aether.mutate]
     mutation_authority: true
-
-  - id: claude
-    display_name: Claude (Anthropic)
-    client_id: aether-principal-claude
-    allowed_scopes: [aether.read, aether.diagnostic]
-    mutation_authority: false
 ```
 
 Adding a new principal requires a Founder-reviewed change to this file.
 No principal gains capabilities beyond `allowed_scopes` regardless of what
 they request in the OAuth flow.
+
+`redirect_uris` is an EXACT-match allowlist. `/oauth/authorize` rejects any
+`redirect_uri` not listed for the presented `client_id` BEFORE a pending
+authorization or Founder approval is created (P0 #6). Wildcards are not
+supported.
 
 ### Scope definitions
 
@@ -229,6 +234,12 @@ is authorized, per ADR-0055 prerequisite §4.
   need to be scope-aware in this iteration.
 - `aether.mutate` scope requires explicit Founder re-approval at every
   authorization; it is never auto-renewed via refresh.
+- **PKCE S256 is mandatory at the token endpoint** (P0 #5): a token exchange
+  without a `code_verifier` is `invalid_grant` — it never silently passes.
+- **Scope classification is deny-by-default** (P0 #7): every tool advertised by
+  the Living MCP manifest (`LIVING_MACHINE_TOOLS`, 22 tools) must have an
+  entry in `TOOL_SCOPE_MAP`; a `tools/call` for an unknown/unclassified tool
+  is rejected with `403 unclassified_tool` before any proxying occurs.
 - Audit JSONL is append-only and written to `AETHER_HOME` with the same
   ACL protection as other runtime artifacts (SYSTEM + Administrators only).
 - Public endpoint remains `https://aethers.my.id/mcp` (through Caddy).

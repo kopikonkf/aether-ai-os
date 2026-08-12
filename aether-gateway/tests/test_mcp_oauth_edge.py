@@ -856,6 +856,145 @@ class TestBrowserConsentFlowE2E:
         assert approval_inbox.get_approval_status(request_id) == "rejected"
 
 
+class TestPkceRequiredAtToken:
+    """P0 #5 — PKCE S256 is REQUIRED at the token endpoint.
+
+    A missing code_verifier must be invalid_grant, never a silent pass.
+    """
+
+    def _get_code(self, client):
+        resp = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        request_id = _extract_request_id(resp.text)
+        approve = client.post(
+            f"/oauth/approve/{request_id}",
+            follow_redirects=False,
+            headers={"X-Aether-Operator-Token": "test-operator-token"},
+        )
+        assert approve.status_code == 302
+        return approve.headers["location"].split("code=")[1].split("&")[0]
+
+    def test_missing_code_verifier_rejected(self, client):
+        code = self._get_code(client)
+        resp = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            # no code_verifier at all
+        })
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "invalid_grant"
+        assert "code_verifier" in resp.json()["error_description"]
+
+    def test_correct_verifier_still_exchanges(self, client):
+        code = self._get_code(client)
+        resp = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert resp.status_code == 200
+        assert "access_token" in resp.json()
+
+    def test_replay_without_verifier_failure_does_not_consume(self, client):
+        """A failed (verifier-less) exchange must NOT burn the code."""
+        code = self._get_code(client)
+        no_v = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+        })
+        assert no_v.status_code == 400
+
+        ok = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert ok.status_code == 200
+
+
+class TestRedirectUriAllowlist:
+    """P0 #6 — redirect_uri must be on the principal's exact allowlist."""
+
+    def test_authorize_allows_registered_redirect_uri(self, client):
+        resp = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        assert resp.status_code == 200
+        assert "Sign in to approve" in resp.text
+
+    def test_authorize_rejects_unregistered_redirect_uri_before_pending(self, client):
+        from aether_gateway.oauth_edge.server import get_store
+
+        before = len(get_store().list_pending_auths())
+        evil = dict(_AUTHORIZE_PARAMS, redirect_uri="https://evil.example/callback")
+        resp = client.get("/oauth/authorize", params=evil)
+        assert resp.status_code == 400
+        assert "unauthorized_client" in resp.text
+        # No pending authorization / consent was created for the rejected URI.
+        assert len(get_store().list_pending_auths()) == before
+
+    def test_authorize_rejects_other_principals_uri(self, client):
+        """chatgpt must not be able to present codex's redirect_uri."""
+        wrong = dict(_AUTHORIZE_PARAMS, redirect_uri="http://127.0.0.1:1455/auth/callback")
+        resp = client.get("/oauth/authorize", params=wrong)
+        assert resp.status_code == 400
+        assert "unauthorized_client" in resp.text
+
+    def test_registry_requires_redirect_uris(self):
+        """Every principal MUST declare a redirect_uri allowlist (P0 #6)."""
+        registry = get_registry()
+        for principal in registry.all():
+            assert principal.redirect_uris, f"principal {principal.id} has no redirect_uris"
+
+
+class TestUnknownToolDenied:
+    """P0 #7 — scope map is deny-by-default: unknown tools are never proxied."""
+
+    def _issue_token(self, scopes=("aether.read",)):
+        store = TokenStore(db_path=Path("/tmp/test-unknown-tool.db"), secret=b"test-secret-key-minimum-32-bytes-ok!")
+        token, _ = store.issue_access_token("chatgpt", list(scopes))
+        return token
+
+    def test_unknown_tool_denied_403(self, client):
+        token = self._issue_token()
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "totally_new_tool", "arguments": {}}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "unclassified_tool"
+
+    def test_unknown_tool_never_reaches_upstream(self, client):
+        token = self._issue_token()
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client.request = AsyncMock()
+            mock_client_cls.return_value = mock_client
+            resp = client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "unknown", "arguments": {}}},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        assert resp.status_code == 403
+        mock_client.request.assert_not_called()
+
+    def test_all_living_machine_tools_classified(self):
+        """Every tool advertised by the Living MCP manifest has a scope map entry."""
+        from aether_gateway.oauth_edge.server import LIVING_MACHINE_TOOLS, TOOL_SCOPE_MAP
+
+        missing = sorted(LIVING_MACHINE_TOOLS - set(TOOL_SCOPE_MAP.keys()))
+        assert not missing, f"advertised tools missing scope classification: {missing}"
+        assert len(LIVING_MACHINE_TOOLS) == 22
+
+
 class TestGovernanceFailClosed:
     """P0-remaining #2/#3 — Trusted Approval authoritative; no code without it."""
 
