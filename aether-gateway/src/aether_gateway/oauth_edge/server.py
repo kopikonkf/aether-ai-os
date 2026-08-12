@@ -6,24 +6,33 @@ Endpoints:
   GET  /.well-known/oauth-authorization-server   RFC 8414 discovery
   POST /oauth/register                            RFC 7591 client registration (pre-approved only)
   GET  /oauth/authorize                           Authorization endpoint (HTML Founder consent, GitHub-OAuth style)
-  POST /oauth/approve/<request_id>               Founder approves (requires AETHER_OPERATOR_TOKEN)
-  POST /oauth/reject/<request_id>                Founder rejects (requires AETHER_OPERATOR_TOKEN)
+  GET  /oauth/login                               Founder operator login page (browses session)
+  POST /oauth/login                               Founder operator login (sets signed session cookie)
+  POST /oauth/logout                              Clears the Founder session cookie
+  POST /oauth/approve/<request_id>               Founder approves (operator header OR browser session cookie)
+  POST /oauth/reject/<request_id>                Founder rejects (operator header OR browser session cookie)
   POST /oauth/token                               Token endpoint (code exchange + refresh)
   POST /oauth/revoke                              Token revocation
   GET  /oauth/pending                             List pending authorization requests (internal)
   ANY  /mcp                                       MCP proxy with token validation
   GET  /health                                    Health check
 
-Approval security (P0 #1): the HTML consent page is the ONLY approval surface
-(no Telegram). Approving/rejecting an authorization requires the trusted Founder
-operator credential (AETHER_OPERATOR_TOKEN) — the same identity the Gateway uses
-for every HTML approval decision. Each authorize additionally submits a governed
-ActionProposal (operation oauth.authorize) into the shared Trusted Approval
-Inbox, so the request is visible and decidable in the Gateway HTML /approvals page.
+Approval security (P0 #1 + P0-remaining): the HTML consent page is the ONLY
+approval surface (no Telegram). Approving/rejecting an authorization requires
+the trusted Founder operator identity — either the ``X-Aether-Operator-Token``
+header (API/CLI clients) or a short-lived signed session cookie minted by
+``POST /oauth/login`` (browser Founder; a plain HTML form cannot carry a secret
+header). Each authorize additionally submits a governed ActionProposal
+(operation oauth.authorize) into the shared Trusted Approval Inbox, and that
+submission is AUTHORITATIVE: if the governed proposal cannot be created, the
+authorization does not proceed (503, no consent page, no code). Issuing an
+authorization code requires the governed proposal to be durably APPROVED —
+governance failure is never treated as approval (fail-closed, P0-remaining).
 """
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import os
 import time
@@ -33,6 +42,9 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Form, Header, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+from aether.contracts import ApprovalStatus
+from aether_gateway.approvals.auth import TrustedOperator
 
 from .audit import (
     log_auth_approved,
@@ -44,7 +56,7 @@ from .audit import (
     log_token_refreshed,
     log_token_revoked,
 )
-from . import approval_inbox
+from . import approval_inbox, session
 from .registry import get_registry
 from .token_store import TokenStore
 
@@ -163,6 +175,7 @@ async def register_client(request: Request) -> JSONResponse:
 
 @app.get("/oauth/authorize")
 async def authorize(
+    request: Request,
     response_type: str = "code",
     client_id: str = "",
     redirect_uri: str = "",
@@ -208,11 +221,12 @@ async def authorize(
         code_challenge_method=code_challenge_method,
         state=state,
     )
-    log_auth_requested(pending.request_id, principal.id, effective_scopes)
 
-    # P0 #1: mirror the authorization into Aether's governed Trusted Approval
-    # Inbox so the request is a real governed action in the HTML /approvals page
-    # and the code-issuance decision is authenticated as the Founder.
+    # P0 #1 + P0-remaining (fail-closed): mirror the authorization into Aether's
+    # governed Trusted Approval Inbox. The submission is AUTHORITATIVE — if the
+    # proposal cannot be created, the authorization request is dropped and the
+    # consent page is not shown. Governance unavailable must never degrade into
+    # an approvable request.
     try:
         approval_id, _ = approval_inbox.submit_oauth_proposal(
             request_id=pending.request_id,
@@ -222,19 +236,67 @@ async def authorize(
             redirect_uri=redirect_uri,
             state=state,
         )
-        pending.approval_id = approval_id
-    except Exception:
-        # Governance submission is advisory for the consent-page lifecycle; a
-        # transient inbox failure must not block rendering the consent screen.
-        pass
+    except Exception as exc:
+        store.cancel_pending_auth(pending.request_id)
+        return HTMLResponse(
+            _error_page(
+                "governance_unavailable",
+                "The authorization could not be recorded in the Trusted Approval Inbox; "
+                f"please retry. ({exc.__class__.__name__})",
+            ),
+            status_code=503,
+        )
+    pending.approval_id = approval_id
+    log_auth_requested(pending.request_id, principal.id, effective_scopes)
 
-    return HTMLResponse(_approval_page(pending.request_id, principal, effective_scopes))
+    authenticated = _current_founder(request) is not None
+    # Relative same-origin target so the post-login redirect carries the original
+    # authorize query (client_id, code_challenge, state, ...) and re-renders the
+    # consent page for the SAME authorization request.
+    query = request.url.query
+    next_url = f"{request.url.path}?{query}" if query else request.url.path
+    return HTMLResponse(
+        _approval_page(
+            pending.request_id,
+            principal,
+            effective_scopes,
+            authenticated=authenticated,
+            next_url=next_url,
+        )
+    )
 
 
-def _approval_page(request_id: str, principal: Any, scopes: list[str]) -> str:
+def _approval_page(
+    request_id: str,
+    principal: Any,
+    scopes: list[str],
+    authenticated: bool,
+    next_url: str,
+) -> str:
     scope_rows = "".join(
         f"<li><code>{s}</code> — {_scope_description(s)}</li>" for s in scopes
     )
+    if authenticated:
+        actions = f"""
+  <div class="actions">
+    <form method="POST" action="/oauth/approve/{request_id}" style="flex:1">
+      <button class="btn btn-approve" type="submit">Approve</button>
+    </form>
+    <form method="POST" action="/oauth/reject/{request_id}" style="flex:1">
+      <button class="btn btn-reject" type="submit">Reject</button>
+    </form>
+  </div>"""
+    else:
+        actions = f"""
+  <div class="login">
+    <p>Sign in with your Founder operator token to review this request.</p>
+    <form method="POST" action="/oauth/login" style="display:flex;flex-direction:column;gap:8px">
+      <input type="hidden" name="next" value="{html.escape(next_url, quote=True)}">
+      <input type="password" name="operator_token" placeholder="Founder operator token"
+             autocomplete="current-password" required />
+      <button class="btn btn-approve" type="submit">Sign in to approve</button>
+    </form>
+  </div>"""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -283,6 +345,12 @@ def _approval_page(request_id: str, principal: Any, scopes: list[str]) -> str:
     padding: 10px 14px; font-size: 13px; color: #e3b341; margin: 16px 0;
   }}
   .actions {{ display: flex; gap: 12px; margin-top: 24px; }}
+  .login {{ margin-top: 20px; }}
+  .login p {{ font-size: 13px; color: #8b949e; margin-bottom: 10px; }}
+  .login input {{
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 10px 12px; border-radius: 6px; font-size: 14px; width: 100%;
+  }}
   .btn {{
     flex: 1; padding: 10px; border-radius: 6px; font-size: 14px;
     font-weight: 600; cursor: pointer; border: none;
@@ -312,14 +380,7 @@ def _approval_page(request_id: str, principal: Any, scopes: list[str]) -> str:
   <div class="warning">
     &#9888; Only approve if you initiated this connection from {principal.display_name}.
   </div>
-  <div class="actions">
-    <form method="POST" action="/oauth/approve/{request_id}" style="flex:1">
-      <button class="btn btn-approve" type="submit">Approve</button>
-    </form>
-    <form method="POST" action="/oauth/reject/{request_id}" style="flex:1">
-      <button class="btn btn-reject" type="submit">Reject</button>
-    </form>
-  </div>
+  {actions}
   <div class="request-id">Request ID: {request_id}</div>
 </div>
 </body>
@@ -343,41 +404,198 @@ h1{{color:#f85149;margin-bottom:8px}}p{{color:#8b949e;font-size:14px}}</style></
 <body><div class="card"><h1>{error}</h1><p>{description}</p></div></body></html>"""
 
 
+def _login_page(error: Optional[str] = None) -> str:
+    error_html = f'<p class="login-error">{html.escape(error)}</p>' if error else ""
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Aether — Founder Sign In</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0d1117; color: #c9d1d9; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }}
+  .card {{
+    background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+    padding: 32px; max-width: 380px; width: 100%;
+  }}
+  .logo {{ font-size: 22px; font-weight: 700; color: #58a6ff; margin-bottom: 24px; }}
+  .logo span {{ color: #7ee787; }}
+  label {{ font-size: 13px; font-weight: 600; color: #8b949e; display: block; margin-bottom: 8px; }}
+  input {{
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 10px 12px; border-radius: 6px; font-size: 14px; width: 100%; margin-bottom: 16px;
+  }}
+  button {{
+    width: 100%; padding: 10px; border-radius: 6px; font-size: 14px; font-weight: 600;
+    cursor: pointer; border: none; background: #238636; color: #fff;
+  }}
+  button:hover {{ background: #2ea043; }}
+  .login-error {{ color: #f85149; font-size: 13px; margin-bottom: 12px; }}
+</style></head>
+<body><div class="card">
+  <div class="logo">Aether <span>OS</span></div>
+  {error_html}
+  <form method="POST" action="/oauth/login">
+    <label for="operator_token">Founder operator token</label>
+    <input id="operator_token" type="password" name="operator_token"
+           autocomplete="current-password" required />
+    <button type="submit">Sign in</button>
+  </form>
+</div></body></html>"""
+
+
+def _current_founder(request: Request) -> Optional[TrustedOperator]:
+    """Return the authenticated Founder from the browser session cookie, else None."""
+    token = request.cookies.get(session.SESSION_COOKIE_NAME)
+    if not token:
+        return None
+    principal = session.verify_founder_session(token)
+    if principal is None:
+        return None
+    return TrustedOperator(principal=principal, channel="oauth-session")
+
+
+def _authenticate_founder(
+    request: Request,
+    x_aether_operator_token: Optional[str],
+) -> Optional[TrustedOperator]:
+    """Resolve the Founder operator — secret header (API clients) or session cookie (browser).
+
+    The browser consent page cannot carry the secret header, so the browser
+    path authenticates via the signed session cookie minted by POST /oauth/login.
+    """
+    if x_aether_operator_token:
+        try:
+            return approval_inbox.authenticate_operator(x_aether_operator_token)
+        except Exception:
+            return None
+    return _current_founder(request)
+
+
+def _operator_rejection_status() -> int:
+    """401 wrong/missing credential; 503 when the operator identity is not configured."""
+    return 503 if not approval_inbox.operator_configured() else 401
+
+
+def _safer_redirect_target(target: str) -> str:
+    """Only allow same-origin relative paths for post-login redirects (open-redirect guard)."""
+    if not target.startswith("/") or target.startswith("//"):
+        return "/oauth/authorize"
+    return target
+
+
+@app.get("/oauth/login")
+async def oauth_login_page() -> HTMLResponse:
+    return HTMLResponse(_login_page())
+
+
+@app.post("/oauth/login")
+async def oauth_login(
+    request: Request,
+    operator_token: str = Form(...),
+    next: str = Form(""),
+) -> Response:
+    """Founder operator login — validates the operator token and mints a session cookie.
+
+    This is the ONLY place the operator token is accepted from a browser. The
+    token itself is never stored; only a short-lived, HttpOnly, signed session
+    cookie is set, and it is accepted exclusively by the consent decision
+    endpoints (POST /oauth/approve and POST /oauth/reject).
+    """
+    try:
+        operator = approval_inbox.authenticate_operator(operator_token)
+    except Exception:
+        status = 503 if not approval_inbox.operator_configured() else 401
+        return HTMLResponse(_login_page(error="Invalid Founder operator token."), status_code=status)
+
+    cookie_value = session.sign_founder_session(operator.principal)
+    target = _safer_redirect_target(next) or "/oauth/authorize"
+    response = RedirectResponse(url=target, status_code=302)
+    response.set_cookie(
+        key=session.SESSION_COOKIE_NAME,
+        value=cookie_value,
+        max_age=session.SESSION_TTL,
+        httponly=True,
+        secure=session.SESSION_SECURE,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@app.post("/oauth/logout")
+async def oauth_logout() -> Response:
+    response = RedirectResponse(url="/oauth/login", status_code=302)
+    response.delete_cookie(session.SESSION_COOKIE_NAME, path="/")
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Founder approval / rejection actions
 # ---------------------------------------------------------------------------
 
 @app.post("/oauth/approve/{request_id}")
 async def approve_auth(
+    request: Request,
     request_id: str,
     x_aether_operator_token: Optional[str] = Header(default=None),
 ) -> Response:
     """Founder approves — generate auth code and redirect to client.
 
-    P0 #1: this POST no longer constitutes Founder authorization by itself.
-    It requires the trusted Founder/operator credential (``AETHER_OPERATOR_TOKEN``),
-    the same identity used by every Gateway HTML approval decision. A caller that
-    only knows the request_id (but not the Founder credential) gets 401 and no
-    code is issued.
+    Founder authentication is either the trusted ``X-Aether-Operator-Token``
+    header (API/CLI clients) or the browser session cookie minted by
+    ``POST /oauth/login`` (the consent page — a plain HTML form cannot carry a
+    secret header). See ``_authenticate_founder``.
+
+    Governance is authoritative and fail-closed: a code is issued ONLY after the
+    linked governed proposal is durably APPROVED. If ``mark_decision`` fails or
+    the proposal is not APPROVED, no authorization code is issued (503/409).
     """
-    try:
-        operator = approval_inbox.authenticate_operator(x_aether_operator_token)
-    except Exception:
-        status = 503 if not approval_inbox.operator_configured() else 401
-        return JSONResponse({"error": "invalid_operator_token"}, status_code=status)
+    operator = _authenticate_founder(request, x_aether_operator_token)
+    if operator is None:
+        return JSONResponse({"error": "invalid_operator_token"}, status_code=_operator_rejection_status())
 
     store = get_store()
     pending = store.get_pending_auth(request_id)
     if pending is None:
         return HTMLResponse(_error_page("invalid_request", "Authorization request not found or expired."), status_code=400)
 
-    # Record the governed decision (durable, audited) against the linked proposal.
-    if pending.approval_id:
-        approval_inbox.mark_decision(
+    if not pending.approval_id:
+        return HTMLResponse(
+            _error_page(
+                "governance_unavailable",
+                "This request has no linked governed approval; it cannot be authorized.",
+            ),
+            status_code=503,
+        )
+
+    # Authoritative, fail-closed governed decision. Any failure means NO code.
+    try:
+        decided = approval_inbox.mark_decision(
             pending.approval_id,
             approved=True,
             principal=operator.principal,
             reason="OAuth authorization approved by Founder via HTML consent",
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            _error_page(
+                "governance_failed",
+                f"The governed approval could not be recorded; no code was issued. ({exc.__class__.__name__})",
+            ),
+            status_code=503,
+        )
+
+    # Fail-closed: only a durably APPROVED governed proposal yields a code.
+    if decided.status != ApprovalStatus.APPROVED:
+        return HTMLResponse(
+            _error_page(
+                "not_approved",
+                f"Governed approval ended in '{decided.status.value}' — no code was issued.",
+            ),
+            status_code=409,
         )
 
     code = store.approve_auth(request_id)
@@ -395,31 +613,57 @@ async def approve_auth(
 
 @app.post("/oauth/reject/{request_id}")
 async def reject_auth(
+    request: Request,
     request_id: str,
     x_aether_operator_token: Optional[str] = Header(default=None),
 ) -> Response:
     """Founder rejects — redirect with error.
 
-    P0 #1: requires the trusted Founder/operator credential (``AETHER_OPERATOR_TOKEN``).
+    Founder authentication via operator header or browser session cookie.
+    Governance is authoritative: the linked proposal must be durably REJECTED
+    before the client is redirected with an access_denied error.
     """
-    try:
-        operator = approval_inbox.authenticate_operator(x_aether_operator_token)
-    except Exception:
-        status = 503 if not approval_inbox.operator_configured() else 401
-        return JSONResponse({"error": "invalid_operator_token"}, status_code=status)
+    operator = _authenticate_founder(request, x_aether_operator_token)
+    if operator is None:
+        return JSONResponse({"error": "invalid_operator_token"}, status_code=_operator_rejection_status())
 
     store = get_store()
     pending = store.get_pending_auth(request_id)
     if pending is None:
         return HTMLResponse(_error_page("invalid_request", "Authorization request not found or expired."), status_code=400)
 
-    # Record the governed decision (durable, audited) against the linked proposal.
-    if pending.approval_id:
-        approval_inbox.mark_decision(
+    if not pending.approval_id:
+        return HTMLResponse(
+            _error_page(
+                "governance_unavailable",
+                "This request has no linked governed approval; it cannot be rejected.",
+            ),
+            status_code=503,
+        )
+
+    try:
+        decided = approval_inbox.mark_decision(
             pending.approval_id,
             approved=False,
             principal=operator.principal,
             reason="OAuth authorization rejected by Founder via HTML consent",
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            _error_page(
+                "governance_failed",
+                f"The governed rejection could not be recorded. ({exc.__class__.__name__})",
+            ),
+            status_code=503,
+        )
+
+    if decided.status != ApprovalStatus.REJECTED:
+        return HTMLResponse(
+            _error_page(
+                "not_rejected",
+                f"Governed decision ended in '{decided.status.value}' — no rejection was recorded.",
+            ),
+            status_code=409,
         )
 
     store.reject_auth(request_id)

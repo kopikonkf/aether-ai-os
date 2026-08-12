@@ -205,6 +205,23 @@ is authorized, per ADR-0055 prerequisite §4.
   minimum 32 bytes), stored in the same secrets facility as `AETHER_MCP_TOKEN`.
 - The authorization approval gate ensures no principal can self-authorize.
   Founder is the sole approval authority.
+- **Governance is authoritative and fail-closed (P0-remaining).** Every
+  `/oauth/authorize` submits a governed `oauth.authorize` proposal into the
+  shared Trusted Approval Inbox; if that submission fails, the authorization
+  request is dropped and the consent page is not rendered (503). An
+  authorization code is issued ONLY after the linked governed proposal is
+  durably `APPROVED`. If the `mark_decision` call fails, or the proposal is not
+  `APPROVED`, no code is issued. Governance unavailable never degrades into
+  auto-approval.
+- **Browser founder approval uses a short-lived signed session cookie, not a
+  secret header.** The HTML approval page is a plain `POST` form and cannot
+  carry `X-Aether-Operator-Token`. The Founder instead signs in once via
+  `POST /oauth/login` (operator token), which mints an HttpOnly, `SameSite=Lax`,
+  expiring cookie whose value is an HMAC-SHA256 signed payload carrying an
+  explicit `purpose: founder-session` claim (so it can never be used as an MCP
+  access token). The cookie is accepted only by the consent decision endpoints
+  (`POST /oauth/approve`, `POST /oauth/reject`). API/CLI clients may still use
+  the operator header.
 - Short-lived access tokens (1 hour) limit blast radius of token leak.
 - Refresh tokens are stored hashed (SHA-256) in the edge SQLite db; the
   plaintext is only returned once at issuance.

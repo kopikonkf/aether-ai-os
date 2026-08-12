@@ -201,6 +201,15 @@ class TokenStore:
         req.approved = False
         return True
 
+    def cancel_pending_auth(self, request_id: str) -> None:
+        """Drop a pending authorization request without deciding it.
+
+        Used for fail-closed rollback when the governed Trusted Approval
+        submission fails: an authorization that could not be mirrored into the
+        governance inbox must never linger as an approvable request.
+        """
+        self._pending.pop(request_id, None)
+
     def consume_auth_code(self, code: str) -> Optional[PendingAuth]:
         """Single-use: consume auth code and return the associated request."""
         for req_id, req in list(self._pending.items()):

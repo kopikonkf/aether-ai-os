@@ -17,6 +17,8 @@ os.environ["AETHER_OAUTH_EDGE_SECRET"] = "test-secret-key-minimum-32-bytes-ok!"
 os.environ["AETHER_MCP_TOKEN"] = "test-mcp-token-for-unit-tests"
 os.environ["AETHER_OPERATOR_TOKEN"] = "test-operator-token"
 os.environ["AETHER_OPERATOR_ID"] = "founder"
+# Browser session cookie tests run over http://testserver — clear the Secure flag.
+os.environ["AETHER_OAUTH_SESSION_SECURE"] = "0"
 # tests/ is at aether-gateway/tests/ — repo root is 3 levels up
 os.environ["AETHER_PRINCIPAL_REGISTRY"] = str(
     Path(__file__).parent.parent.parent / "configs" / "principal_registry.yaml"
@@ -28,7 +30,7 @@ _reg_module._registry = None  # reset singleton before first import resolves it
 from aether_gateway.oauth_edge.server import app
 from aether_gateway.oauth_edge.token_store import TokenStore, _hmac_sign, _hmac_verify
 from aether_gateway.oauth_edge.registry import PrincipalRegistry, get_registry
-from aether_gateway.oauth_edge import approval_inbox
+from aether_gateway.oauth_edge import approval_inbox, session as oauth_session
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -716,3 +718,200 @@ class TestJWTClaims:
         assert payload is not None
         assert payload["iss"] == os.getenv("AETHER_OAUTH_ISSUER", "https://aethers.my.id/oauth")
         assert payload["aud"] == os.getenv("AETHER_OAUTH_AUDIENCE", "https://aethers.my.id/mcp")
+
+
+# ---------------------------------------------------------------------------
+# P0-remaining (ChatGPT review, PR #60): browser consent must NOT require a
+# secret header; governance is authoritative and fail-closed.
+# ---------------------------------------------------------------------------
+
+_AUTHORIZE_PARAMS = {
+    "response_type": "code",
+    "client_id": "aether-principal-chatgpt",
+    "redirect_uri": "https://chatgpt.com/callback",
+    "scope": "aether.read aether.diagnostic",
+    "state": "state123",
+    "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+    "code_challenge_method": "S256",
+}
+
+
+def _extract_request_id(page_html: str) -> str:
+    start = page_html.find("Request ID: ") + len("Request ID: ")
+    end = page_html.find("<", start)
+    return page_html[start:end].strip()
+
+
+class TestFounderSessionCookie:
+    """P0-remaining #1 — browser Founder approval via signed session cookie."""
+
+    def test_login_mints_session_cookie(self, client):
+        resp = client.post(
+            "/oauth/login",
+            data={"operator_token": "test-operator-token", "next": "/oauth/authorize"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        set_cookie = resp.headers.get("set-cookie", "")
+        assert oauth_session.SESSION_COOKIE_NAME in set_cookie
+        assert "HttpOnly" in set_cookie
+
+    def test_login_wrong_token_rejected(self, client):
+        resp = client.post(
+            "/oauth/login",
+            data={"operator_token": "wrong-token", "next": "/oauth/authorize"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 401
+        assert "set-cookie" not in resp.headers
+
+    def test_login_rejects_external_redirect_target(self, client):
+        resp = client.post(
+            "/oauth/login",
+            data={"operator_token": "test-operator-token", "next": "https://evil.example/phish"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 302
+        assert resp.headers["location"] == "/oauth/authorize"
+
+    def test_logout_clears_session(self, client):
+        client.post("/oauth/login", data={"operator_token": "test-operator-token"}, follow_redirects=False)
+        resp = client.post("/oauth/logout", follow_redirects=False)
+        assert resp.status_code == 302
+        assert "Max-Age=0" in resp.headers.get("set-cookie", "") or "expires=" in resp.headers.get("set-cookie", "").lower()
+
+    def test_tampered_session_cookie_rejected(self, client):
+        request_id = None
+        page = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS).text
+        request_id = _extract_request_id(page)
+        resp = client.post(
+            f"/oauth/approve/{request_id}",
+            cookies={oauth_session.SESSION_COOKIE_NAME: "forged.token.value"},
+        )
+        assert resp.status_code == 401
+        assert approval_inbox.get_approval_status(request_id) == "pending"
+
+    def test_sign_verify_session_roundtrip(self):
+        token = oauth_session.sign_founder_session("founder")
+        assert oauth_session.verify_founder_session(token) == "founder"
+        assert oauth_session.verify_founder_session("not-a-real-token") is None
+
+
+class TestBrowserConsentFlowE2E:
+    """P0-remaining #4 — actual Founder browser approval end-to-end.
+
+    authorize → login (session cookie) → browser approve (NO secret header)
+    → governed proposal APPROVED → redirect with code → token exchange succeeds.
+    """
+
+    def test_consent_page_requires_sign_in_when_no_session(self, client):
+        resp = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        assert resp.status_code == 200
+        assert "Sign in to approve" in resp.text
+        assert "/oauth/login" in resp.text
+
+    def test_e2e_browser_approval_and_token_exchange(self, client):
+        # 1. Login — mints the Founder session cookie in the browser jar.
+        login = client.post(
+            "/oauth/login",
+            data={"operator_token": "test-operator-token", "next": "/oauth/authorize"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 302
+        assert oauth_session.SESSION_COOKIE_NAME in login.headers.get("set-cookie", "")
+
+        # 2. The browser (session cookie) now opens the consent page → Approve form.
+        page = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        assert page.status_code == 200
+        assert "Approve" in page.text
+        request_id = _extract_request_id(page.text)
+
+        # 3. Founder clicks Approve — plain form POST, NO secret header.
+        approve = client.post(f"/oauth/approve/{request_id}", follow_redirects=False)
+        assert approve.status_code == 302
+        assert "code=" in approve.headers["location"]
+        assert "state=state123" in approve.headers["location"]
+        assert approval_inbox.get_approval_status(request_id) == "approved"
+
+        # 4. Client exchanges the code for tokens.
+        code = approve.headers["location"].split("code=")[1].split("&")[0]
+        token = client.post("/oauth/token", data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://chatgpt.com/callback",
+            "client_id": "aether-principal-chatgpt",
+            "code_verifier": "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+        })
+        assert token.status_code == 200
+        assert "access_token" in token.json()
+        assert "refresh_token" in token.json()
+
+    def test_e2e_browser_reject(self, client):
+        client.post("/oauth/login", data={"operator_token": "test-operator-token"}, follow_redirects=False)
+        page = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        request_id = _extract_request_id(page.text)
+        reject = client.post(f"/oauth/reject/{request_id}", follow_redirects=False)
+        assert reject.status_code == 302
+        assert "error=access_denied" in reject.headers["location"]
+        assert approval_inbox.get_approval_status(request_id) == "rejected"
+
+
+class TestGovernanceFailClosed:
+    """P0-remaining #2/#3 — Trusted Approval authoritative; no code without it."""
+
+    _FOUNDER = {"X-Aether-Operator-Token": "test-operator-token"}
+
+    def test_authorize_governance_submission_failure_fail_closed(self, client):
+        from aether_gateway.oauth_edge.server import get_store
+
+        before = len(get_store().list_pending_auths())
+        with patch(
+            "aether_gateway.oauth_edge.approval_inbox.submit_oauth_proposal",
+            side_effect=RuntimeError("pending-action-store down"),
+        ):
+            resp = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        assert resp.status_code == 503
+        assert "governance_unavailable" in resp.text
+        # No pending request and no consent page survive a failed submission.
+        assert len(get_store().list_pending_auths()) == before
+
+    def test_approve_mark_decision_failure_issues_no_code(self, client):
+        page = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        request_id = _extract_request_id(page.text)
+        with patch(
+            "aether_gateway.oauth_edge.approval_inbox.mark_decision",
+            side_effect=RuntimeError("decision store down"),
+        ):
+            resp = client.post(f"/oauth/approve/{request_id}", follow_redirects=False, headers=self._FOUNDER)
+        assert resp.status_code == 503
+        assert "code=" not in resp.headers.get("location", "")
+        assert approval_inbox.get_approval_status(request_id) == "pending"
+
+    def test_approve_without_linked_approval_issues_no_code(self, client):
+        from aether_gateway.oauth_edge.server import get_store
+
+        # A pending auth with no governed proposal (e.g. governance was never
+        # submitted) must NOT be approvable.
+        req = get_store().create_pending_auth(
+            principal_id="chatgpt",
+            client_id="aether-principal-chatgpt",
+            redirect_uri="https://chatgpt.com/callback",
+            scopes=["aether.read"],
+            code_challenge="abc123",
+            code_challenge_method="S256",
+            state="s",
+        )
+        resp = client.post(f"/oauth/approve/{req.request_id}", follow_redirects=False, headers=self._FOUNDER)
+        assert resp.status_code == 503
+        assert "code=" not in resp.headers.get("location", "")
+
+    def test_approve_rejected_proposal_issues_no_code(self, client):
+        # If the governed proposal was already rejected, approve must NOT mint a
+        # code (mark_decision returns the existing REJECTED record).
+        page = client.get("/oauth/authorize", params=_AUTHORIZE_PARAMS)
+        request_id = _extract_request_id(page.text)
+        rejected = client.post(f"/oauth/reject/{request_id}", follow_redirects=False, headers=self._FOUNDER)
+        assert rejected.status_code == 302
+        resp = client.post(f"/oauth/approve/{request_id}", follow_redirects=False, headers=self._FOUNDER)
+        assert resp.status_code == 409
+        assert "code=" not in resp.headers.get("location", "")

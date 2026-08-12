@@ -9,13 +9,20 @@ To close that hole while preserving the GitHub-OAuth-style HTML consent flow:
   * Each ``/oauth/authorize`` request submits a governed ``ActionProposal``
     (operation ``oauth.authorize``) into the shared ``PendingActionStore`` used by
     Aether's HTML approval inbox, so the request surfaces as a real governed
-    action in the Gateway ``/approvals`` page.
+    action in the Gateway ``/approvals`` page. The submission is authoritative:
+    if it fails, the authorization must not proceed (fail-closed).
   * Issuing the authorization code is gated by an authenticated Founder decision.
     This module reuses the SAME ``OperatorAuthenticator`` (``AETHER_OPERATOR_TOKEN``)
     trusted identity that the Gateway uses for every HTML approval decision, so a
     random caller holding only request_id can no longer approve.
+  * ``mark_decision`` is authoritative and fail-closed: the Edge only issues a
+    code after the governed proposal is durably APPROVED. Governance failure is
+    never treated as approval.
 
-The approval channel is the HTML approval surface only (never Telegram).
+The approval channel is the HTML approval surface only (never Telegram). A
+browser Founder authenticates once via an operator-token login that mints a
+short-lived signed session cookie (``oauth_edge.session``); the consent page's
+Approve/Reject forms then POST with that cookie instead of a secret header.
 """
 from __future__ import annotations
 
@@ -148,25 +155,22 @@ def mark_decision(
     approved: bool,
     principal: str,
     reason: str,
-) -> Optional[PendingAction]:
+) -> PendingAction:
     """Record the Founder decision on an oauth.authorize proposal.
 
-    This makes the OAuth authorization a durable, audited governed decision in
-    the HTML approval inbox. Missing/expired proposals are tolerated rather than
-    failing the redirect back to the client.
+    Otoritative and fail-closed: this is the durable decision that authorizes
+    (or rejects) an OAuth authorization. Any failure (missing/expired proposal,
+    store error, integrity error) RAISES — the caller must then NOT issue an
+    authorization code. Governance unavailable must never degrade into
+    auto-approval.
     """
-    try:
-        return _get_store().decide(
-            approval_id,
-            approved=approved,
-            principal=principal,
-            reason=reason,
-            channel="http",
-        )
-    except Exception:
-        # The governed decision is advisory for the redirect lifecycle; a missing
-        # or already-decided record must not block issuing/rejecting the code.
-        return None
+    return _get_store().decide(
+        approval_id,
+        approved=approved,
+        principal=principal,
+        reason=reason,
+        channel="http",
+    )
 
 
 def get_approval_status(request_id: str) -> Optional[str]:
