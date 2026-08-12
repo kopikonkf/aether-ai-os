@@ -1,0 +1,82 @@
+# Aether Principal Registry
+# ADR-0056 — MCP OAuth Edge
+#
+# Founder-owned policy document. Each principal listed here may request OAuth
+# access to Aether MCP. Principals NOT listed here are rejected at the dynamic
+# registration gate regardless of what they request.
+#
+# Fields:
+#   id              - unique identifier, used as principal_id in tokens + audit
+#   display_name    - human-readable name for the approval gate HTML page
+#   client_id       - OAuth client_id the external connector must present
+#   allowed_scopes  - maximum scopes this principal may hold; requests for
+#                     scopes beyond this list are silently dropped
+#   mutation_authority - if false, aether.mutate scope is never issued even if
+#                     requested; if true, still requires Founder re-approval at
+#                     every authorization (never auto-renewed via refresh)
+
+principals:
+  - id: chatgpt
+    display_name: "ChatGPT (OpenAI)"
+    client_id: aether-principal-chatgpt
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: codex
+    display_name: "Codex (OpenAI CLI)"
+    client_id: aether-principal-codex
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+      - aether.mutate
+    mutation_authority: true
+
+  - id: claude
+    display_name: "Claude (Anthropic)"
+    client_id: aether-principal-claude
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: gemini
+    display_name: "Gemini (Google)"
+    client_id: aether-principal-gemini
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: qwen
+    display_name: "Qwen (Alibaba)"
+    client_id: aether-principal-qwen
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: kimi
+    display_name: "Kimi (Moonshot AI)"
+    client_id: aether-principal-kimi
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: deepseek
+    display_name: "DeepSeek"
+    client_id: aether-principal-deepseek
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+# Scope definitions (reference):
+#
+#   aether.read       - file_read, git_status, logs_tail, runtime_status,
+#                       runtime_adapters, service_status, health checks
+#   aether.diagnostic - run_verification, runtime diagnostics, telemetry reads
+#   aether.mutate     - workspace_edit (operator token path), decide_and_resume
+#                       requires mutation_authority: true AND Founder approval
