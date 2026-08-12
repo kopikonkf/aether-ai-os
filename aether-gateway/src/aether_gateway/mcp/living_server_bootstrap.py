@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from . import living_server
 from .governed_coding import GovernedMCPActionPath
-from .api import server as gateway
+from aether_gateway.api import server as gateway
 
 living_server.service.action_path = GovernedMCPActionPath(
     gateway.action_path,

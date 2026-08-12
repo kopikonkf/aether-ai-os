@@ -6,7 +6,6 @@ import contextlib
 import os
 
 import uvicorn
-from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -26,14 +25,10 @@ async def health(_: Request) -> JSONResponse:
 
 
 def build_http_app() -> Starlette:
-    public_host = os.getenv("AETHER_MCP_PUBLIC_HOSTNAME", "").strip()
-    allowed_hosts = ["127.0.0.1", "localhost", "localhost:*", "127.0.0.1:*"]
-    allowed_origins: list[str] = []
-    if public_host:
-        allowed_hosts.extend([public_host, f"{public_host}:*"])
-        allowed_origins.append(f"https://{public_host}")
-    security = TransportSecuritySettings(allowed_hosts=allowed_hosts, allowed_origins=allowed_origins)
-    return Starlette(routes=[Route("/health", health, methods=["GET"]), Mount("/", app=MCPAuthMiddleware(mcp.streamable_http_app(transport_security=security)))], lifespan=lifespan)
+    # Host/origin allowlisting is configured on the FastMCP constructor
+    # (mcp.server FastMCP v1 lowers transport_security there), so the SDK's
+    # streamable_http_app() carries it already. This layer only adds auth + health.
+    return Starlette(routes=[Route("/health", health, methods=["GET"]), Mount("/", app=MCPAuthMiddleware(mcp.streamable_http_app()))], lifespan=lifespan)
 
 
 def main(argv: list[str] | None = None) -> int:

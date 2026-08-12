@@ -25,7 +25,7 @@ from .living_machine import LivingMachineMCPService, LivingMachinePolicyError
 
 # Importing the composition root is intentional: this surface is an interface
 # over the running Gateway objects, not a second runtime implementation.
-from .api import server as gateway
+from aether_gateway.api import server as gateway
 
 
 _auth_role: contextvars.ContextVar[str] = contextvars.ContextVar("aether_mcp_auth_role", default="none")
@@ -87,6 +87,19 @@ service = LivingMachineMCPService(
     coding_runtime_key=gateway.coding_dispatch_adapter.routing_key,
 )
 
+_transport_security = None
+try:
+    from mcp.server.transport_security import TransportSecuritySettings as _TransportSecurity
+    _allowed_hosts = ["127.0.0.1", "localhost", "localhost:*", "127.0.0.1:*"]
+    _allowed_origins: list[str] = []
+    _public_host = os.getenv("AETHER_MCP_PUBLIC_HOSTNAME", "").strip()
+    if _public_host:
+        _allowed_hosts.extend([_public_host, f"{_public_host}:*"])
+        _allowed_origins.append(f"https://{_public_host}")
+    _transport_security = _TransportSecurity(allowed_hosts=_allowed_hosts, allowed_origins=_allowed_origins)
+except Exception:
+    _transport_security = None
+
 mcp = FastMCP(
     "Aether Living Machine MCP",
     instructions=(
@@ -101,6 +114,7 @@ mcp = FastMCP(
     port=int(os.getenv("AETHER_MCP_PORT", "8787")),
     stateless_http=True,
     json_response=True,
+    transport_security=_transport_security,
 )
 
 
