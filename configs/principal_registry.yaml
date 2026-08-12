@@ -1,0 +1,108 @@
+# Aether Principal Registry
+# ADR-0056 — MCP OAuth Edge
+#
+# Founder-owned policy document. Each principal listed here may request OAuth
+# access to Aether MCP. Principals NOT listed here are rejected at the dynamic
+# registration gate regardless of what they request.
+#
+# Fields:
+#   id              - unique identifier, used as principal_id in tokens + audit
+#   display_name    - human-readable name for the approval gate HTML page
+#   client_id       - OAuth client_id the external connector must present
+#   allowed_scopes  - maximum scopes this principal may hold; requests for
+#                     scopes beyond this list are silently dropped
+#   redirect_uris   - EXACT-match allowlist of redirect_uri values the OAuth
+#                     client may present (P0 #6). /oauth/authorize rejects any
+#                     URI not listed here BEFORE a pending authorization or
+#                     Founder approval is created. Wildcards are not supported.
+#   mutation_authority - if false, aether.mutate scope is never issued even if
+#                     requested; if true, still requires Founder re-approval at
+#                     every authorization (never auto-renewed via refresh)
+
+principals:
+  - id: chatgpt
+    display_name: "ChatGPT (OpenAI)"
+    client_id: aether-principal-chatgpt
+    redirect_uris:
+      - https://chatgpt.com/connector/oauth/callback
+      - https://auth.openai.com/connector/oauth/callback
+      - https://chatgpt.com/callback
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: codex
+    display_name: "Codex (OpenAI CLI)"
+    client_id: aether-principal-codex
+    redirect_uris:
+      - http://127.0.0.1:1455/auth/callback
+      - http://localhost:1455/auth/callback
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+      - aether.mutate
+    mutation_authority: true
+
+  - id: claude
+    display_name: "Claude (Anthropic)"
+    client_id: aether-principal-claude
+    redirect_uris:
+      - https://claude.ai/connector/oauth/callback
+      - http://127.0.0.1:1456/auth/callback
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: gemini
+    display_name: "Gemini (Google)"
+    client_id: aether-principal-gemini
+    redirect_uris:
+      - https://gemini.google.com/connector/oauth/callback
+      - http://127.0.0.1:1457/auth/callback
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: qwen
+    display_name: "Qwen (Alibaba)"
+    client_id: aether-principal-qwen
+    redirect_uris:
+      - https://chat.qwen.ai/connector/oauth/callback
+      - http://127.0.0.1:1458/auth/callback
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: kimi
+    display_name: "Kimi (Moonshot AI)"
+    client_id: aether-principal-kimi
+    redirect_uris:
+      - https://kimi.moonshot.cn/connector/oauth/callback
+      - http://127.0.0.1:1459/auth/callback
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+  - id: deepseek
+    display_name: "DeepSeek"
+    client_id: aether-principal-deepseek
+    redirect_uris:
+      - https://chat.deepseek.com/connector/oauth/callback
+      - http://127.0.0.1:1460/auth/callback
+    allowed_scopes:
+      - aether.read
+      - aether.diagnostic
+    mutation_authority: false
+
+# Scope definitions (reference):
+#
+#   aether.read       - file_read, git_status, logs_tail, runtime_status,
+#                       runtime_adapters, service_status, health checks
+#   aether.diagnostic - run_verification, runtime diagnostics, telemetry reads
+#   aether.mutate     - workspace_edit (operator token path), decide_and_resume
+#                       requires mutation_authority: true AND Founder approval
