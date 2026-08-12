@@ -207,6 +207,17 @@ is authorized, per ADR-0055 prerequisite §4.
 - `AETHER_MCP_TOKEN` is never transmitted to or stored by any external
   principal. It lives only in the edge process environment and the upstream
   Authorization header.
+- **Legacy direct bearer is preserved (PR #62).** `AETHER_MCP_TOKEN` and
+  `AETHER_MCP_OPERATOR_TOKEN` remain valid direct Bearer credentials at `/mcp`
+  for local developer tooling (Codex CLI, curl, opencode). They are normalized
+  into the same `PrincipalContext` as OAuth JWT with `principal_id=None` and
+  `auth_source=developer-direct` / `operator-direct` respectively. `principal_id`
+  is cognitive identity (ADR-0055), never a credential type: legacy paths do NOT
+  inject `X-Aether-Principal-Id`, only `X-Aether-Auth-Source` for attribution.
+  Scope enforcement (TOOL_SCOPE_MAP, deny-by-default) applies identically to all
+  sources; operator-direct mutation still flows through the governed path and
+  Founder approval — the operator credential only makes the caller eligible to
+  request mutation, it never bypasses governance.
 - OAuth Edge HMAC secret is a separate credential (`AETHER_OAUTH_EDGE_SECRET`,
   minimum 32 bytes), stored in the same secrets facility as `AETHER_MCP_TOKEN`.
 - The authorization approval gate ensures no principal can self-authorize.

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 import os
 os.environ["AETHER_OAUTH_EDGE_SECRET"] = "test-secret-key-minimum-32-bytes-ok!"
 os.environ["AETHER_MCP_TOKEN"] = "test-mcp-token-for-unit-tests"
+os.environ["AETHER_MCP_OPERATOR_TOKEN"] = "test-mcp-operator-token-for-unit-tests"
 os.environ["AETHER_OPERATOR_TOKEN"] = "test-operator-token"
 os.environ["AETHER_OPERATOR_ID"] = "founder"
 # Browser session cookie tests run over http://testserver — clear the Secure flag.
@@ -486,6 +487,131 @@ class TestHealth:
         data = resp.json()
         assert data["status"] == "ok"
         assert data["service"] == "aether-mcp-oauth-edge"
+
+
+class TestLegacyDirectBearer:
+    """PR #62 — legacy AETHER_MCP_TOKEN / AETHER_MCP_OPERATOR_TOKEN direct Bearer.
+
+    principal_id is cognitive identity (ADR-0055), NOT credential type: legacy
+    paths carry principal_id=None + auth_source (developer-direct /
+    operator-direct) and never inject X-Aether-Principal-Id upstream.
+    """
+
+    _MCP_TOKEN = "test-mcp-token-for-unit-tests"
+    _OPERATOR_TOKEN = "test-mcp-operator-token-for-unit-tests"
+
+    def _mock_upstream(self, monkeypatch):
+        mock_response = MagicMock()
+        mock_response.content = b'{"result": "ok"}'
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "application/json"}
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client.request = AsyncMock(return_value=mock_response)
+        monkeypatch.setattr("aether_gateway.oauth_edge.server.httpx.AsyncClient", MagicMock(return_value=mock_client))
+        return mock_client
+
+    def test_mcp_token_read_proxied(self, client, monkeypatch):
+        mock_client = self._mock_upstream(monkeypatch)
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "file_read", "arguments": {}}},
+            headers={"Authorization": f"Bearer {self._MCP_TOKEN}"},
+        )
+        assert resp.status_code == 200
+
+    def test_operator_token_read_proxied(self, client, monkeypatch):
+        mock_client = self._mock_upstream(monkeypatch)
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "file_read", "arguments": {}}},
+            headers={"Authorization": f"Bearer {self._OPERATOR_TOKEN}"},
+        )
+        assert resp.status_code == 200
+
+    def test_mcp_token_mutation_denied(self, client, monkeypatch):
+        self._mock_upstream(monkeypatch)
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "workspace_edit", "arguments": {}}},
+            headers={"Authorization": f"Bearer {self._MCP_TOKEN}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "insufficient_scope"
+
+    def test_operator_token_mutation_proxied_to_governed_path(self, client, monkeypatch):
+        """operator-direct is mutation-ELIGIBLE; upstream still governs it."""
+        mock_client = self._mock_upstream(monkeypatch)
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "workspace_edit", "arguments": {}}},
+            headers={"Authorization": f"Bearer {self._OPERATOR_TOKEN}"},
+        )
+        assert resp.status_code == 200
+        assert mock_client.request.await_count == 1
+
+    def test_unknown_tool_403_for_mcp_token(self, client, monkeypatch):
+        self._mock_upstream(monkeypatch)
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "totally_unknown", "arguments": {}}},
+            headers={"Authorization": f"Bearer {self._MCP_TOKEN}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "unclassified_tool"
+
+    def test_unknown_tool_403_for_operator_token(self, client, monkeypatch):
+        self._mock_upstream(monkeypatch)
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "totally_unknown", "arguments": {}}},
+            headers={"Authorization": f"Bearer {self._OPERATOR_TOKEN}"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["error"] == "unclassified_tool"
+
+    def test_invalid_token_401(self, client, monkeypatch):
+        self._mock_upstream(monkeypatch)
+        resp = client.post(
+            "/mcp",
+            json={},
+            headers={"Authorization": "Bearer not-a-real-credential"},
+        )
+        assert resp.status_code == 401
+
+    def test_legacy_paths_do_not_inject_principal_id(self, client, monkeypatch):
+        """X-Aether-Principal-Id must be absent for BOTH legacy sources."""
+        mock_client = self._mock_upstream(monkeypatch)
+        for token in (self._MCP_TOKEN, self._OPERATOR_TOKEN):
+            resp = client.post(
+                "/mcp",
+                json={},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert resp.status_code == 200
+            _, kwargs = mock_client.request.call_args
+            fwd = kwargs["headers"]
+            assert "X-Aether-Principal-Id" not in fwd
+            assert fwd["X-Aether-Principal-Scopes"] != ""
+            assert fwd["X-Aether-Auth-Source"] in ("developer-direct", "operator-direct")
+
+    def test_oauth_principal_still_injects_principal_id(self, client, monkeypatch):
+        """OAuth JWT keeps injecting X-Aether-Principal-Id (cognitive actor)."""
+        secret = b"test-secret-key-minimum-32-bytes-ok!"
+        store = TokenStore(db_path=Path("/tmp/test-legacy-oauth-tokens.db"), secret=secret)
+        token, _ = store.issue_access_token("chatgpt", ["aether.read"])
+
+        mock_client = self._mock_upstream(monkeypatch)
+        with patch("aether_gateway.oauth_edge.server.get_store", return_value=store):
+            resp = client.post("/mcp", json={}, headers={"Authorization": f"Bearer {token}"})
+
+        assert resp.status_code == 200
+        _, kwargs = mock_client.request.call_args
+        fwd = kwargs["headers"]
+        assert fwd["X-Aether-Principal-Id"] == "chatgpt"
+        assert fwd["X-Aether-Auth-Source"] == "oauth"
 
 
 # ---------------------------------------------------------------------------

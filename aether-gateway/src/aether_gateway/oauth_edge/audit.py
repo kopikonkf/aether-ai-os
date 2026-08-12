@@ -77,9 +77,10 @@ def log_token_revoked(principal_id: str, reason: str) -> None:
     })
 
 
-def log_mcp_proxy(principal_id: str, scopes: list[str], method: str, path: str, status: int) -> None:
+def log_mcp_proxy(principal_id: Optional[str], scopes: list[str], method: str, path: str, status: int, auth_source: str = "oauth") -> None:
     _write("mcp_proxy", {
         "principal_id": principal_id,
+        "auth_source": auth_source,
         "scopes": scopes,
         "method": method,
         "path": path,
@@ -87,8 +88,9 @@ def log_mcp_proxy(principal_id: str, scopes: list[str], method: str, path: str, 
     })
 
 
-def log_scope_denied(principal_id: str, requested_scope: str) -> None:
+def log_scope_denied(principal_id: Optional[str], requested_scope: str, auth_source: str = "oauth") -> None:
     _write("scope_denied", {
         "principal_id": principal_id,
+        "auth_source": auth_source,
         "requested_scope": requested_scope,
     })
