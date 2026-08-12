@@ -914,7 +914,27 @@ def _get_display_name(principal_id: str) -> str:
 @app.api_route("/mcp", methods=["GET", "POST", "DELETE", "OPTIONS"])
 @app.api_route("/mcp/{path:path}", methods=["GET", "POST", "DELETE", "OPTIONS"])
 async def mcp_proxy(request: Request, path: str = "") -> Response:
-    """Validate Bearer token, inject principal headers, proxy to MCP upstream."""
+    """Validate Bearer token, inject principal headers, proxy to MCP upstream.
+
+    Authentication context is normalized from three credential sources
+    (ADR-0056 + PR #62 backward compatibility):
+
+      * OAuth JWT access token
+          principal_id = registered cognitive actor (chatgpt, claude, ...)
+          auth_source  = oauth
+      * AETHER_MCP_TOKEN (legacy developer tooling: Codex CLI, curl, opencode)
+          principal_id = None   (never fabricated)
+          auth_source  = developer-direct
+          scopes       = aether.read aether.diagnostic
+      * AETHER_MCP_OPERATOR_TOKEN (legacy operator tooling)
+          principal_id = None
+          auth_source  = operator-direct
+          scopes       = aether.read aether.diagnostic aether.mutate
+
+    `principal_id` is cognitive identity, not credential type (ADR-0055): the
+    legacy paths never receive an injected X-Aether-Principal-Id header. Scope
+    enforcement stays deny-by-default (TOOL_SCOPE_MAP) for ALL sources.
+    """
     authorization = request.headers.get("authorization", "")
 
     if not authorization.lower().startswith("bearer "):
@@ -924,11 +944,30 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
     store = get_store()
     payload = store.verify_access_token(token_str)
 
-    if payload is None:
-        return JSONResponse({"error": "invalid_token"}, status_code=401)
+    # Normalize the authentication context.
+    if payload is not None:
+        principal_id: Optional[str] = payload.get("principal_id", "unknown")
+        scopes: list[str] = list(payload.get("scopes", []))
+        auth_source = "oauth"
+    else:
+        # Legacy direct-bearer backward compatibility (ADR-0056 consequence):
+        # AETHER_MCP_TOKEN stays a valid direct credential for developer tools.
+        # AETHER_MCP_OPERATOR_TOKEN stays a valid direct credential for the
+        # operator (mutation-eligible) path. principal_id is NOT fabricated.
+        import hmac as _hmac
 
-    principal_id: str = payload.get("principal_id", "unknown")
-    scopes: list[str] = payload.get("scopes", [])
+        mcp_token = os.getenv("AETHER_MCP_TOKEN", "")
+        operator_token = os.getenv("AETHER_MCP_OPERATOR_TOKEN", "")
+        if mcp_token and _hmac.compare_digest(token_str, mcp_token):
+            principal_id = None
+            scopes = ["aether.read", "aether.diagnostic"]
+            auth_source = "developer-direct"
+        elif operator_token and _hmac.compare_digest(token_str, operator_token):
+            principal_id = None
+            scopes = ["aether.read", "aether.diagnostic", "aether.mutate"]
+            auth_source = "operator-direct"
+        else:
+            return JSONResponse({"error": "invalid_token"}, status_code=401)
 
     # Scope enforcement (P0 #2 + P0 #7) — check tool against TOOL_SCOPE_MAP
     # BEFORE proxy. P0 #7: an unknown/unmapped tool is DENIED, never forwarded —
@@ -948,7 +987,7 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
                         status_code=400,
                     )
                 if tool_name not in TOOL_SCOPE_MAP:
-                    log_scope_denied(principal_id, tool_name)
+                    log_scope_denied(principal_id, tool_name, auth_source=auth_source)
                     return JSONResponse(
                         {
                             "error": "unclassified_tool",
@@ -958,7 +997,7 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
                     )
                 required_scopes = TOOL_SCOPE_MAP[tool_name]
                 if required_scopes and not all(s in scopes for s in required_scopes):
-                    log_scope_denied(principal_id, tool_name)
+                    log_scope_denied(principal_id, tool_name, auth_source=auth_source)
                     return JSONResponse(
                         {"error": "insufficient_scope", "error_description": f"Tool '{tool_name}' requires {required_scopes}, token has {scopes}"},
                         status_code=403
@@ -978,8 +1017,11 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
         if k.lower() not in ("authorization", "host", "content-length")
     }
     forward_headers["Authorization"] = f"Bearer {MCP_TOKEN}"
-    forward_headers["X-Aether-Principal-Id"] = principal_id
     forward_headers["X-Aether-Principal-Scopes"] = " ".join(scopes)
+    if principal_id is not None:
+        # principal_id is cognitive identity — only OAuth principals carry it.
+        forward_headers["X-Aether-Principal-Id"] = principal_id
+    forward_headers["X-Aether-Auth-Source"] = auth_source
 
     body = await request.body()
 
@@ -991,7 +1033,7 @@ async def mcp_proxy(request: Request, path: str = "") -> Response:
             content=body,
         )
 
-    log_mcp_proxy(principal_id, scopes, request.method, upstream_path, upstream_resp.status_code)
+    log_mcp_proxy(principal_id, scopes, request.method, upstream_path, upstream_resp.status_code, auth_source=auth_source)
 
     # Stream response back
     return Response(
