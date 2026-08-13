@@ -37,6 +37,7 @@ aether-mcp = "aether.runtime.mcp:main"
 aether-mvp20 = "aether.runtime.mvp20:main"
 aether-cloudflare-ingress = "aether.runtime.ingress:main"
 aether-capability-lifecycle = "aether.capabilities.lifecycle_cli:main"
+aether-apcb = "aether.apcb.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
