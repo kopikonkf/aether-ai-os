@@ -29,6 +29,8 @@ class WorkItemView:
     """The canonical work-item fields APCB reads to judge eligibility.
 
     APCB reads only what Aether owns; it never fabricates policy fields.
+    `execution_profile` is the explicit herdr:* profile the canonical work item
+    assigns to this principal. APCB never guesses a profile implicitly.
     """
 
     work_id: str
@@ -40,6 +42,7 @@ class WorkItemView:
     execution_ready: bool = False
     awaiting_approval: bool = False
     attempt_number: int = 1
+    execution_profile: str = ""
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -48,6 +51,11 @@ class EligibilityEvaluator:
 
     Each of the eight contract conditions maps to exactly one boolean; the
     result's `blockers()` names every condition that failed.
+
+    `profile_enabled` is strict: the work item must name an execution profile
+    and that profile must be assigned to the principal. An empty
+    execution_profile fails eligibility — APCB never selects a profile on the
+    principal's behalf (ChatGPT hardening directive, 2026-08-13).
     """
 
     def __init__(
@@ -63,7 +71,10 @@ class EligibilityEvaluator:
         profile_enabled = False
         capability_match = False
         if principal is not None:
-            profile_enabled = bool(principal.execution_profiles)
+            profile_enabled = (
+                bool(work.execution_profile)
+                and work.execution_profile in principal.execution_profiles
+            )
             capability_match = all(
                 principal.has_capability(cap) for cap in work.required_capabilities
             ) if work.required_capabilities else True
@@ -92,6 +103,7 @@ class EligibilityEvaluator:
             execution_ready=bool(work.get("execution_ready")),
             awaiting_approval=bool(work.get("awaiting_approval") or work.get("pending_approval")),
             attempt_number=int(work.get("attempt_number") or 1),
+            execution_profile=str(work.get("execution_profile") or ""),
             metadata=dict(work.get("metadata") or {}),
         )
         return self.evaluate(view)

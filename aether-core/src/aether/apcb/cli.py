@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mission", required=True)
     p.add_argument("--principal", required=True)
     p.add_argument("--workspace", required=True)
+    p.add_argument("--profile", required=True, help="explicit herdr:* execution profile for this work item")
     p.add_argument("--objective", default="")
     p.add_argument("--capability", action="append", default=[])
     p.add_argument("--receipts", required=True, help="path to append-only receipt JSONL")
@@ -63,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         execution_ready=args.ready,
         awaiting_approval=False,
         attempt_number=args.attempt,
+        execution_profile=args.profile,
         metadata={"objective": args.objective},
     )
 
