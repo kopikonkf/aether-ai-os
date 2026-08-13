@@ -6,17 +6,12 @@ Enforces, read-only from the Aether-owned config
     principal_id != execution_profile != herdr_agent_kind != model_provider
 
 Background findings encoded here (referenced, not copied):
-  - WORK-1 F1 / C1: ``model_provider`` is NOT a structured YAML field (only
-    free-text ``note:``), so the 4th dimension cannot be machine-read from the
-    config alone. This suite (a) enforces the three config-readable dimensions
-    deterministically, (b) pins the canonical `model_provider` mapping as an
-    explicit deterministic fixture so the FULL invariant is enforced end-to-end,
-    and (c) provides a forward-compatible structured-fuel validator that becomes
-    the source of truth the moment a structured ``model_provider``/``fuel`` field
-    is added to the YAML.
+  - WORK-1 F1 / C1: ``model_provider`` was NOT a structured YAML field at Gate-3
+    review time (only free-text ``note:``). WORK-5 blocker K5 added the
+    structured ``model_provider`` field to each sovereign principal; this suite
+    now sources ALL FOUR dimensions from config (no fixture).
   - WORK-2 G1: a pane-collision guard asserts exactly one pane per sovereign
-    principal. It is EXPECTED to stay RED until COORD fixes apcb_pane_map.json
-    (do not merge while RED).
+    principal.
   - Mock herdr: no live herdr/agent calls. Pure config + JSON file reads only.
 
 NON-ACTIVATION: read-only over config; no repo mutation, no dispatch.
@@ -47,18 +42,6 @@ CANONICAL_PROFILE = {
     "kimi": "herdr:codex",
     "chatgpt": "herdr:opencode",
     "deepseek": "herdr:kilo",
-}
-
-# Canonical fuel (model_provider) per sovereign principal. Not a structured
-# config field (F1), so pinned here as the deterministic 4th dimension until a
-# structured fuel field is added to the YAML.
-FUEL_BY_PRINCIPAL = {
-    "claude": "deepseek-v4-flash",
-    "gemini": "kimi",
-    "qwen": "deepseek-v4-flash",
-    "kimi": "gpt-5.5",
-    "chatgpt": "deepseek-v4-flash",
-    "deepseek": "deepseek-v4-flash",
 }
 
 _FUEL_FIELD_NAMES = ("model_provider", "fuel")
@@ -115,6 +98,16 @@ def _structured_fuel_map() -> dict[str, dict]:
     return out
 
 
+def _model_provider(reg: PrincipalRuntimeProfiles, principal_id: str) -> str:
+    """Config-sourced structured model_provider for a sovereign principal (K5)."""
+    principal = reg.get_principal(principal_id)
+    assert principal is not None, f"principal {principal_id} missing from registry"
+    assert principal.model_provider, (
+        f"{principal_id} has no structured model_provider (K5)"
+    )
+    return principal.model_provider
+
+
 def _pane_map() -> dict:
     path = os.environ.get("APCB_HERDR_PANE_MAP") or r"D:\aether-bridge\apcb_pane_map.json"
     p = Path(path)
@@ -162,33 +155,35 @@ def test_three_structured_fields_distinct_from_config():
 
 
 def test_four_field_invariant_with_fuel_fixture():
-    """Full invariant including the 4th dimension (model_provider), where the
-    fuel is pinned by fixture because it is not (yet) a structured config field."""
+    """Full invariant including the 4th dimension (model_provider), sourced from
+    the structured config field (K5 — WORK-5 blocker resolved)."""
     reg = _registry()
     for pid in SOVEREIGN:
         profile_name = CANONICAL_PROFILE[pid]
         herdr_kind = _resolve_herdr_kind(reg, pid)
-        model_provider = FUEL_BY_PRINCIPAL[pid]
+        model_provider = _model_provider(reg, pid)
         _assert_invariant_distinct(_four_fields(pid, profile_name, herdr_kind, model_provider))
 
 
 def test_fuel_and_profile_fixtures_cover_all_sovereign():
-    assert set(FUEL_BY_PRINCIPAL) == set(SOVEREIGN)
     assert set(CANONICAL_PROFILE) == set(SOVEREIGN)
-    # All four dimensions present per row (no accidental None/empty fuel).
+    reg = _registry()
     for pid in SOVEREIGN:
-        assert FUEL_BY_PRINCIPAL[pid].strip()
+        assert _model_provider(reg, pid).strip()
 
 
 def test_structured_fuel_not_yet_present_documents_f1():
-    """F1: model_provider/fuel are NOT structured config fields today. When a
-    structured fuel field is added, this assertion fails and signals that
-    FUEL_BY_PRINCIPAL should be replaced by the config-sourced value."""
+    """F1/K5 resolution: the structured model_provider field now EXISTS in config
+    for every sovereign principal. This test asserts the F1 blocker is closed —
+    it would FAIL if a sovereign principal lacks the field."""
     structured = _structured_fuel_map()
-    assert structured == {}, (
-        "structured fuel field detected in config; update this test and "
-        f"FUEL_BY_PRINCIPAL to source the 4th dimension from config (resolves F1): {structured}"
-    )
+    for pid in SOVEREIGN:
+        assert pid in structured, (
+            f"sovereign principal {pid} missing structured fuel field (K5 unresolved)"
+        )
+        assert str(structured[pid]["value"]).strip(), (
+            f"sovereign principal {pid} has empty structured fuel"
+        )
 
 
 def test_structured_fuel_validator_forward_compatible():

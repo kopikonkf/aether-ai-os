@@ -27,6 +27,12 @@ from aether.apcb.contracts import (
 )
 
 
+class DuplicateTerminalError(RuntimeError):
+    """Raised when a terminal receipt is written for a tuple that already has
+    one — exactly one terminal per (work_id, attempt_number, principal_id) is a
+    hard governance invariant (WORK-5 blocker K2 / Gate-3 findings)."""
+
+
 class ReceiptStore:
     """Append-only JSONL receipt store with an in-memory recomputed index.
 
@@ -61,12 +67,34 @@ class ReceiptStore:
     # ------------------------------------------------------------------ #
     # Mutation                                                           #
     # ------------------------------------------------------------------ #
+    # A terminal_outcome of "unknown" is NOT authoritative (K10: needs
+    # reconcile); only a DEFINITIVE terminal blocks a second terminal write.
+    _DEFINITIVE_TERMINALS = frozenset(
+        {"completed", "failed", "blocked", "stopped", "rejected", "cancelled"}
+    )
+
     def persist(self, receipt: BridgeExecutionReceipt) -> BridgeExecutionReceipt:
         """Append a receipt snapshot to the log and update the index.
 
         Must be called BEFORE dispatching to Herdr (contract section 5).
+
+        Fail-closed terminal uniqueness (WORK-5 K2): a tuple that already has a
+        DEFINITIVE terminal receipt must never receive a second terminal write.
+        A terminal_outcome of "unknown" is not authoritative (K10) and may be
+        resolved by a later definitive terminal. Non-terminal lifecycle writes
+        (claimed -> herdr_attached -> prompted -> ...) remain append-only.
         """
         key = receipt.idempotency_key.as_tuple()
+        if receipt.is_terminal() and receipt.terminal_outcome in self._DEFINITIVE_TERMINALS:
+            existing = self._receipts.get(key)
+            if (
+                existing is not None
+                and existing.is_terminal()
+                and existing.terminal_outcome in self._DEFINITIVE_TERMINALS
+            ):
+                raise DuplicateTerminalError(
+                    f"terminal already recorded for {key}: {existing.terminal_outcome!r}"
+                )
         record = {
             "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "receipt": _receipt_to_dict(receipt),

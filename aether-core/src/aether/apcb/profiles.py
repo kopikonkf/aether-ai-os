@@ -42,6 +42,7 @@ class PrincipalProfile:
     execution_profiles: tuple[str, ...]
     mutation_authority: bool
     note: str | None = None
+    model_provider: str | None = None
 
     def has_capability(self, capability: str) -> bool:
         return capability in self.capabilities
@@ -112,6 +113,7 @@ class PrincipalRuntimeProfiles:
                 execution_profiles=tuple(str(p) for p in profiles),
                 mutation_authority=bool(entry.get("mutation_authority", default_mutation)),
                 note=entry.get("note"),
+                model_provider=entry.get("model_provider"),
             )
 
         profiles_raw = data.get("execution_profiles")

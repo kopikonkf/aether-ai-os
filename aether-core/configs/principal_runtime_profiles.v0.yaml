@@ -20,6 +20,7 @@ principals:
       - herdr:opencode
       - remote:mcp:chatgpt
     mutation_authority: false
+    model_provider: deepseek-v4-flash
     note: >-
       Agnostic fleet mapping: chatgpt runs on the opencode CLI (deepseek-v4-flash,
       free-tier fuel) to maximize free quota during Aether bootstrapping. The
@@ -38,6 +39,7 @@ principals:
       - herdr:freebuff
       - remote:mcp:claude
     mutation_authority: false
+    model_provider: deepseek-v4-flash
     note: >-
       Agnostic fleet mapping: claude runs on the freebuff CLI (deepseek-v4-flash,
       free-tier fuel). principal_id is cognitive attribution; the underlying CLI
@@ -55,6 +57,7 @@ principals:
       - herdr:cline
       - remote:mcp:gemini
     mutation_authority: false
+    model_provider: kimi
     note: >-
       Agnostic fleet mapping: gemini runs on the claude CLI (kimi model provider)
       or the cline CLI (deepseek-v4-flash free-tier fuel) — fuel is a property,
@@ -71,6 +74,7 @@ principals:
     execution_profiles:
       - herdr:cline
     mutation_authority: false
+    model_provider: deepseek-v4-flash
     note: >-
       Agnostic fleet mapping: qwen runs on the cline CLI (deepseek-v4-flash,
       free-tier fuel). Execution CLI is orthogonal to the principal identity.
@@ -85,6 +89,7 @@ principals:
     execution_profiles:
       - herdr:codex
     mutation_authority: false
+    model_provider: gpt-5.5
     note: >-
       Agnostic fleet mapping: kimi runs on the codex CLI (gpt-5.5, limited
       OpenAI free-tier quota). Used sparingly; quota is a fuel property, not an
@@ -101,6 +106,7 @@ principals:
       - herdr:kilo
       - remote:mcp:deepseek
     mutation_authority: false
+    model_provider: deepseek-v4-flash
     note: >-
       Agnostic fleet mapping: deepseek runs on the kilo CLI (omniroute
       deepseek-v4-flash, free-tier fuel). principal_id is attribution; the pane

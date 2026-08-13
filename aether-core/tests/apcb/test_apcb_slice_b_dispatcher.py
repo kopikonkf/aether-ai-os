@@ -311,9 +311,14 @@ class TestReconcileRestart:
         work = ready_work()
         stored = receipts.get_by_components("WORK-1", 1, "qwen")
         decision = dispatcher2.reconcile(work, stored)
-        assert decision.status == "failed"
-        assert decision.terminal_outcome == "failed"
-        assert "missing" in decision.diagnostic[0]
+        # K2 governance (WORK-5): the first dispatch already recorded a
+        # DEFINITIVE terminal (completed) for this tuple. Reconcile must NOT
+        # silently rewrite it to failed — terminal is closed, exactly one
+        # terminal per (work, attempt, principal). A new outcome requires an
+        # explicit reconcile/approval gate, not an observation overwrite.
+        assert decision.status == "terminal"
+        assert decision.terminal_outcome == "completed"
+        assert any("already terminal" in d for d in decision.diagnostic)
 
     def test_reconcile_without_receipt_rejects(self, profiles, receipts):
         adapter = RecordingAdapter(status="done")
@@ -469,11 +474,17 @@ class TestStateMachineObservationLevel:
         )
         dispatcher.dispatch(ready_work())
         # APCB consults Aether state via the observer (read); it never writes a
-        # terminal Aether state through it â€” APCB-local terminal is its own.
+        # terminal Aether state through it — APCB-local terminal is its own.
         assert reads == []
         assert writes == []
-        assert dispatcher.reconcile(ready_work(), receipts.get_by_components("WORK-1", 1, "qwen")).status == "promoted"
-        assert reads == ["MISSION-1"]
+        # K2 governance (WORK-5): dispatch already recorded a definitive
+        # terminal (completed). Reconcile returns the closed terminal instead of
+        # re-promoting/overwriting; no Aether state write, no observation
+        # override (short-circuits before the observer read).
+        decision = dispatcher.reconcile(ready_work(), receipts.get_by_components("WORK-1", 1, "qwen"))
+        assert decision.status == "terminal"
+        assert decision.terminal_outcome == "completed"
+        assert reads == []
 
     def test_receipt_states_follow_observation_chain(self, profiles, receipts, tmp_path):
         adapter = RecordingAdapter(status="done")
