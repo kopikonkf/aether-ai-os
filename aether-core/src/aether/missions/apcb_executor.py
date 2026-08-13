@@ -15,9 +15,11 @@ Division of responsibility (Founder directive, 2026-08-13):
 Design notes for the caller:
   - work_mapper(action, attempt) -> WorkItemView maps an ActionProposal onto a
     canonical APCB work item. The caller decides principal_id,
-    execution_profile, workspace_id, capabilities and authorized/execution_ready
-    (attempt starts at 1). Example: one mission step -> one work item on the
-    principal's execution profile and pane-bound workspace.
+    execution_profile, workspace_id, capabilities and authorized/execution_ready.
+    The attempt number is read from proposal.metadata["mission_attempt_number"]
+    (default 1), so retries are reflected in the APCB receipt and keep
+    idempotency. Example: one mission step -> one work item on the principal's
+    execution profile and pane-bound workspace.
   - dispatcher.dispatch(work) is SYNCHRONOUS. A live Herdr adapter can block
     until the pane finishes; callers that cannot afford a blocking await should
     run the mission loop in an executor thread.
@@ -33,6 +35,22 @@ from typing import Any, Callable
 from aether.apcb.dispatcher import APCBDispatcher, DispatchDecision
 from aether.apcb.eligibility import WorkItemView
 from aether.contracts.actions import ActionProposal, ActionResult
+
+MISSION_ATTEMPT_METADATA_KEY = "mission_attempt_number"
+
+
+def _normalize_attempt(value: Any) -> int:
+    """Coerce a metadata value into a positive attempt number; invalid -> 1."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return number if number >= 1 else 1
+
+
+def _attempt_from_proposal(proposal: ActionProposal) -> int:
+    raw = (proposal.metadata or {}).get(MISSION_ATTEMPT_METADATA_KEY)
+    return _normalize_attempt(raw)
 
 
 class ApcbMissionActionExecutor:
@@ -59,11 +77,14 @@ class ApcbMissionActionExecutor:
     async def execute(self, proposal: ActionProposal) -> ActionResult:
         """Run one mission step through APCB and translate to ActionResult.
 
-        The attempt starts at 1. APCB never fabricates policy: awaiting_approval
-        work is returned as a pending-approval ActionResult so the mission can
-        hold at its approval checkpoint while MissionGovernor decides.
+        The attempt number is read from proposal.metadata["mission_attempt_number"]
+        (default 1) so every retry is reflected in the APCB work item and receipt.
+        APCB never fabricates policy: awaiting_approval work is returned as a
+        pending-approval ActionResult so the mission can hold at its approval
+        checkpoint while MissionGovernor decides.
         """
-        work = self.work_mapper(proposal, 1)
+        attempt = _attempt_from_proposal(proposal)
+        work = self.work_mapper(proposal, attempt)
         if work.awaiting_approval:
             # APCB is not an approval mechanism — pass through to the governor.
             return ActionResult(
