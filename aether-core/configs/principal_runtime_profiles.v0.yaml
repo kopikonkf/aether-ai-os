@@ -52,10 +52,13 @@ principals:
       - contradiction_analysis
     execution_profiles:
       - herdr:claude
+      - herdr:cline
       - remote:mcp:gemini
     mutation_authority: false
     note: >-
-      Agnostic fleet mapping: gemini runs on the claude CLI (kimi model provider).
+      Agnostic fleet mapping: gemini runs on the claude CLI (kimi model provider)
+      or the cline CLI (deepseek-v4-flash free-tier fuel) — fuel is a property,
+      not identity; switch happens when the primary provider is unavailable.
       Not bound to a Gemini-branded client; any available pane with fuel is valid.
 
   qwen:
