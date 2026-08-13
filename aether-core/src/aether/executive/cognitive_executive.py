@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from aether.apcb.eligibility import WorkItemView
 from aether.apcb.receipt_store import ReceiptStore
 from aether.contracts.missions import (
     MissionBlocked,
@@ -27,7 +27,14 @@ from aether.contracts.missions import (
     MissionStepStatus,
 )
 from aether.events import EventBus
-from aether.missions.canonical_mapper import MISSION_EXPECTED_ARTIFACT, MISSION_WORK_ID, MISSION_WORKSPACE_ID
+from aether.missions.canonical_mapper import (
+    MISSION_EXECUTION_PROFILE,
+    MISSION_EXPECTED_ARTIFACT,
+    MISSION_PRINCIPAL_ID,
+    MISSION_WORK_ID,
+    MISSION_WORKSPACE_ID,
+    build_mission_artifact_verify,
+)
 from aether.missions.orchestrator import MissionOrchestrator
 
 if TYPE_CHECKING:
@@ -112,15 +119,41 @@ class CognitiveExecutive:
     # Closed loop                                                        #
     # ------------------------------------------------------------------ #
     async def run_closed_loop(
-        self, directive: "CognitiveDirective"
+        self, directive: "CognitiveDirective | None" = None
     ) -> CognitiveLoopResult:
-        # 1. OBSERVE — snapshot of canonical state (context for the loop).
-        self._observer.observe()
+        """Run one bounded closed cognitive loop.
 
-        # 2. PLAN — canonical mission plan from the directive.
+        Default shape (Gate 4 acceptance):
+            1. observe         -> snapshot of canonical state
+            2. understand      -> directive = reasoner.reason(observation)
+            3. plan            -> canonical mission plan from the directive
+            4. govern ONCE     -> single constitutional approval
+            5. execute         -> APCB + Herdr + principal worker (via runner)
+            6. observe outcome -> re-observe canonical state after each run
+            7. evaluate        -> evidence from observer + store + receipts
+            8. decide next     -> bounded continue/stop (no Founder relay)
+            9. execute next    -> loop continues only under the bound
+
+        A directive may be injected directly for deterministic unit tests; when
+        omitted the injected reasoner produces it from the observation (R1).
+        """
+        # 1. OBSERVE — snapshot of canonical state (context for the loop).
+        observation = self._observer.observe()
+
+        # 2. UNDERSTAND — the injected reasoner turns the observation into a
+        #    bounded directive. This is the acceptance item (2); the loop never
+        #    hard-codes a directive when a reasoner is wired (R1).
+        if directive is None:
+            if self._reasoner is None:
+                raise RuntimeError(
+                    "CognitiveExecutive requires a reasoner or an explicit directive"
+                )
+            directive = self._reasoner.reason(observation)
+
+        # 3. PLAN — canonical mission plan from the directive.
         plan = self._planner.plan_from_directive(directive)
 
-        # 3. GOVERN ONCE — single constitutional approval at the start. A second
+        # 4. GOVERN ONCE — single constitutional approval at the start. A second
         #    call on the same plan propagates DuplicateGovernanceError; the loop
         #    never adds per-step approvals.
         self._planner.govern(plan)
@@ -132,14 +165,24 @@ class CognitiveExecutive:
 
         decisions: list[dict[str, Any]] = []
         for step_count in range(1, bound + 1):
+            completed_before = len(self._completed_step_ids(plan, store))
             await orchestrator.run(
                 mission_id,
                 principal="aether.mission-orchestrator",
                 maximum_steps=1,
             )
+            # 6. OBSERVE OUTCOME — re-observe canonical state after each run
+            #    (R2). The outcome feeds evidence evaluation and the next-step
+            #    decision, exactly as Gate 4 requires.
+            self._observer.observe()
             status = store.current_status(mission_id)
             remaining = self._remaining_steps(plan, store)
-            action, rationale = self.decide_next(status, remaining, step_count, bound)
+            progress_made = (
+                len(self._completed_step_ids(plan, store)) > completed_before
+            )
+            action, rationale = self.decide_next(
+                status, remaining, step_count, bound, progress_made=progress_made
+            )
             attempted = self._last_attempted_step(store, mission_id) or plan.steps[0].step_id
             decisions.append(
                 {"step_id": attempted, "action": action, "rationale": rationale}
@@ -174,14 +217,28 @@ class CognitiveExecutive:
         remaining_steps: int,
         step_count: int,
         bound: int,
+        progress_made: bool = True,
     ) -> tuple[str, str]:
         """Return (action, rationale): "continue" or "stop".
 
-        Terminal mission state always stops. Otherwise the loop continues only
-        while steps remain AND the iteration count is under the bound.
+        Terminal mission state always stops. Non-progress states
+        (PAUSED / WAITING_APPROVAL / REVIEW_REQUIRED) stop as "blocked" ONLY
+        when no step progress was made (R4): the loop must not churn without
+        advancing. A PAUSED continuation checkpoint after a completed step
+        (progress_made=True) still continues under the bound. Otherwise the
+        loop continues only while steps remain AND the iteration count is under
+        the bound.
         """
         if status in _TERMINAL_STATUSES:
             return "stop", f"mission terminal state={status.value}"
+        if status in {
+            MissionStatus.WAITING_APPROVAL,
+            MissionStatus.REVIEW_REQUIRED,
+            MissionStatus.DRAFT,
+        }:
+            return "stop", f"mission non-progress state={status.value} (blocked)"
+        if status == MissionStatus.PAUSED and not progress_made:
+            return "stop", "mission paused without step progress (blocked)"
         if remaining_steps <= 0:
             return "stop", "all plan steps completed"
         if step_count >= bound:
@@ -214,7 +271,7 @@ class CognitiveExecutive:
                 {
                     "step_id": step.step_id,
                     "attempt_status": latest.status.value if latest is not None else "none",
-                    "artifact_present": self._artifact_present(metadata),
+                    "artifact_present": self._artifact_authoritative(metadata, mission_id),
                     "terminal_outcome": self._receipt_terminal(mission_id, work_id),
                     "decision": decision["action"],
                 }
@@ -245,16 +302,36 @@ class CognitiveExecutive:
             return None
         return attempts[-1].step_id
 
-    @staticmethod
-    def _artifact_present(metadata: dict[str, Any]) -> bool:
+    def _artifact_authoritative(
+        self, metadata: dict[str, Any], mission_id: str
+    ) -> bool:
+        """ADR-0057 artifact authority: the deliverable must exist AND carry a
+        matching canonical envelope (protocol/mission_id/work_id/principal/attempt),
+        not merely be a file with the right name (R3).
+
+        Reuses the mission-level verifier (build_mission_artifact_verify) with a
+        WorkItemView built from the step's canonical metadata.
+        """
         expected = metadata.get(MISSION_EXPECTED_ARTIFACT)
         workspace = metadata.get(MISSION_WORKSPACE_ID) or ""
         if not expected or not workspace or "://" in workspace:
             return False
-        try:
-            return (Path(workspace) / str(expected)).is_file()
-        except OSError:
+        verifier = build_mission_artifact_verify(str(expected))
+        if verifier is None:
             return False
+        work = WorkItemView(
+            work_id=str(metadata.get(MISSION_WORK_ID) or "WORK-PCP-003"),
+            mission_id=mission_id,
+            principal_id=str(metadata.get(MISSION_PRINCIPAL_ID) or ""),
+            required_capabilities=(),
+            workspace_id=workspace,
+            authorized=True,
+            execution_ready=True,
+            attempt_number=1,
+            execution_profile=str(metadata.get(MISSION_EXECUTION_PROFILE) or ""),
+            metadata=metadata,
+        )
+        return verifier(work)
 
     def _receipt_terminal(self, mission_id: str, work_id: str) -> str | None:
         latest = self._receipts().latest_for_work(work_id, mission_id=mission_id)

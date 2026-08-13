@@ -465,3 +465,77 @@ async def test_duplicate_governance_raises(tmp_path: Path):
     planner.govern(plan)
     with pytest.raises(DuplicateGovernanceError):
         planner.govern(plan)
+
+
+# ---------------------------------------------------------------------------
+# 9. R1: reasoner is called when no directive is injected (understand wired)
+# ---------------------------------------------------------------------------
+class RecordingReasoner:
+    def __init__(self, inner: RuleBasedReasoner):
+        self._inner = inner
+        self.calls: list[CognitiveObservation] = []
+
+    def reason(self, observation: CognitiveObservation) -> CognitiveDirective:
+        self.calls.append(observation)
+        return self._inner.reason(observation)
+
+
+@pytest.mark.asyncio
+async def test_closed_loop_uses_reasoner_when_no_directive(tmp_path: Path):
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done")
+    ws = Path(runner.workspace_override)
+    ws.mkdir(parents=True, exist_ok=True)
+    observer = CognitiveObserver(runner.store, ReceiptStore(runner.receipts_path), str(ws))
+    planner = make_planner(runner)
+    reasoner = RecordingReasoner(RuleBasedReasoner(workspace_override=str(ws)))
+    executive = CognitiveExecutive(
+        runner, observer, reasoner, planner, max_steps=1, adapter=adapter
+    )
+
+    # No directive injected: the loop MUST derive it from observation (R1).
+    result = await executive.run_closed_loop()
+    assert result.completed is True
+    assert result.governance_count == 1
+    assert len(reasoner.calls) == 1
+    assert reasoner.calls[0].observed_at  # reasoner saw a real observation
+
+
+# ---------------------------------------------------------------------------
+# 10. R2: observe outcome is called again AFTER execution
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_closed_loop_observes_outcome_after_execution(tmp_path: Path):
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done")
+    observe_calls: list[int] = []
+    executive = make_executive(runner, adapter, observe_calls=observe_calls)
+
+    await executive.run_closed_loop(
+        make_directive(str(Path(runner.workspace_override)))
+    )
+    # observe before plan (1) + observe outcome after the run (>=1) = >=2
+    assert len(observe_calls) >= 2
+
+
+# ---------------------------------------------------------------------------
+# 11. R3: evidence artifact check uses envelope authority (stale envelope fails)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_evidence_rejects_stale_artifact_envelope(tmp_path: Path):
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", write_artifact=False)
+    ws = Path(runner.workspace_override)
+    ws.mkdir(parents=True, exist_ok=True)
+    # A file EXISTS but carries the WRONG mission envelope -> artifact_authority
+    # must report artifact_present=False (R3), unlike a bare is_file() check.
+    (ws / "WORK-PCP-003.md").write_text(
+        envelope_text(mission_id="SOME-OTHER-MISSION"), encoding="utf-8"
+    )
+    executive = make_executive(runner, adapter)
+
+    result = await executive.run_closed_loop(
+        make_directive(str(ws))
+    )
+    ev = result.evidence_evaluations[0]
+    assert ev["artifact_present"] is False
