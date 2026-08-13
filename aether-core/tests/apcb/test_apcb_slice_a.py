@@ -44,10 +44,10 @@ class TestPrincipalProfileRegistry:
         reg = load_principal_profiles()
         p = reg.get_principal("qwen")
         assert p is not None
-        assert "herdr:qwen" in p.execution_profiles
-        ep = reg.get_execution_profile("herdr:qwen")
+        assert "herdr:cline" in p.execution_profiles
+        ep = reg.get_execution_profile("herdr:cline")
         assert ep is not None
-        assert ep.herdr_agent_kind == "qwen"
+        assert ep.herdr_agent_kind == "cline"
 
     def test_role_never_implies_mutation_authority(self):
         reg = load_principal_profiles()

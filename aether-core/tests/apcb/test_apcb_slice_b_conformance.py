@@ -31,16 +31,16 @@ def gate_factory(profiles):
 
 class TestConformanceGateHealthy:
     def test_healthy_eligible(self, gate_factory):
-        gate = gate_factory({"claude": AdapterConformanceStatus.HEALTHY})
-        c = gate.evaluate("claude", "herdr:claude")
+        gate = gate_factory({"freebuff": AdapterConformanceStatus.HEALTHY})
+        c = gate.evaluate("claude", "herdr:freebuff")
         assert c.eligible is True
         assert c.status is AdapterConformanceStatus.HEALTHY
-        assert c.herdr_agent_kind == "claude"
+        assert c.herdr_agent_kind == "freebuff"
         assert c.diagnostic == ()
 
     def test_valid_eligible(self, gate_factory):
-        gate = gate_factory({"codex": AdapterConformanceStatus.VALID})
-        c = gate.evaluate("chatgpt", "herdr:codex")
+        gate = gate_factory({"opencode": AdapterConformanceStatus.VALID})
+        c = gate.evaluate("chatgpt", "herdr:opencode")
         assert c.eligible is True
         assert c.status is AdapterConformanceStatus.VALID
 
@@ -61,8 +61,8 @@ class TestConformanceGateReject:
         assert c.diagnostic, "MISSING must carry a diagnostic"
 
     def test_unavailable_rejects_with_diagnostic(self, gate_factory):
-        gate = gate_factory({"kimi": AdapterConformanceStatus.UNAVAILABLE})
-        c = gate.evaluate("kimi", "herdr:kimi")
+        gate = gate_factory({"codex": AdapterConformanceStatus.UNAVAILABLE})
+        c = gate.evaluate("kimi", "herdr:codex")
         assert c.eligible is False
         assert c.status is AdapterConformanceStatus.UNAVAILABLE
         assert c.diagnostic, "UNAVAILABLE must carry a diagnostic"
@@ -85,7 +85,7 @@ class TestConformanceGateRegistry:
 
     def test_principal_not_assigned_profile_missing(self, gate_factory):
         gate = gate_factory({"claude": AdapterConformanceStatus.HEALTHY})
-        # qwen has herdr:qwen/kilo/opencode-worker; herdr:claude is not assigned
+        # qwen owns herdr:cline; herdr:claude is not assigned
         c = gate.evaluate("qwen", "herdr:claude")
         assert c.eligible is False
         assert c.status is AdapterConformanceStatus.MISSING

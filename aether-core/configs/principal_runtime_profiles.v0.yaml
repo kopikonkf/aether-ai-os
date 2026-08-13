@@ -17,9 +17,15 @@ principals:
       - verification_strategy
       - cross_subsystem_review
     execution_profiles:
+      - herdr:opencode
       - remote:mcp:chatgpt
-      - herdr:codex
     mutation_authority: false
+    note: >-
+      Agnostic fleet mapping: chatgpt runs on the opencode CLI (deepseek-v4-flash,
+      free-tier fuel) to maximize free quota during Aether bootstrapping. The
+      execution profile is decoupled from any vendor-specific chat client.
+      remote:mcp:chatgpt is a reserved remote-transport capability, not locally
+      dispatchable via APCB.
 
   claude:
     role: architecture_principal
@@ -29,9 +35,13 @@ principals:
       - invariant_analysis
       - diagnostic
     execution_profiles:
+      - herdr:freebuff
       - remote:mcp:claude
-      - herdr:claude
     mutation_authority: false
+    note: >-
+      Agnostic fleet mapping: claude runs on the freebuff CLI (deepseek-v4-flash,
+      free-tier fuel). principal_id is cognitive attribution; the underlying CLI
+      is chosen for free-tier fuel, not for vendor name matching.
 
   gemini:
     role: research_evidence_principal
@@ -41,9 +51,12 @@ principals:
       - standards_analysis
       - contradiction_analysis
     execution_profiles:
+      - herdr:claude
       - remote:mcp:gemini
-      - herdr:gemini
     mutation_authority: false
+    note: >-
+      Agnostic fleet mapping: gemini runs on the claude CLI (kimi model provider).
+      Not bound to a Gemini-branded client; any available pane with fuel is valid.
 
   qwen:
     role: implementation_principal
@@ -53,10 +66,11 @@ principals:
       - testing
       - verification
     execution_profiles:
-      - herdr:qwen
-      - herdr:kilo
-      - herdr:opencode-worker
+      - herdr:cline
     mutation_authority: false
+    note: >-
+      Agnostic fleet mapping: qwen runs on the cline CLI (deepseek-v4-flash,
+      free-tier fuel). Execution CLI is orthogonal to the principal identity.
 
   kimi:
     role: adversarial_principal
@@ -66,8 +80,12 @@ principals:
       - security_review
       - recovery_testing
     execution_profiles:
-      - herdr:kimi
+      - herdr:codex
     mutation_authority: false
+    note: >-
+      Agnostic fleet mapping: kimi runs on the codex CLI (gpt-5.5, limited
+      OpenAI free-tier quota). Used sparingly; quota is a fuel property, not an
+      identity property.
 
   deepseek:
     role: alternative_reasoning_principal
@@ -77,9 +95,13 @@ principals:
       - complexity_review
       - tradeoff_analysis
     execution_profiles:
+      - herdr:kilo
       - remote:mcp:deepseek
-      - herdr:deepseek
     mutation_authority: false
+    note: >-
+      Agnostic fleet mapping: deepseek runs on the kilo CLI (omniroute
+      deepseek-v4-flash, free-tier fuel). principal_id is attribution; the pane
+      carries the actual execution fuel.
 
   opencode:
     role: integration_runtime_coordinator
@@ -104,6 +126,16 @@ execution_profiles:
 
   herdr:codex:
     herdr_agent_kind: codex
+    work_mode: task
+    direct_handoff: false
+
+  herdr:cline:
+    herdr_agent_kind: cline
+    work_mode: task
+    direct_handoff: false
+
+  herdr:freebuff:
+    herdr_agent_kind: freebuff
     work_mode: task
     direct_handoff: false
 
