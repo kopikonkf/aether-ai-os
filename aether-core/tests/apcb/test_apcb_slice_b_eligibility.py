@@ -39,6 +39,7 @@ def fully_ready(**overrides) -> WorkItemView:
         execution_ready=True,
         awaiting_approval=False,
         attempt_number=1,
+        execution_profile="herdr:qwen",
     )
     return WorkItemView(**{**view.__dict__, **overrides})
 
@@ -119,6 +120,22 @@ class TestEligibilityAllOrNothing:
         assert bool(e) is False
         assert "not_awaiting_approval" in e.blockers()
 
+    def test_missing_execution_profile_blocks(self, evaluator):
+        # APCB never guesses a profile: an explicit execution_profile is required.
+        e = evaluator.evaluate(fully_ready(execution_profile=""))
+        assert bool(e) is False
+        assert "profile_enabled" in e.blockers()
+
+    def test_execution_profile_not_assigned_blocks(self, evaluator):
+        # claude does not own herdr:qwen
+        e = evaluator.evaluate(fully_ready(principal_id="claude", execution_profile="herdr:qwen"))
+        assert bool(e) is False
+        assert "profile_enabled" in e.blockers()
+
+    def test_execution_profile_assigned_is_enabled(self, evaluator):
+        e = evaluator.evaluate(fully_ready(principal_id="claude", execution_profile="herdr:claude"))
+        assert "profile_enabled" not in e.blockers()
+
     def test_all_blockers_listed(self, evaluator):
         e = evaluator.evaluate(
             WorkItemView(
@@ -152,6 +169,7 @@ class TestEligibilityDictInput:
             "workspace_id": "workspace://w",
             "execution_ready": True,
             "execution_authorized": True,
+            "execution_profile": "herdr:qwen",
         }
         e = evaluator.evaluate_dict(work)
         assert bool(e) is True
@@ -165,6 +183,7 @@ class TestEligibilityDictInput:
             "workspace_id": "workspace://w",
             "execution_ready": True,
             "execution_authorized": True,
+            "execution_profile": "herdr:qwen",
             "pending_approval": True,
         }
         e = evaluator.evaluate_dict(work)

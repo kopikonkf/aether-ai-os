@@ -95,6 +95,7 @@ def ready_work(**overrides) -> WorkItemView:
         execution_ready=True,
         awaiting_approval=False,
         attempt_number=1,
+        execution_profile="herdr:qwen",
         metadata={"objective": "implement slice b", "acceptance_criteria": ["tests pass"]},
     )
     return WorkItemView(**{**view.__dict__, **overrides})
@@ -333,6 +334,116 @@ class TestReconcileRestart:
         # attempt stays 1; no attempt-2 receipt was fabricated
         assert receipts.get_by_components("WORK-1", 2, "qwen") is None
         assert receipts.get_by_components("WORK-1", 1, "qwen") is not None
+
+
+class TestProfileSelectionExplicit:
+    """ChatGPT hardening directive (2026-08-13): the canonical work item must
+    name its execution_profile; APCB must never pick a profile implicitly."""
+
+    CUSTOM_YAML = """\
+version: 1
+schema: aether.principal-runtime-profiles.v0
+defaults:
+  mutation_authority: false
+principals:
+  claude:
+    role: architecture_principal
+    capabilities:
+      - architecture_review
+      - coding
+    execution_profiles:
+      - herdr:claude-code
+      - herdr:claude-review
+execution_profiles:
+  herdr:claude-code:
+    herdr_agent_kind: claude-code
+    work_mode: task
+  herdr:claude-review:
+    herdr_agent_kind: claude-review
+    work_mode: task
+"""
+
+    @pytest.fixture
+    def multi_profile(self, tmp_path):
+        p = tmp_path / "multi_profiles.yaml"
+        p.write_text(self.CUSTOM_YAML, encoding="utf-8")
+        return PrincipalRuntimeProfiles(p)
+
+    def test_work_item_names_profile_claude_code(self, multi_profile, tmp_path):
+        adapter = RecordingAdapter(status="done")
+        receipts = ReceiptStore(tmp_path / "r.jsonl")
+        gate = ConformanceGate(multi_profile, probe=lambda kind: AdapterConformanceStatus.HEALTHY)
+        dispatcher = APCBDispatcher(
+            profiles=multi_profile, receipts=receipts, conformance_gate=gate,
+            adapter=adapter, wait_timeout_seconds=0.5,
+        )
+        work = WorkItemView(
+            work_id="WORK-A", mission_id="MISSION-1", principal_id="claude",
+            required_capabilities=("coding",), workspace_id="ws://a",
+            authorized=True, execution_ready=True, execution_profile="herdr:claude-code",
+        )
+        decision = dispatcher.dispatch(work)
+        assert decision.dispatched is True
+        assert decision.conformance.herdr_agent_kind == "claude-code"
+        assert adapter.calls.count("prompt_agent") == 1
+
+    def test_work_item_names_profile_claude_review(self, multi_profile, tmp_path):
+        adapter = RecordingAdapter(status="done")
+        receipts = ReceiptStore(tmp_path / "r.jsonl")
+        gate = ConformanceGate(multi_profile, probe=lambda kind: AdapterConformanceStatus.HEALTHY)
+        dispatcher = APCBDispatcher(
+            profiles=multi_profile, receipts=receipts, conformance_gate=gate,
+            adapter=adapter, wait_timeout_seconds=0.5,
+        )
+        work = WorkItemView(
+            work_id="WORK-B", mission_id="MISSION-1", principal_id="claude",
+            required_capabilities=("architecture_review",), workspace_id="ws://b",
+            authorized=True, execution_ready=True, execution_profile="herdr:claude-review",
+        )
+        decision = dispatcher.dispatch(work)
+        assert decision.dispatched is True
+        assert decision.conformance.herdr_agent_kind == "claude-review"
+        assert adapter.calls.count("prompt_agent") == 1
+
+    def test_no_implicit_profile_selection(self, multi_profile, tmp_path):
+        """Without an explicit execution_profile the dispatcher rejects; it
+        never falls back to 'the first herdr profile'."""
+        adapter = RecordingAdapter(status="done")
+        receipts = ReceiptStore(tmp_path / "r.jsonl")
+        gate = ConformanceGate(multi_profile, probe=lambda kind: AdapterConformanceStatus.HEALTHY)
+        dispatcher = APCBDispatcher(
+            profiles=multi_profile, receipts=receipts, conformance_gate=gate,
+            adapter=adapter, wait_timeout_seconds=0.5,
+        )
+        work = WorkItemView(
+            work_id="WORK-C", mission_id="MISSION-1", principal_id="claude",
+            required_capabilities=("coding",), workspace_id="ws://c",
+            authorized=True, execution_ready=True, execution_profile="",
+        )
+        decision = dispatcher.dispatch(work)
+        assert decision.dispatched is False
+        assert decision.status == "rejected"
+        assert "never guesses" in decision.diagnostic[0]
+        assert "prompt_agent" not in adapter.calls
+
+    def test_unassigned_profile_rejected_by_eligibility(self, multi_profile, tmp_path):
+        adapter = RecordingAdapter(status="done")
+        receipts = ReceiptStore(tmp_path / "r.jsonl")
+        gate = ConformanceGate(multi_profile, probe=lambda kind: AdapterConformanceStatus.HEALTHY)
+        dispatcher = APCBDispatcher(
+            profiles=multi_profile, receipts=receipts, conformance_gate=gate,
+            adapter=adapter, wait_timeout_seconds=0.5,
+        )
+        # claude is not assigned herdr:qwen
+        work = WorkItemView(
+            work_id="WORK-D", mission_id="MISSION-1", principal_id="claude",
+            required_capabilities=("coding",), workspace_id="ws://d",
+            authorized=True, execution_ready=True, execution_profile="herdr:qwen",
+        )
+        decision = dispatcher.dispatch(work)
+        assert decision.dispatched is False
+        assert "profile_enabled" in decision.eligibility.blockers()
+        assert "prompt_agent" not in adapter.calls
 
 
 class TestStateMachineObservationLevel:

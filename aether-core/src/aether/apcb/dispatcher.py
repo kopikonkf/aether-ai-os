@@ -122,6 +122,23 @@ class APCBDispatcher:
             # again — never silently re-dispatch an owned work item.
             return self.reconcile(work, existing)
 
+        profile_name = work.execution_profile
+        if not profile_name:
+            # ChatGPT hardening directive (2026-08-13): APCB must never select
+            # an execution profile implicitly; the canonical work item decides.
+            return DispatchDecision(
+                work_id=work.work_id,
+                mission_id=work.mission_id,
+                principal_id=work.principal_id,
+                attempt_number=work.attempt_number,
+                dispatched=False,
+                status="rejected",
+                diagnostic=(
+                    "work item must specify execution_profile explicitly; "
+                    "APCB never guesses a principal profile",
+                ),
+            )
+
         eligibility = self.eligibility.evaluate(work)
         if not eligibility:
             return DispatchDecision(
@@ -133,19 +150,6 @@ class APCBDispatcher:
                 status="rejected",
                 eligibility=eligibility,
                 diagnostic=tuple(f"eligibility:{b}" for b in eligibility.blockers()),
-            )
-
-        profile_name = self._first_herdr_profile(work.principal_id)
-        if profile_name is None:
-            return DispatchDecision(
-                work_id=work.work_id,
-                mission_id=work.mission_id,
-                principal_id=work.principal_id,
-                attempt_number=work.attempt_number,
-                dispatched=False,
-                status="rejected",
-                eligibility=eligibility,
-                diagnostic=("no herdr:* execution profile assigned to principal",),
             )
 
         conformance = self.conformance_gate.evaluate(work.principal_id, profile_name)
@@ -396,15 +400,6 @@ class APCBDispatcher:
     # ------------------------------------------------------------------ #
     # Helpers                                                            #
     # ------------------------------------------------------------------ #
-    def _first_herdr_profile(self, principal_id: str) -> str | None:
-        principal = self.profiles.get_principal(principal_id)
-        if principal is None:
-            return None
-        for name in principal.execution_profiles:
-            if name.startswith("herdr:"):
-                return name
-        return None
-
     @staticmethod
     def _outcome_from_observation(observation: AgentObservation) -> str:
         if observation.status == "done":
