@@ -212,18 +212,19 @@ class HerdrExecutionAdapter:
     def wait_agent(self, agent_ref: str, timeout_seconds: float) -> AgentObservation:
         """Poll observe until terminal status or timeout; bounded settle."""
         if self._is_pane_send(agent_ref):
-            # freebuff/jcode: no herdr lifecycle. Bounded settle then read the
-            # pane output, mirroring the reference herdr_dispatch adapter
-            # (send -> settle -> read). Terminal outcome is observation-level;
-            # the artifact on disk remains the source of truth.
+            # freebuff/jcode: no herdr lifecycle (ADR-0057 K1). A bounded settle
+            # is NOT an observed completion: return unknown + non-terminal so
+            # the caller MUST reconcile and verify the artifact on disk before
+            # any terminal outcome is recorded. Never fabricate "done".
             settle = min(300.0, max(0.0, float(timeout_seconds)))
             time.sleep(settle)
             output = self.read_agent(agent_ref, limit_bytes=8192)
             return AgentObservation(
                 agent_ref=agent_ref,
-                status="done",
+                status="unknown",
                 output=output,
-                is_terminal=True,
+                is_terminal=False,
+                error="pane-send agent: no lifecycle; caller must reconcile + verify artifact",
             )
         deadline = time.monotonic() + max(0.0, float(timeout_seconds))
         while time.monotonic() < deadline:
