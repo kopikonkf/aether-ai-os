@@ -1,4 +1,4 @@
-"""APCB Slice B — dispatcher orchestration (deterministic, mock herdr).
+"""APCB Slice B â€” dispatcher orchestration (deterministic, mock herdr).
 
 Covers:
   - receipt persisted BEFORE dispatch (idempotency tuple);
@@ -95,7 +95,7 @@ def ready_work(**overrides) -> WorkItemView:
         execution_ready=True,
         awaiting_approval=False,
         attempt_number=1,
-        execution_profile="herdr:qwen",
+        execution_profile="herdr:cline",
         metadata={"objective": "implement slice b", "acceptance_criteria": ["tests pass"]},
     )
     return WorkItemView(**{**view.__dict__, **overrides})
@@ -190,7 +190,7 @@ class TestConformanceRejectsWithoutFallback:
         adapter = RecordingAdapter(status="done")
         dispatcher = make_dispatcher(
             profiles, receipts, adapter,
-            status_by_kind={"qwen": AdapterConformanceStatus.EXPIRED},
+            status_by_kind={"cline": AdapterConformanceStatus.EXPIRED},
         )
         decision = dispatcher.dispatch(ready_work())
 
@@ -206,7 +206,7 @@ class TestConformanceRejectsWithoutFallback:
         adapter = RecordingAdapter(status="done")
         dispatcher = make_dispatcher(
             profiles, receipts, adapter,
-            status_by_kind={"qwen": AdapterConformanceStatus.MISSING},
+            status_by_kind={"cline": AdapterConformanceStatus.MISSING},
         )
         decision = dispatcher.dispatch(ready_work())
         assert decision.dispatched is False
@@ -217,7 +217,7 @@ class TestConformanceRejectsWithoutFallback:
         adapter = RecordingAdapter(status="done")
         dispatcher = make_dispatcher(
             profiles, receipts, adapter,
-            status_by_kind={"qwen": AdapterConformanceStatus.UNAVAILABLE},
+            status_by_kind={"cline": AdapterConformanceStatus.UNAVAILABLE},
         )
         decision = dispatcher.dispatch(ready_work())
         assert decision.dispatched is False
@@ -228,7 +228,7 @@ class TestConformanceRejectsWithoutFallback:
         adapter = RecordingAdapter(status="done")
         dispatcher = make_dispatcher(
             profiles, receipts, adapter,
-            status_by_kind={"qwen": AdapterConformanceStatus.EXPIRED},
+            status_by_kind={"cline": AdapterConformanceStatus.EXPIRED},
         )
         dispatcher.dispatch(ready_work())
         stored = receipts.get_by_components("WORK-1", 1, "qwen")
@@ -469,7 +469,7 @@ class TestStateMachineObservationLevel:
         )
         dispatcher.dispatch(ready_work())
         # APCB consults Aether state via the observer (read); it never writes a
-        # terminal Aether state through it — APCB-local terminal is its own.
+        # terminal Aether state through it â€” APCB-local terminal is its own.
         assert reads == []
         assert writes == []
         assert dispatcher.reconcile(ready_work(), receipts.get_by_components("WORK-1", 1, "qwen")).status == "promoted"
