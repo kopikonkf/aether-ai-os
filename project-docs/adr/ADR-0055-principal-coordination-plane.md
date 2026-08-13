@@ -1,6 +1,7 @@
 # ADR-0055 — Aether Principal Coordination Plane
 
-- Status: Proposed (prerequisites P1-P4 closed; see below)
+- Status: Accepted (2026-08-12 — all prerequisites P1-P4 closed; Founder/
+  architecture decision owner)
 - Date: 2026-08-11
 - Decision owner: Founder / Aether architecture
 - Related: ADR-0008 (Governed Action Path), ADR-0010 (Trusted Approval Inbox),
