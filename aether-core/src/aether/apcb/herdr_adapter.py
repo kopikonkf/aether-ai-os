@@ -216,7 +216,7 @@ class HerdrExecutionAdapter:
             # pane output, mirroring the reference herdr_dispatch adapter
             # (send -> settle -> read). Terminal outcome is observation-level;
             # the artifact on disk remains the source of truth.
-            settle = min(90.0, max(0.0, float(timeout_seconds)))
+            settle = min(300.0, max(0.0, float(timeout_seconds)))
             time.sleep(settle)
             output = self.read_agent(agent_ref, limit_bytes=8192)
             return AgentObservation(
