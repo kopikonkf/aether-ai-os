@@ -149,22 +149,26 @@ class HerdrExecutionAdapter:
 
     # -- agent ------------------------------------------------------------
 
-    def ensure_agent(self, workspace_ref: str, principal_id: str) -> str:
+    def ensure_agent(self, workspace_ref: str, principal_id: str, herdr_agent_kind: str | None = None) -> str:
         """Resolve a principal to a live Herdr pane/execution ref.
 
         The pane resolver is injected (default: reads a JSON map from
         APCB_HERDR_PANE_MAP, else None). Returns an opaque ref like
-        'herdr://pane/w7:p3'.
+        'herdr://pane/w7:p3', or 'herdr://pane/send/w7:p7' for agents that
+        herdr cannot detect as agents (freebuff/jcode) and therefore need the
+        raw terminal send path.
         """
         pane = self.pane_resolver(principal_id)
         if not pane:
             raise LookupError(f"no herdr pane bound for principal '{principal_id}'")
+        if herdr_agent_kind and herdr_agent_kind in self.pane_send_agents:
+            return f"herdr://pane/send/{pane}"
         return f"herdr://pane/{pane}"
 
     def prompt_agent(self, agent_ref: str, task_context: str) -> str:
         """Dispatch a task to a live agent pane; returns a prompt ref."""
         pane = self._pane_of(agent_ref)
-        if pane in self.pane_send_agents or self._is_pane_send(agent_ref):
+        if self._is_pane_send(agent_ref):
             r1 = self.runner.run(["pane", "send-text", pane, task_context], timeout=15)
             r2 = self.runner.run(["pane", "send-keys", pane, "enter"], timeout=15)
             if r1.returncode != 0 or r2.returncode != 0:
@@ -180,6 +184,13 @@ class HerdrExecutionAdapter:
     def observe_agent(self, agent_ref: str) -> AgentObservation:
         """Query current agent lifecycle status for a pane."""
         pane = self._pane_of(agent_ref)
+        if self._is_pane_send(agent_ref):
+            # freebuff/jcode are not herdr agents: no lifecycle to query.
+            # Observation is bounded-settle + read (see wait_agent).
+            return AgentObservation(
+                agent_ref=agent_ref, status="unknown", is_terminal=False,
+                error="pane-send agent: no lifecycle; use bounded settle + read",
+            )
         r = self.runner.run(["agent", "get", pane], timeout=15)
         if r.returncode != 0:
             return AgentObservation(
@@ -200,6 +211,20 @@ class HerdrExecutionAdapter:
 
     def wait_agent(self, agent_ref: str, timeout_seconds: float) -> AgentObservation:
         """Poll observe until terminal status or timeout; bounded settle."""
+        if self._is_pane_send(agent_ref):
+            # freebuff/jcode: no herdr lifecycle. Bounded settle then read the
+            # pane output, mirroring the reference herdr_dispatch adapter
+            # (send -> settle -> read). Terminal outcome is observation-level;
+            # the artifact on disk remains the source of truth.
+            settle = min(90.0, max(0.0, float(timeout_seconds)))
+            time.sleep(settle)
+            output = self.read_agent(agent_ref, limit_bytes=8192)
+            return AgentObservation(
+                agent_ref=agent_ref,
+                status="done",
+                output=output,
+                is_terminal=True,
+            )
         deadline = time.monotonic() + max(0.0, float(timeout_seconds))
         while time.monotonic() < deadline:
             obs = self.observe_agent(agent_ref)

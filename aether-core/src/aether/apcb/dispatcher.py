@@ -206,7 +206,11 @@ class APCBDispatcher:
         )
 
         try:
-            agent_ref = self.adapter.ensure_agent(work.workspace_id, work.principal_id)
+            agent_kind = None
+            ep = self.profiles.get_execution_profile(profile_name)
+            if ep is not None:
+                agent_kind = ep.herdr_agent_kind
+            agent_ref = self.adapter.ensure_agent(work.workspace_id, work.principal_id, herdr_agent_kind=agent_kind)
             receipt = self.receipts.update(
                 receipt,
                 state=ExecutionReceiptStatus.HERDR_ATTACHED,

@@ -38,7 +38,7 @@ class RecordingAdapter:
         self.ensure_agent_ref = "herdr://pane/w7:p3"
         self.prompt_texts: list[str] = []
 
-    def ensure_agent(self, workspace_ref, principal_id):
+    def ensure_agent(self, workspace_ref, principal_id, herdr_agent_kind=None):
         self.calls.append(f"ensure_agent:{principal_id}")
         return self.ensure_agent_ref
 
