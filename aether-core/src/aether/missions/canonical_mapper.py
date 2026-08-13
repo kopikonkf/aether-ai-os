@@ -21,14 +21,19 @@ Canonical metadata keys (carried on ActionProposal.metadata):
   - mission_execution_ready   (optional, default True)
   - mission_awaiting_approval (optional)
   - mission_work_id           (optional) overrides derived WORK-{action_id}
+  - mission_expected_artifact (optional) expected deliverable filename; the
+    ADR-0057 artifact authority verifier checks it against the workspace
   - mission_id, mission_attempt_number (set by the orchestrator)
 
 Legacy aliases: workspace_id, awaiting_approval.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from aether.apcb.cli import parse_artifact_envelope
 from aether.apcb.eligibility import WorkItemView
 from aether.apcb.profiles import PrincipalRuntimeProfiles
 from aether.contracts.actions import ActionProposal
@@ -44,6 +49,7 @@ MISSION_AWAITING_APPROVAL = "mission_awaiting_approval"
 MISSION_WORK_ID = "mission_work_id"
 MISSION_ATTEMPT_NUMBER = "mission_attempt_number"
 MISSION_ID = "mission_id"
+MISSION_EXPECTED_ARTIFACT = "mission_expected_artifact"
 
 # Legacy / plain aliases tolerated for compatibility.
 _LEGACY_WORKSPACE_ID = "workspace_id"
@@ -57,6 +63,70 @@ _OPERATION_CAPABILITY: Mapping[str, str] = {
     "test": "testing",
     "verify": "verification",
 }
+
+# Deterministic filename hints for build_expected_artifact_from_criteria.
+_ARTIFACT_EXTENSIONS = (".md", ".json", ".txt", ".py", ".jsonl")
+_ARTIFACT_PREFIXES = ("WORK-", "mission_")
+_WORD_TOKEN = re.compile(r"[\w][\w\-.]*")
+
+
+def build_expected_artifact_from_criteria(
+    success_criteria: tuple[str, ...],
+) -> str | None:
+    """Derive an expected artifact filename from success criteria (HINT).
+
+    Deterministic heuristic: scan every criterion and return the first token
+    that looks like a filename — a token with one of the known extensions
+    (.md/.json/.txt/.py/.jsonl) OR starting with WORK- / mission_. Returns None
+    when nothing matches. This is a HINT, not free-form parsing: callers that
+    need an exact artifact should set mission_expected_artifact explicitly.
+    """
+    for criterion in success_criteria or ():
+        for token in _WORD_TOKEN.findall(str(criterion)):
+            lowered = token.lower()
+            if lowered.endswith(_ARTIFACT_EXTENSIONS):
+                return token
+            if lowered.startswith(_ARTIFACT_PREFIXES):
+                return token
+    return None
+
+
+def build_mission_artifact_verify(
+    expected_artifact: str | None,
+) -> Callable[[WorkItemView], bool] | None:
+    """Build the mission-level ADR-0057 artifact verifier (WorkItemView-based).
+
+    Reuses the canonical envelope parser (aether.apcb.cli.parse_artifact_envelope)
+    and enforces the same authority rules as the CLI verifier: the named
+    artifact must exist in the work item's workspace, be non-empty, and its
+    envelope header (work_id, principal_id, attempt) must match the work item.
+    A 1-byte placeholder or a stale artifact from another attempt is rejected.
+    Returns None when no artifact is expected (no artifact gate).
+    """
+    if not expected_artifact:
+        return None
+    name = str(expected_artifact).strip()
+    if not name:
+        return None
+
+    def verify(work: WorkItemView) -> bool:
+        try:
+            ws = work.workspace_id or ""
+            p = Path(ws) / name
+            if not (p.is_file() and p.stat().st_size > 0):
+                return False
+            header = parse_artifact_envelope(p.read_text("utf-8", errors="replace"))
+            if header.get("work_id") != work.work_id:
+                return False
+            if header.get("principal_id") != work.principal_id:
+                return False
+            if header.get("attempt") != str(work.attempt_number):
+                return False
+            return True
+        except OSError:
+            return False
+
+    return verify
 
 
 def _derive_execution_profile(
@@ -101,6 +171,9 @@ def build_canonical_work_mapper(
         if not capabilities:
             hint = _OPERATION_CAPABILITY.get(action.operation or "")
             capabilities = (hint,) if hint else ()
+        work_meta = dict(meta)
+        if meta.get(MISSION_EXPECTED_ARTIFACT) is not None:
+            work_meta[MISSION_EXPECTED_ARTIFACT] = meta[MISSION_EXPECTED_ARTIFACT]
         return WorkItemView(
             work_id=str(meta.get(MISSION_WORK_ID) or f"WORK-{action.action_id}"),
             mission_id=str(meta.get(MISSION_ID) or ""),
@@ -115,7 +188,7 @@ def build_canonical_work_mapper(
             ),
             attempt_number=attempt,
             execution_profile=profile,
-            metadata=meta,
+            metadata=work_meta,
         )
 
     return mapper

@@ -41,7 +41,12 @@ from aether.apcb.eligibility import WorkItemView
 from aether.apcb.profiles import PrincipalRuntimeProfiles
 from aether.contracts.actions import ActionProposal, ActionResult
 
-from .canonical_mapper import MISSION_ATTEMPT_NUMBER, build_canonical_work_mapper
+from .canonical_mapper import (
+    MISSION_ATTEMPT_NUMBER,
+    MISSION_EXPECTED_ARTIFACT,
+    build_canonical_work_mapper,
+    build_mission_artifact_verify,
+)
 
 MISSION_ATTEMPT_METADATA_KEY = MISSION_ATTEMPT_NUMBER
 
@@ -79,6 +84,13 @@ class ApcbMissionActionExecutor:
     reconcile (F-07). The dispatcher itself must be constructed with the
     observer — this executor merely carries it for callers that build the
     dispatcher inside a factory.
+
+    `artifact_verify` is the mission-level ADR-0057 artifact-authority verifier
+    (build_mission_artifact_verify / a custom Callable). The executor does NOT
+    call the verifier itself: the live runner passes it when constructing the
+    APCBDispatcher so dispatch/reconcile gate a "completed" terminal on the
+    deliverable artifact existing in the workspace with a matching envelope.
+    This executor merely carries it (backward compatible, optional).
     """
 
     def __init__(
@@ -88,6 +100,7 @@ class ApcbMissionActionExecutor:
         *,
         profiles: PrincipalRuntimeProfiles | None = None,
         mission_state_observer: Callable[[str], str] | None = None,
+        artifact_verify: Callable[[WorkItemView], bool] | None = None,
     ) -> None:
         self._dispatcher_factory: Callable[[], APCBDispatcher] = (
             dispatcher if callable(dispatcher) else (lambda: dispatcher)
@@ -102,6 +115,7 @@ class ApcbMissionActionExecutor:
             work_mapper = build_canonical_work_mapper(profiles)
         self.work_mapper = work_mapper
         self.mission_state_observer = mission_state_observer
+        self.artifact_verify = artifact_verify
 
     # ------------------------------------------------------------------ #
     # MissionActionExecutor protocol                                      #
