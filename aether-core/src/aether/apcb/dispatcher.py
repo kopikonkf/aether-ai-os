@@ -92,6 +92,7 @@ class APCBDispatcher:
         aether_state_observer: AetherStateObserver | None = None,
         prompt_factory: Callable[[WorkItemView, int], PromptEnvelope] | None = None,
         workspace_verify: Callable[[str], bool] | None = None,
+        artifact_verify: Callable[[WorkItemView], bool] | None = None,
         wait_timeout_seconds: float = 300.0,
     ) -> None:
         self.profiles = profiles
@@ -102,7 +103,19 @@ class APCBDispatcher:
         self.aether_state_observer = aether_state_observer or (lambda mission_id: "unknown")
         self.prompt_factory = prompt_factory or _default_prompt_factory
         self.workspace_verify = workspace_verify
+        # ADR-0057 K1: artifact authority. When set, a "completed" terminal
+        # requires the deliverable artifact to exist; a failed/unknown terminal
+        # whose artifact exists is delivered-with-evidence (reconcile note).
+        self.artifact_verify = artifact_verify
         self.wait_timeout_seconds = wait_timeout_seconds
+
+    def _artifact_present(self, work: WorkItemView) -> bool:
+        if self.artifact_verify is None:
+            return False
+        try:
+            return bool(self.artifact_verify(work))
+        except Exception:  # noqa: BLE001
+            return False
 
     # ------------------------------------------------------------------ #
     # Dispatch                                                           #
@@ -269,6 +282,24 @@ class APCBDispatcher:
             output = self.adapter.read_agent(agent_ref, limit_bytes=8192)
 
             terminal_outcome = self._outcome_from_observation(observation)
+            metadata: dict[str, Any] = {
+                "agent_ref": agent_ref,
+                "observation_status": observation.status,
+                "output_tail": output[-500:],
+            }
+            # ADR-0057 K1 / WORK-PCP-001 rec 1: artifact is the acceptance
+            # authority. A "completed" terminal requires the artifact; a
+            # failed/unknown observation whose artifact exists is
+            # delivered-with-evidence (reconcile note travels in metadata).
+            if self.artifact_verify is not None:
+                artifact_ok = self._artifact_present(work)
+                if terminal_outcome == "completed" and not artifact_ok:
+                    terminal_outcome = "completed_without_artifact"
+                    metadata["artifact_missing"] = True
+                elif terminal_outcome in ("failed", "unknown") and artifact_ok:
+                    terminal_outcome = "completed"
+                    metadata["reconcile_artifact_found"] = True
+
             receipt = self.receipts.update(
                 receipt,
                 state=ExecutionReceiptStatus.TERMINAL,
@@ -286,11 +317,7 @@ class APCBDispatcher:
                 receipt=receipt,
                 terminal_outcome=terminal_outcome,
                 diagnostic=(),
-                metadata={
-                    "agent_ref": agent_ref,
-                    "observation_status": observation.status,
-                    "output_tail": output[-500:],
-                },
+                metadata=metadata,
             )
         except Exception as exc:  # noqa: BLE001
             LOG.exception(f"[{work.work_id}] dispatch failed")
@@ -349,17 +376,123 @@ class APCBDispatcher:
                 diagnostic=("no receipt for tuple; reconcile before first dispatch not applicable",),
             )
 
-        # K2 — terminal uniqueness (WORK-5 blocker): exactly one terminal per
-        # (work_id, attempt_number, principal_id). A tuple that already reached
-        # a DEFINITIVE terminal outcome (completed/failed/blocked/stopped/
-        # rejected) is closed; reconcile must not write a second terminal or
-        # re-dispatch. A terminal_outcome of "unknown" is NOT closed (K10: it
-        # needs reconcile), so it proceeds to observation below.
-        if receipt.is_terminal() and receipt.terminal_outcome not in (
-            None,
-            "",
-            "unknown",
+        # ------------------------------------------------------------------ #
+        # Contract §11 step 2: K2 terminal-uniqueness (early). A tuple that
+        # already reached a DEFINITIVE terminal outcome that CANNOT be rescued
+        # (completed/blocked/stopped/rejected/cancelled) is closed — return
+        # status=terminal without rewriting and without reading mission state
+        # (per test_dispatcher_never_writes_aether_state). failed and
+        # completed_without_artifact are rescuable when an artifact gate is
+        # wired (ADR-0057 / WORK-PCP-001 rec 5); unknown is non-definitive
+        # (K10: needs reconcile). Both proceed past this check.
+        if receipt.is_terminal() and receipt.terminal_outcome not in (None, "", "unknown"):
+            if not (
+                self.artifact_verify is not None
+                and receipt.terminal_outcome in ("failed", "completed_without_artifact")
+            ):
+                return DispatchDecision(
+                    work_id=work.work_id,
+                    mission_id=work.mission_id,
+                    principal_id=work.principal_id,
+                    attempt_number=work.attempt_number,
+                    dispatched=False,
+                    status="terminal",
+                    receipt=receipt,
+                    terminal_outcome=receipt.terminal_outcome,
+                    diagnostic=(
+                        f"receipt already terminal ({receipt.terminal_outcome!r}); "
+                        "new attempt requires explicit reconcile (needs_reconcile/approval_id)",
+                    ),
+                )
+
+        # Contract §11 step 3-4: mission-state check BEFORE artifact promotion.
+        # When Aether mission is terminal, APCB must stop — never promote a
+        # stale artifact (F-03). This is the mission-authority gate.
+        mission_state = self.aether_state_observer(work.mission_id)
+        if mission_state in ("terminal", "completed", "failed", "cancelled", "blocked"):
+            if not receipt.is_terminal() or receipt.terminal_outcome in (None, "", "unknown"):
+                stopped = self.receipts.update(
+                    receipt,
+                    state=ExecutionReceiptStatus.TERMINAL,
+                    terminal_outcome="stopped",
+                    error=f"aether mission terminal ({mission_state})",
+                )
+                return DispatchDecision(
+                    work_id=work.work_id,
+                    mission_id=work.mission_id,
+                    principal_id=work.principal_id,
+                    attempt_number=work.attempt_number,
+                    dispatched=False,
+                    status="terminal",
+                    receipt=stopped,
+                    terminal_outcome="stopped",
+                    diagnostic=(f"aether mission state={mission_state}",),
+                )
+            # Mission terminal + receipt already definitive-terminal (only
+            # rescuable failed/completed_without_artifact reach here): never
+            # write a second terminal (K2) and never promote — return the
+            # existing outcome with a diagnostic naming the mission.
+            return DispatchDecision(
+                work_id=work.work_id,
+                mission_id=work.mission_id,
+                principal_id=work.principal_id,
+                attempt_number=work.attempt_number,
+                dispatched=False,
+                status="terminal",
+                receipt=receipt,
+                terminal_outcome=receipt.terminal_outcome,
+                diagnostic=(
+                    f"aether mission terminal ({mission_state}); "
+                    f"receipt already terminal ({receipt.terminal_outcome!r})",
+                ),
+            )
+
+        # Contract §11 step 5 / ADR-0057 §3 / WORK-PCP-001 rec 5: artifact is
+        # the acceptance authority. A terminal receipt that recorded
+        # failed/unknown/completed_without_artifact but whose artifact now
+        # exists is delivered-with-evidence: emit the marker in the decision
+        # metadata AND a durable note (F-04) — the receipt is NOT rewritten and
+        # no second terminal is written, so K2 holds.
+        if (
+            self.artifact_verify is not None
+            and receipt.is_terminal()
+            and receipt.terminal_outcome in ("failed", "unknown", "completed_without_artifact")
         ):
+            artifact_ok = self._artifact_present(work)
+            if artifact_ok:
+                prior = receipt.terminal_outcome
+                self.receipts.append_note(
+                    {
+                        "work_id": work.work_id,
+                        "mission_id": work.mission_id,
+                        "principal_id": work.principal_id,
+                        "attempt_number": work.attempt_number,
+                        "prior_terminal_outcome": prior,
+                        "new_terminal_outcome": "completed",
+                        "artifact_found": True,
+                        "note_type": "reconcile_artifact_found",
+                    }
+                )
+                return DispatchDecision(
+                    work_id=work.work_id,
+                    mission_id=work.mission_id,
+                    principal_id=work.principal_id,
+                    attempt_number=work.attempt_number,
+                    dispatched=False,
+                    status="promoted",
+                    receipt=receipt,
+                    terminal_outcome="completed",
+                    metadata={"reconcile_artifact_found": True},
+                    diagnostic=(
+                        "artifact found on reconcile; delivered-with-evidence "
+                        f"(was {prior!r})",
+                    ),
+                )
+
+        # K2 closing: a definitive terminal not rescued by artifact-promotion
+        # (e.g. failed without the expected artifact) is closed — return
+        # terminal without a second write.
+        if receipt.is_terminal() and receipt.terminal_outcome not in (None, "", "unknown"):
             return DispatchDecision(
                 work_id=work.work_id,
                 mission_id=work.mission_id,
@@ -373,26 +506,6 @@ class APCBDispatcher:
                     f"receipt already terminal ({receipt.terminal_outcome!r}); "
                     "new attempt requires explicit reconcile (needs_reconcile/approval_id)",
                 ),
-            )
-
-        mission_state = self.aether_state_observer(work.mission_id)
-        if mission_state in ("terminal", "completed", "failed", "cancelled", "blocked"):
-            stopped = self.receipts.update(
-                receipt,
-                state=ExecutionReceiptStatus.TERMINAL,
-                terminal_outcome="stopped",
-                error=f"aether mission terminal ({mission_state})",
-            )
-            return DispatchDecision(
-                work_id=work.work_id,
-                mission_id=work.mission_id,
-                principal_id=work.principal_id,
-                attempt_number=work.attempt_number,
-                dispatched=False,
-                status="terminal",
-                receipt=stopped,
-                terminal_outcome="stopped",
-                diagnostic=(f"aether mission state={mission_state}",),
             )
 
         if not receipt.herdr_execution_ref:
@@ -475,6 +588,10 @@ class APCBDispatcher:
             return "completed"
         if observation.status in ("blocked", "terminated"):
             return "blocked"
+        if observation.status == "unknown":
+            # ADR-0057 / WORK-PCP-001 rec 2: unknown is never promoted to
+            # completed — it must be resolved via reconcile + artifact check.
+            return "unknown"
         if observation.error:
             return "failed"
         return "unknown"

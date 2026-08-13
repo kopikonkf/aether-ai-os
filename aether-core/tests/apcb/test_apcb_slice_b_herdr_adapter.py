@@ -82,14 +82,18 @@ def test_prompt_agent_regular_agent_uses_agent_prompt():
     assert not any(c[0] == "pane" and c[1] == "send-text" for c in runner.calls)
 
 
-def test_wait_agent_pane_send_bounded_settle_terminal():
+def test_wait_agent_pane_send_bounded_settle_not_terminal():
+    # ADR-0057 / WORK-PCP-001 rec 2: a bounded settle is NOT an observed
+    # completion. pane-send agents (freebuff/jcode) have no herdr lifecycle,
+    # so wait_agent returns unknown + non-terminal; the caller MUST reconcile
+    # and verify the artifact before recording any terminal outcome.
     runner = RecordingRunner()
     adapter = HerdrExecutionAdapter(runner=runner, pane_resolver=_resolver("w7:p7"))
     ref = adapter.ensure_agent("ws", "claude", herdr_agent_kind="freebuff")
     obs = adapter.wait_agent(ref, timeout_seconds=0.01)
-    assert obs.is_terminal is True
-    assert obs.status == "done"
-    # observed via pane read (fallback read path), not agent lifecycle
+    assert obs.is_terminal is False
+    assert obs.status == "unknown"
+    # read path still consulted for the caller's artifact review
     assert any(c[0] == "agent" and c[1] == "read" for c in runner.calls) or any(
         c[0] == "pane" and c[1] == "read" for c in runner.calls
     )

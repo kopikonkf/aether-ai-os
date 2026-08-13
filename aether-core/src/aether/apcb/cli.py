@@ -5,7 +5,8 @@ Usage:
         --principal qwen --workspace workspace://default \
         --objective "implement x" --capability coding \
         --receipts <path.jsonl> [--attempt 1] [--authorized] [--ready] \
-        [--wait 300]
+        [--wait 300] [--mission-state running] \
+        [--expected-artifact WORK-PCP-003.md]
 
 The CLI wires the real components (profile registry, receipt store,
 conformance gate with the live herdr CLI probe, Herdr execution adapter) and
@@ -47,7 +48,100 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ready", action="store_true")
     p.add_argument("--wait", type=float, default=300.0)
     p.add_argument("--reconcile", action="store_true", help="reconcile existing receipt, do not dispatch")
+    p.add_argument(
+        "--mission-state",
+        default=None,
+        help="canonical Aether mission state string for reconcile (e.g. running/completed/failed); "
+        "omit to leave observation-level 'unknown'",
+    )
+    p.add_argument(
+        "--expected-artifact",
+        default=None,
+        help="filename that must exist (non-empty) in the workspace for a 'completed' terminal "
+        "(ADR-0057 artifact authority); e.g. WORK-PCP-003.md",
+    )
     return p
+
+
+def _build_workspace_verify(workspace_id: str | None):
+    """Build a workspace-binding verifier when the workspace is a real directory.
+
+    APCB observes bound workspaces (contract §8); the gate only verifies that a
+    directory-form workspace exists on disk so dispatch can proceed. Returns
+    None for URI-style or empty workspace refs (no binding gate).
+    """
+    if not workspace_id or "://" in workspace_id:
+        return None
+    try:
+        if not Path(workspace_id).is_dir():
+            return None
+    except OSError:
+        return None
+
+    def verify(ws: str) -> bool:
+        try:
+            return Path(ws).is_dir()
+        except OSError:
+            return False
+
+    return verify
+
+
+def parse_artifact_envelope(text: str, limit_lines: int = 60) -> dict[str, str]:
+    """Parse the canonical envelope header from an artifact's first lines.
+
+    The worker writes the same canonical header the prompt carried (see
+    _render_prompt in dispatcher.py): lines like 'protocol: aether.apcb.task.v1',
+    'work_id: WORK-1', 'principal_id: qwen', 'attempt: 1'. Returns a mapping of
+    the header keys found within the first `limit_lines`; a placeholder or
+    stale artifact without the envelope yields an empty/partial mapping.
+    """
+    header: dict[str, str] = {}
+    for line in text.splitlines()[:limit_lines]:
+        line = line.strip()
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip().lower()
+        value = value.strip()
+        if key:
+            header[key] = value
+    return header
+
+
+def _build_artifact_verify(expected_artifact: str | None):
+    """Build an ADR-0057 artifact-authority verifier from --expected-artifact.
+
+    The verifier (F-01/F-02) requires BOTH that the named artifact exists in
+    the workspace and is non-empty, AND that its canonical envelope header
+    matches the work item (work_id, principal_id, attempt_number). A 1-byte
+    placeholder or a stale artifact from a different attempt is rejected.
+    Returns None when no artifact is expected (no artifact gate).
+    """
+    if not expected_artifact:
+        return None
+    name = expected_artifact.strip()
+    if not name:
+        return None
+
+    def verify(work: WorkItemView) -> bool:
+        try:
+            ws = work.workspace_id or ""
+            p = Path(ws) / name
+            if not (p.is_file() and p.stat().st_size > 0):
+                return False
+            header = parse_artifact_envelope(p.read_text("utf-8", errors="replace"))
+            if header.get("work_id") != work.work_id:
+                return False
+            if header.get("principal_id") != work.principal_id:
+                return False
+            if header.get("attempt") != str(work.attempt_number):
+                return False
+            return True
+        except OSError:
+            return False
+
+    return verify
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,6 +188,11 @@ def main(argv: list[str] | None = None) -> int:
         receipts=receipts,
         conformance_gate=gate,
         adapter=adapter,
+        aether_state_observer=(
+            (lambda mission_id: args.mission_state) if args.mission_state else None
+        ),
+        workspace_verify=_build_workspace_verify(args.workspace),
+        artifact_verify=_build_artifact_verify(args.expected_artifact),
         wait_timeout_seconds=args.wait,
     )
 

@@ -134,6 +134,45 @@ class ReceiptStore:
         return self.persist(updated)
 
     # ------------------------------------------------------------------ #
+    # Reconcile notes (F-04 — durable, reconstructable from disk)          #
+    # ------------------------------------------------------------------ #
+    @property
+    def notes_path(self) -> Path:
+        """Sibling of the receipt log holding authoritative reconcile notes.
+
+        Append-only events (e.g. reconcile_artifact_found) that must survive a
+        restart are written here as JSONL — never only in DispatchDecision
+        metadata (stdout). Pattern mirrors persist(): recorded_at + entry.
+        """
+        return self.path.with_suffix(".notes.jsonl")
+
+    def append_note(self, entry: dict) -> None:
+        """Append an authoritative reconcile note, durable on disk."""
+        record = {
+            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **entry,
+        }
+        self.notes_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.notes_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+            f.flush()
+
+    def notes(self) -> list[dict]:
+        """Read all reconcile notes from the sibling notes file ([] if none)."""
+        if not self.notes_path.exists():
+            return []
+        result: list[dict] = []
+        for line in self.notes_path.read_text("utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                result.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # tolerate a corrupt trailing line; never hard-fail
+        return result
+
+    # ------------------------------------------------------------------ #
     # Reads                                                              #
     # ------------------------------------------------------------------ #
     def get(self, key: ReceiptIdempotencyKey) -> BridgeExecutionReceipt | None:
