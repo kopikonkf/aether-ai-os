@@ -159,9 +159,10 @@ def _decision_to_action_result(
 
     Mapping rules (Slice C scaffold):
       - dispatched + completed                    -> ok=True, output from metadata
+      - promoted + completed (reconcile artifact) -> ok=True (reconcile note)
       - completed_without_artifact                -> ok=True + artifact_missing
       - rejected / failed / terminal              -> ok=False + diagnostic
-      - dispatched + failed/unknown               -> ok=False + terminal_outcome
+      - dispatched/promoted + failed/unknown      -> ok=False + terminal_outcome
     """
     outcome = decision.terminal_outcome
     common_meta: dict[str, Any] = {
@@ -176,6 +177,20 @@ def _decision_to_action_result(
             status="completed",
             output=decision.metadata.get("output_tail"),
             metadata=common_meta,
+        )
+
+    if decision.status == "promoted" and outcome == "completed":
+        # Reconcile found the deliverable artifact (reconcile_artifact_found);
+        # treat as a completed step delivered-with-evidence (ADR-0057).
+        return ActionResult(
+            action_id=proposal.action_id,
+            ok=True,
+            status="completed",
+            output=decision.metadata.get("output_tail"),
+            metadata={
+                **common_meta,
+                "reconcile_artifact_found": True,
+            },
         )
 
     if outcome == "completed_without_artifact":
@@ -197,7 +212,7 @@ def _decision_to_action_result(
             metadata=common_meta,
         )
 
-    if decision.status == "dispatched" and outcome in ("failed", "unknown"):
+    if decision.status in ("dispatched", "promoted") and outcome in ("failed", "unknown"):
         return ActionResult(
             action_id=proposal.action_id,
             ok=False,

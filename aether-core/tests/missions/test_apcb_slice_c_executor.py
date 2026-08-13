@@ -148,6 +148,28 @@ async def test_execute_defaults_attempt_1():
 
 
 @pytest.mark.asyncio
+async def test_execute_reconcile_promoted_completed_ok():
+    # MISSION-PCP-002 live smoke finding: a second dispatch reconciles an
+    # existing receipt whose terminal was unknown/failed but the artifact now
+    # exists -> dispatcher returns status="promoted", outcome="completed"
+    # (reconcile_artifact_found). This must map to ok=True (completed step),
+    # not fall through to the ok=False fallback.
+    disp = StubDispatcher(
+        decision(
+            status="promoted",
+            outcome="completed",
+            metadata={"reconcile_artifact_found": True, "output_tail": "delivered"},
+        )
+    )
+    executor = ApcbMissionActionExecutor(disp, make_work_mapper())
+    result = await executor.execute(proposal())
+    assert result.ok is True
+    assert result.status == "completed"
+    assert result.metadata.get("reconcile_artifact_found") is True
+    assert result.error is None
+
+
+@pytest.mark.asyncio
 async def test_execute_failed_ok_false_with_diagnostic():
     disp = StubDispatcher(decision(status="failed", outcome="failed", diagnostic=("herdr agent gone during dispatch",)))
     executor = ApcbMissionActionExecutor(disp, make_work_mapper())
