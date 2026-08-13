@@ -326,3 +326,60 @@ def _default_pane_resolver() -> Callable[[str], str | None]:
             return None
 
     return resolve
+
+
+class PaneUniquenessError(RuntimeError):
+    """Raised when the pane map is not injective over principals (WORK-5 K4):
+    two sovereign principals must never share a pane in a no-message-bus design
+    where pane identity is part of authority."""
+
+
+def validate_pane_map_unique(
+    pane_map_path: str | None = None,
+    *,
+    sovereign_principals: set[str] | None = None,
+) -> dict[str, str]:
+    """Validate apcb_pane_map.json is injective over (sovereign) principals.
+
+    Fail-closed: raises PaneUniquenessError on any collision, missing map, or
+    malformed shape. Returns the {principal -> pane} mapping on success.
+
+    This is a startup validator (WORK-5 K4): call it once before any dispatch.
+    """
+    path = pane_map_path or os.environ.get("APCB_HERDR_PANE_MAP")
+    if not path:
+        raise PaneUniquenessError("APCB_HERDR_PANE_MAP not set; cannot validate pane uniqueness")
+    try:
+        data = json.loads(Path(path).read_text("utf-8-sig"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PaneUniquenessError(f"cannot read pane map {path}: {exc}") from exc
+    panes = data.get("panes")
+    if not isinstance(panes, dict):
+        raise PaneUniquenessError(f"pane map {path} has no 'panes' mapping")
+    resolved: dict[str, str] = {}
+    for pid, info in panes.items():
+        if isinstance(info, str):
+            pane = info
+        elif isinstance(info, dict) and isinstance(info.get("pane"), str):
+            pane = info["pane"]
+        else:
+            raise PaneUniquenessError(f"pane map entry for '{pid}' has no pane id")
+        if not pane.strip():
+            raise PaneUniquenessError(f"pane map entry for '{pid}' is empty")
+        resolved[pid] = pane
+
+    if sovereign_principals is not None:
+        missing = sorted(sovereign_principals - set(resolved))
+        if missing:
+            raise PaneUniquenessError(
+                f"pane map missing sovereign principals: {missing}"
+            )
+
+    by_pane: dict[str, str] = {}
+    for pid, pane in sorted(resolved.items()):
+        if pane in by_pane:
+            raise PaneUniquenessError(
+                f"pane collision: '{by_pane[pane]}' and '{pid}' both map to {pane}"
+            )
+        by_pane[pane] = pid
+    return resolved

@@ -122,6 +122,45 @@ class APCBDispatcher:
             # again — never silently re-dispatch an owned work item.
             return self.reconcile(work, existing)
 
+        # K3 — re-dispatch reconcile gate (WORK-5 blocker). A new attempt after a
+        # prior terminal attempt requires an explicit reconcile/override
+        # (needs_reconcile or approval_id in work metadata). Without it, reject
+        # the claim: terminal -> re-dispatch must never be silent (WORK-1 F3).
+        prior = self.receipts.latest_for_work(work.work_id)
+        if prior is not None and prior.is_terminal():
+            if prior.attempt_number >= work.attempt_number:
+                return DispatchDecision(
+                    work_id=work.work_id,
+                    mission_id=work.mission_id,
+                    principal_id=work.principal_id,
+                    attempt_number=work.attempt_number,
+                    dispatched=False,
+                    status="rejected",
+                    diagnostic=(
+                        "re-dispatch after terminal requires explicit reconcile: "
+                        f"prior attempt {prior.attempt_number} terminal "
+                        f"({prior.terminal_outcome!r}); supply needs_reconcile or "
+                        "approval_id in work metadata",
+                    ),
+                )
+            meta = dict(work.metadata or {})
+            has_reconcile = bool(meta.get("needs_reconcile") or meta.get("approval_id"))
+            if not has_reconcile:
+                return DispatchDecision(
+                    work_id=work.work_id,
+                    mission_id=work.mission_id,
+                    principal_id=work.principal_id,
+                    attempt_number=work.attempt_number,
+                    dispatched=False,
+                    status="rejected",
+                    diagnostic=(
+                        "re-dispatch after terminal requires explicit reconcile: "
+                        f"prior attempt {prior.attempt_number} terminal "
+                        f"({prior.terminal_outcome!r}); supply needs_reconcile or "
+                        "approval_id in work metadata",
+                    ),
+                )
+
         profile_name = work.execution_profile
         if not profile_name:
             # ChatGPT hardening directive (2026-08-13): APCB must never select
@@ -308,6 +347,32 @@ class APCBDispatcher:
                 dispatched=False,
                 status="rejected",
                 diagnostic=("no receipt for tuple; reconcile before first dispatch not applicable",),
+            )
+
+        # K2 — terminal uniqueness (WORK-5 blocker): exactly one terminal per
+        # (work_id, attempt_number, principal_id). A tuple that already reached
+        # a DEFINITIVE terminal outcome (completed/failed/blocked/stopped/
+        # rejected) is closed; reconcile must not write a second terminal or
+        # re-dispatch. A terminal_outcome of "unknown" is NOT closed (K10: it
+        # needs reconcile), so it proceeds to observation below.
+        if receipt.is_terminal() and receipt.terminal_outcome not in (
+            None,
+            "",
+            "unknown",
+        ):
+            return DispatchDecision(
+                work_id=work.work_id,
+                mission_id=work.mission_id,
+                principal_id=work.principal_id,
+                attempt_number=work.attempt_number,
+                dispatched=False,
+                status="terminal",
+                receipt=receipt,
+                terminal_outcome=receipt.terminal_outcome,
+                diagnostic=(
+                    f"receipt already terminal ({receipt.terminal_outcome!r}); "
+                    "new attempt requires explicit reconcile (needs_reconcile/approval_id)",
+                ),
             )
 
         mission_state = self.aether_state_observer(work.mission_id)

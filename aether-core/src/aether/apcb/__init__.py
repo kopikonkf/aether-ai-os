@@ -48,6 +48,8 @@ from .eligibility import EligibilityEvaluator
 from .herdr_adapter import (
     AgentObservation,
     HerdrExecutionAdapter,
+    PaneUniquenessError,
+    validate_pane_map_unique,
 )
 from .profiles import (
     ExecutionProfile,
@@ -71,6 +73,7 @@ __all__ = [
     "ExecutionProfile",
     "ExecutionReceiptStatus",
     "HerdrExecutionAdapter",
+    "PaneUniquenessError",
     "PrincipalHandoff",
     "PrincipalProfile",
     "PrincipalRuntimeProfiles",
@@ -81,4 +84,5 @@ __all__ = [
     "dispatch_eligibility_key",
     "execution_receipt_key",
     "load_principal_profiles",
+    "validate_pane_map_unique",
 ]
