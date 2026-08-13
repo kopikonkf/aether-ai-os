@@ -23,6 +23,11 @@ from starlette.responses import JSONResponse
 from . import living_machine
 from .living_machine import LivingMachineMCPService, LivingMachinePolicyError
 
+# Capability lifecycle tracker (ADR-0055 P4): deterministic, evidence-bound
+# record of the mutation surface lifecycle per principal. Read-only exposure
+# via the capability manifest; authority remains in ActionGovernor.
+from aether.capabilities.lifecycle import CapabilityLifecycle
+
 # Importing the composition root is intentional: this surface is an interface
 # over the running Gateway objects, not a second runtime implementation.
 from aether_gateway.api import server as gateway
@@ -85,6 +90,7 @@ service = LivingMachineMCPService(
     runtime_telemetry=gateway.runtime_telemetry,
     action_path=gateway.action_path,
     coding_runtime_key=gateway.coding_dispatch_adapter.routing_key,
+    capability_lifecycle=CapabilityLifecycle(gateway.root_dir / "runtime" / "capability_lifecycle" / "lifecycle.jsonl"),
 )
 
 _transport_security = None
