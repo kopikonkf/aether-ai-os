@@ -14,12 +14,16 @@ Division of responsibility (Founder directive, 2026-08-13):
 
 Design notes for the caller:
   - work_mapper(action, attempt) -> WorkItemView maps an ActionProposal onto a
-    canonical APCB work item. The caller decides principal_id,
-    execution_profile, workspace_id, capabilities and authorized/execution_ready.
-    The attempt number is read from proposal.metadata["mission_attempt_number"]
-    (default 1), so retries are reflected in the APCB receipt and keep
-    idempotency. Example: one mission step -> one work item on the principal's
-    execution profile and pane-bound workspace.
+    canonical APCB work item. When a custom work_mapper is not supplied, the
+    executor uses the canonical governed mapper
+    (build_canonical_work_mapper) which derives principal_id,
+    execution_profile, workspace_id and capabilities from the mission step
+    action metadata + the Aether principal profile registry — fail-closed
+    when nothing is assigned (see canonical_mapper.py). The attempt number is
+    read from proposal.metadata["mission_attempt_number"] (default 1), so
+    retries are reflected in the APCB receipt and keep idempotency. Example:
+    one mission step -> one work item on the principal's execution profile and
+    pane-bound workspace.
   - dispatcher.dispatch(work) is SYNCHRONOUS. A live Herdr adapter can block
     until the pane finishes; callers that cannot afford a blocking await should
     run the mission loop in an executor thread.
@@ -34,9 +38,12 @@ from typing import Any, Callable
 
 from aether.apcb.dispatcher import APCBDispatcher, DispatchDecision
 from aether.apcb.eligibility import WorkItemView
+from aether.apcb.profiles import PrincipalRuntimeProfiles
 from aether.contracts.actions import ActionProposal, ActionResult
 
-MISSION_ATTEMPT_METADATA_KEY = "mission_attempt_number"
+from .canonical_mapper import MISSION_ATTEMPT_NUMBER, build_canonical_work_mapper
+
+MISSION_ATTEMPT_METADATA_KEY = MISSION_ATTEMPT_NUMBER
 
 
 def _normalize_attempt(value: Any) -> int:
@@ -59,16 +66,32 @@ class ApcbMissionActionExecutor:
     `dispatcher` may be a live APCBDispatcher instance or a zero-argument
     factory Callable that returns one (so callers can lazily construct the real
     profile registry + receipt store + herdr adapter wiring).
+
+    `work_mapper` is optional. When omitted, a canonical governed mapper built
+    from `profiles` is used (build_canonical_work_mapper), deriving the work
+    item from mission action metadata + the principal profile registry. When
+    both are omitted the executor fails closed (ValueError) — APCB never runs a
+    step without a governed principal/profile derivation.
     """
 
     def __init__(
         self,
         dispatcher: APCBDispatcher | Callable[[], APCBDispatcher],
-        work_mapper: Callable[[ActionProposal, int], WorkItemView],
+        work_mapper: Callable[[ActionProposal, int], WorkItemView] | None = None,
+        *,
+        profiles: PrincipalRuntimeProfiles | None = None,
     ) -> None:
         self._dispatcher_factory: Callable[[], APCBDispatcher] = (
             dispatcher if callable(dispatcher) else (lambda: dispatcher)
         )
+        if work_mapper is None:
+            if profiles is None:
+                raise ValueError(
+                    "ApcbMissionActionExecutor requires either a custom work_mapper "
+                    "or a PrincipalRuntimeProfiles registry to build the canonical "
+                    "governed mapper (fail-closed: APCB never guesses a principal/profile)."
+                )
+            work_mapper = build_canonical_work_mapper(profiles)
         self.work_mapper = work_mapper
 
     # ------------------------------------------------------------------ #
