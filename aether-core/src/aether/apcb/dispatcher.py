@@ -126,7 +126,7 @@ class APCBDispatcher:
         Never dispatches when eligibility or conformance fails. Persists the
         receipt (CLAIMED) BEFORE asking Herdr to start work (contract §5).
         """
-        key = execution_receipt_key(work.work_id, work.attempt_number, work.principal_id)
+        key = execution_receipt_key(work.mission_id, work.work_id, work.attempt_number, work.principal_id)
 
         existing = self.receipts.get(key)
         if existing is not None:
@@ -139,7 +139,7 @@ class APCBDispatcher:
         # prior terminal attempt requires an explicit reconcile/override
         # (needs_reconcile or approval_id in work metadata). Without it, reject
         # the claim: terminal -> re-dispatch must never be silent (WORK-1 F3).
-        prior = self.receipts.latest_for_work(work.work_id)
+        prior = self.receipts.latest_for_work(work.work_id, mission_id=work.mission_id)
         if prior is not None and prior.is_terminal():
             if prior.attempt_number >= work.attempt_number:
                 return DispatchDecision(
@@ -363,7 +363,7 @@ class APCBDispatcher:
           8. Only then consider retry with incremented attempt (caller decides)
         """
         receipt = existing or self.receipts.get_by_components(
-            work.work_id, work.attempt_number, work.principal_id
+            work.mission_id, work.work_id, work.attempt_number, work.principal_id
         )
         if receipt is None:
             return DispatchDecision(

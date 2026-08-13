@@ -1,4 +1,4 @@
-"""APCB Slice B â€” dispatcher orchestration (deterministic, mock herdr).
+"""APCB Slice B Ã¢â‚¬â€ dispatcher orchestration (deterministic, mock herdr).
 
 Covers:
   - receipt persisted BEFORE dispatch (idempotency tuple);
@@ -134,7 +134,7 @@ class TestDispatchHappyPath:
         assert decision.status == "dispatched"
         assert decision.terminal_outcome == "completed"
         # receipt exists with terminal outcome, durable in the log
-        stored = receipts.get_by_components("WORK-1", 1, "qwen")
+        stored = receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen")
         assert stored is not None
         assert stored.is_terminal()
         assert stored.terminal_outcome == "completed"
@@ -174,7 +174,7 @@ class TestEligibilityRejectsWithoutDispatch:
         assert "not_awaiting_approval" in decision.diagnostic[0]
         assert "prompt_agent" not in adapter.calls
         # no receipt was persisted for a rejected-before-claim work item
-        assert receipts.get_by_components("WORK-1", 1, "qwen") is None
+        assert receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen") is None
 
     def test_not_authorized_never_dispatched(self, profiles, receipts):
         adapter = RecordingAdapter(status="done")
@@ -231,7 +231,7 @@ class TestConformanceRejectsWithoutFallback:
             status_by_kind={"cline": AdapterConformanceStatus.EXPIRED},
         )
         dispatcher.dispatch(ready_work())
-        stored = receipts.get_by_components("WORK-1", 1, "qwen")
+        stored = receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen")
         assert stored is not None
         assert stored.is_terminal()
         assert stored.terminal_outcome == "rejected"
@@ -250,7 +250,7 @@ class TestDispatchFailure:
         assert decision.dispatched is False
         assert decision.status == "failed"
         assert decision.terminal_outcome == "failed"
-        stored = receipts.get_by_components("WORK-1", 1, "qwen")
+        stored = receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen")
         assert stored.is_terminal()
         assert stored.terminal_outcome == "failed"
 
@@ -283,7 +283,7 @@ class TestReconcileRestart:
         # Restart: reconcile sees herdr still running -> resume, no duplicate.
         dispatcher2 = make_dispatcher(profiles, receipts, adapter, mission_state="running")
         work = ready_work()
-        stored = receipts.get_by_components("WORK-1", 1, "qwen")
+        stored = receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen")
         decision = dispatcher2.reconcile(work, stored)
         assert decision.status == "resumed"
         assert "resuming" in decision.diagnostic[0]
@@ -296,7 +296,7 @@ class TestReconcileRestart:
 
         dispatcher2 = make_dispatcher(profiles, receipts, adapter, mission_state="completed")
         work = ready_work()
-        stored = receipts.get_by_components("WORK-1", 1, "qwen")
+        stored = receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen")
         decision = dispatcher2.reconcile(work, stored)
         assert decision.status == "terminal"
         assert decision.terminal_outcome == "stopped"
@@ -309,11 +309,11 @@ class TestReconcileRestart:
 
         dispatcher2 = make_dispatcher(profiles, receipts, adapter, mission_state="running")
         work = ready_work()
-        stored = receipts.get_by_components("WORK-1", 1, "qwen")
+        stored = receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen")
         decision = dispatcher2.reconcile(work, stored)
         # K2 governance (WORK-5): the first dispatch already recorded a
         # DEFINITIVE terminal (completed) for this tuple. Reconcile must NOT
-        # silently rewrite it to failed — terminal is closed, exactly one
+        # silently rewrite it to failed â€” terminal is closed, exactly one
         # terminal per (work, attempt, principal). A new outcome requires an
         # explicit reconcile/approval gate, not an observation overwrite.
         assert decision.status == "terminal"
@@ -337,8 +337,8 @@ class TestReconcileRestart:
         work = ready_work()
         dispatcher2.dispatch(work)
         # attempt stays 1; no attempt-2 receipt was fabricated
-        assert receipts.get_by_components("WORK-1", 2, "qwen") is None
-        assert receipts.get_by_components("WORK-1", 1, "qwen") is not None
+        assert receipts.get_by_components("MISSION-1", "WORK-1", 2, "qwen") is None
+        assert receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen") is not None
 
 
 class TestProfileSelectionExplicit:
@@ -474,14 +474,14 @@ class TestStateMachineObservationLevel:
         )
         dispatcher.dispatch(ready_work())
         # APCB consults Aether state via the observer (read); it never writes a
-        # terminal Aether state through it — APCB-local terminal is its own.
+        # terminal Aether state through it â€” APCB-local terminal is its own.
         assert reads == []
         assert writes == []
         # K2 governance (WORK-5): dispatch already recorded a definitive
         # terminal (completed). Reconcile returns the closed terminal instead of
         # re-promoting/overwriting; no Aether state write, no observation
         # override (short-circuits before the observer read).
-        decision = dispatcher.reconcile(ready_work(), receipts.get_by_components("WORK-1", 1, "qwen"))
+        decision = dispatcher.reconcile(ready_work(), receipts.get_by_components("MISSION-1", "WORK-1", 1, "qwen"))
         assert decision.status == "terminal"
         assert decision.terminal_outcome == "completed"
         assert reads == []

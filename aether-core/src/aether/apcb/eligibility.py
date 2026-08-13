@@ -87,7 +87,7 @@ class EligibilityEvaluator:
             capability_match=capability_match,
             workspace_bound=bool(work.workspace_id),
             no_active_attempt=not self.receipts.has_active_attempt(
-                work.work_id, work.principal_id
+                work.work_id, work.principal_id, mission_id=work.mission_id
             ),
             not_awaiting_approval=not bool(work.awaiting_approval),
         )

@@ -37,6 +37,7 @@ from aether.contracts import (
     OpportunityEvidence,
     OpportunityEvidenceStance,
 )
+from aether.contracts.actions import ActionResult
 from aether.events import EventBus
 from aether.missions import MissionOrchestrator, SQLiteMissionStore
 from aether.missions.apcb_executor import ApcbMissionActionExecutor
@@ -116,6 +117,56 @@ async def test_execute_completed_ok():
     assert result.error is None
     assert disp.last_work is not None
     assert disp.last_work.attempt_number == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_forwards_attempt_from_proposal_metadata():
+    # MISSION-PCP-002 WORK-1: attempt from proposal.metadata["mission_attempt_number"].
+    seen: list[int] = []
+
+    def recording_mapper(action: ActionProposal, attempt: int) -> WorkItemView:
+        seen.append(attempt)
+        return make_work_mapper()(action, attempt)
+
+    disp = StubDispatcher(decision(status="dispatched", outcome="completed", metadata={"output_tail": "ok"}))
+    executor = ApcbMissionActionExecutor(disp, recording_mapper)
+    result = await executor.execute(proposal(mission_attempt_number=3))
+    assert result.ok is True
+    assert seen == [3]
+    assert disp.last_work is not None
+    assert disp.last_work.attempt_number == 3
+
+
+@pytest.mark.asyncio
+async def test_execute_defaults_attempt_1():
+    disp = StubDispatcher(decision(status="dispatched", outcome="completed", metadata={"output_tail": "ok"}))
+    executor = ApcbMissionActionExecutor(disp, make_work_mapper())
+    result = await executor.execute(proposal())
+    assert result.ok is True
+    assert disp.last_work is not None
+    assert disp.last_work.attempt_number == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_reconcile_promoted_completed_ok():
+    # MISSION-PCP-002 live smoke finding: a second dispatch reconciles an
+    # existing receipt whose terminal was unknown/failed but the artifact now
+    # exists -> dispatcher returns status="promoted", outcome="completed"
+    # (reconcile_artifact_found). This must map to ok=True (completed step),
+    # not fall through to the ok=False fallback.
+    disp = StubDispatcher(
+        decision(
+            status="promoted",
+            outcome="completed",
+            metadata={"reconcile_artifact_found": True, "output_tail": "delivered"},
+        )
+    )
+    executor = ApcbMissionActionExecutor(disp, make_work_mapper())
+    result = await executor.execute(proposal())
+    assert result.ok is True
+    assert result.status == "completed"
+    assert result.metadata.get("reconcile_artifact_found") is True
+    assert result.error is None
 
 
 @pytest.mark.asyncio
@@ -269,3 +320,112 @@ async def test_orchestrator_fails_step_when_apcb_rejects(tmp_path):
     assert result.status == MissionStatus.FAILED
     attempts = orchestrator.store.attempts(plan.mission_id, step_id="step-1")
     assert attempts[-1].status.value == "failed"
+
+
+# ---------------------------------------------------------------------------
+# MISSION-PCP-002 WORK-1: attempt_number wired into APCB attempt
+# ---------------------------------------------------------------------------
+class RecordingExecutor:
+    """MissionActionExecutor stub that records every ActionProposal received."""
+
+    def __init__(self, result_factory: Callable[[int], ActionResult]):
+        self.result_factory = result_factory
+        self.seen: list[ActionProposal] = []
+
+    async def execute(self, proposal: ActionProposal) -> ActionResult:
+        self.seen.append(proposal)
+        return self.result_factory(len(self.seen))
+
+    async def approval_result(self, approval_id: str) -> ActionResult | None:
+        return None
+
+
+def completed_result(action_id: str) -> ActionResult:
+    return ActionResult(action_id=action_id, ok=True, status="completed", output="ok")
+
+
+def failed_result(action_id: str) -> ActionResult:
+    return ActionResult(action_id=action_id, ok=False, status="failed", error="transient step failure")
+
+
+def make_orchestrator_with_executor(tmp_path: Path, executor: RecordingExecutor):
+    store = SQLiteMissionStore(tmp_path / "missions.sqlite3")
+    orchestrator = MissionOrchestrator(
+        store,
+        executor,
+        event_bus=EventBus(tmp_path / "events.jsonl"),
+        maximum_steps_per_run=5,
+    )
+    return orchestrator, store
+
+
+def make_plan_attempt(orchestrator: MissionOrchestrator, brief_id: str, *, max_attempts: int = 1,
+                      stop_on_failure: bool = True, explicit_retry_reason: str | None = None):
+    plan = orchestrator.create_plan(
+        brief_id=brief_id,
+        objective="Validate one bounded opportunity without scaling automatically.",
+        northstar_alignment="Creates external value while preserving truth, reversibility, and evidence-first execution.",
+        northstar_principle_ids=("SP1", "SP5"),
+        strategy_tags=("business_experimentation",),
+        steps=(
+            MissionStep(
+                step_id="step-1",
+                title="Step 1",
+                action=ActionProposal(
+                    target=ActionTarget.RUNTIME,
+                    operation="read",
+                    required_scopes=(ActionScope.EXECUTE,),
+                    reason="Run bounded step.",
+                    risk=ActionRisk.LOW,
+                    reversible=True,
+                ),
+                success_criteria=("Backend returns a governed successful result.",),
+                depends_on=(),
+                max_attempts=max_attempts,
+                stop_on_failure=stop_on_failure,
+                explicit_retry_reason=explicit_retry_reason,
+                estimated_cost_usd=1.0,
+            ),
+        ),
+        budget=MissionBudget(max_cost_usd=10.0, max_duration_seconds=3600, max_step_attempts=10),
+        stop_conditions=("Stop when budget is exhausted.",),
+    )
+    return plan
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_metadata_carries_attempt_number(tmp_path):
+    executor = RecordingExecutor(completed_result)
+    orchestrator, store = make_orchestrator_with_executor(tmp_path, executor)
+    brief = make_brief(orchestrator)
+    plan = make_plan_attempt(orchestrator, brief.brief_id)
+    orchestrator.decide(plan.mission_id, approved=True, principal="founder", channel="test", reason="Approve bounded experiment.")
+    result = await orchestrator.run(plan.mission_id, principal="founder")
+    assert result.status == MissionStatus.COMPLETED
+    assert len(executor.seen) == 1
+    assert executor.seen[0].metadata.get("mission_attempt_number") == 1
+    attempts = store.attempts(plan.mission_id, step_id="step-1")
+    assert attempts[0].attempt_number == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_retry_increments_attempt(tmp_path):
+    # Attempt 1 fails (ok=False), attempt 2 completes; explicit_retry_reason set
+    # so the orchestrator retries without pausing for a new reason.
+    def attempt_result(index: int) -> ActionResult:
+        if index == 1:
+            return failed_result(f"act-{index}")
+        return completed_result(f"act-{index}")
+
+    executor = RecordingExecutor(attempt_result)
+    orchestrator, store = make_orchestrator_with_executor(tmp_path, executor)
+    brief = make_brief(orchestrator)
+    plan = make_plan_attempt(orchestrator, brief.brief_id, max_attempts=2, stop_on_failure=False,
+                             explicit_retry_reason="transient infrastructure failure; safe to retry")
+    orchestrator.decide(plan.mission_id, approved=True, principal="founder", channel="test", reason="Approve bounded experiment.")
+    result = await orchestrator.run(plan.mission_id, principal="founder")
+    assert result.status == MissionStatus.COMPLETED
+    assert [item.metadata.get("mission_attempt_number") for item in executor.seen] == [1, 2]
+    attempts = store.attempts(plan.mission_id, step_id="step-1")
+    assert [item.attempt_number for item in attempts] == [1, 2]
+    assert attempts[-1].status.value == "completed"

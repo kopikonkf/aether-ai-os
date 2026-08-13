@@ -44,7 +44,7 @@ class ReceiptStore:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._receipts: dict[tuple[str, int, str], BridgeExecutionReceipt] = {}
+        self._receipts: dict[tuple[str, str, int, str], BridgeExecutionReceipt] = {}
         self._recompute_from_log()
 
     # ------------------------------------------------------------------ #
@@ -179,23 +179,35 @@ class ReceiptStore:
         return self._receipts.get(key.as_tuple())
 
     def get_by_components(
-        self, work_id: str, attempt_number: int, principal_id: str
+        self, mission_id: str, work_id: str, attempt_number: int, principal_id: str
     ) -> BridgeExecutionReceipt | None:
-        return self.get(execution_receipt_key(work_id, attempt_number, principal_id))
+        return self.get(
+            execution_receipt_key(mission_id, work_id, attempt_number, principal_id)
+        )
 
-    def latest_for_work(self, work_id: str) -> BridgeExecutionReceipt | None:
-        """Highest attempt_number receipt for a work item, or None."""
+    def latest_for_work(self, work_id: str, mission_id: str | None = None) -> BridgeExecutionReceipt | None:
+        """Highest attempt_number receipt for a work item within a mission
+        (or across all missions when mission_id is None), or None."""
         matches = [
-            r for key, r in self._receipts.items() if key[0] == work_id
+            r
+            for key, r in self._receipts.items()
+            if key[1] == work_id and (mission_id is None or key[0] == mission_id)
         ]
         if not matches:
             return None
         return max(matches, key=lambda r: r.attempt_number)
 
-    def has_active_attempt(self, work_id: str, principal_id: str) -> bool:
-        """True when any non-terminal receipt owns this work+principal."""
+    def has_active_attempt(self, work_id: str, principal_id: str, mission_id: str | None = None) -> bool:
+        """True when any non-terminal receipt owns this work+principal.
+
+        Scoped to the mission when mission_id is given (P2-F01): the same
+        WORK-X attempt-1 on two different missions are independent executions,
+        so an active MISSION-A attempt never blocks MISSION-B.
+        """
         for key, receipt in self._receipts.items():
-            if key[0] == work_id and key[2] == principal_id:
+            if key[1] == work_id and key[3] == principal_id:
+                if mission_id is not None and key[0] != mission_id:
+                    continue
                 if not receipt.is_terminal():
                     return True
         return False

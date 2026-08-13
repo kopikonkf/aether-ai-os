@@ -263,7 +263,8 @@ class MissionOrchestrator:
             action = replace(step.action,
                 retry_reason=step.explicit_retry_reason if latest and latest.status == MissionStepStatus.FAILED else step.action.retry_reason,
                 metadata={**dict(step.action.metadata), "mission_id": mission_id, "mission_step_id": step.step_id, "mission_lane": plan.lane.value,
-                          "estimated_cost_usd": step.estimated_cost_usd, "success_criteria": list(step.success_criteria)},
+                          "estimated_cost_usd": step.estimated_cost_usd, "success_criteria": list(step.success_criteria),
+                          "mission_attempt_number": attempt_number},
             )
             started_at = utc_now()
             self._emit(EventType.MISSION_STEP_STARTED, {
