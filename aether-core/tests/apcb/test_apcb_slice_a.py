@@ -30,6 +30,7 @@ class TestPrincipalProfileRegistry:
     def test_idempotency_key_derived_from_yaml(self):
         reg = load_principal_profiles()
         assert reg.dispatch_idempotency_key == (
+            "mission_id",
             "work_id",
             "attempt_number",
             "principal_id",
@@ -71,14 +72,14 @@ class TestPrincipalProfileRegistry:
 
 class TestIdempotencyKey:
     def test_tuple_shape(self):
-        key = execution_receipt_key("WORK-1", 2, "qwen")
-        assert key.as_tuple() == ("WORK-1", 2, "qwen")
+        key = execution_receipt_key("MISSION-1", "WORK-1", 2, "qwen")
+        assert key.as_tuple() == ("MISSION-1", "WORK-1", 2, "qwen")
 
     def test_receipt_key_matches_idempotency(self):
         receipt = BridgeExecutionReceipt(
             work_id="WORK-1", attempt_number=1, principal_id="claude", mission_id="MISSION-1"
         )
-        assert receipt.idempotency_key.as_tuple() == ("WORK-1", 1, "claude")
+        assert receipt.idempotency_key.as_tuple() == ("MISSION-1", "WORK-1", 1, "claude")
 
     def test_bridge_request_and_correlation_ids(self):
         r1 = BridgeExecutionReceipt(work_id="W", attempt_number=1, principal_id="p", mission_id="m")

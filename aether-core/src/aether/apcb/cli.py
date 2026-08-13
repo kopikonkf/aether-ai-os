@@ -112,11 +112,12 @@ def parse_artifact_envelope(text: str, limit_lines: int = 60) -> dict[str, str]:
 def _build_artifact_verify(expected_artifact: str | None):
     """Build an ADR-0057 artifact-authority verifier from --expected-artifact.
 
-    The verifier (F-01/F-02) requires BOTH that the named artifact exists in
-    the workspace and is non-empty, AND that its canonical envelope header
-    matches the work item (work_id, principal_id, attempt_number). A 1-byte
-    placeholder or a stale artifact from a different attempt is rejected.
-    Returns None when no artifact is expected (no artifact gate).
+    The verifier (F-01/F-02/P2-F02) requires BOTH that the named artifact exists
+    in the workspace and is non-empty, AND that its canonical envelope header
+    matches the work item on all five identity fields (protocol, mission_id,
+    work_id, principal_id, attempt). A 1-byte placeholder, a stale artifact from
+    a different attempt, or an artifact produced under another mission is
+    rejected. Returns None when no artifact is expected (no artifact gate).
     """
     if not expected_artifact:
         return None
@@ -131,6 +132,10 @@ def _build_artifact_verify(expected_artifact: str | None):
             if not (p.is_file() and p.stat().st_size > 0):
                 return False
             header = parse_artifact_envelope(p.read_text("utf-8", errors="replace"))
+            if header.get("protocol") != "aether.apcb.task.v1":
+                return False
+            if header.get("mission_id") != work.mission_id:
+                return False
             if header.get("work_id") != work.work_id:
                 return False
             if header.get("principal_id") != work.principal_id:

@@ -74,11 +74,11 @@ class MockHerdrAdapter:
         return self.observe_agent(agent_ref)
 
 
-def envelope_text(work_id="WORK-PCP-002", principal_id="chatgpt", attempt=1) -> str:
+def envelope_text(work_id="WORK-PCP-002", principal_id="chatgpt", attempt=1, mission_id="MISSION-PCP-002") -> str:
     return (
         "protocol: aether.apcb.task.v1\n"
         f"work_id: {work_id}\n"
-        "mission_id: MISSION-PCP-002\n"
+        f"mission_id: {mission_id}\n"
         f"principal_id: {principal_id}\n"
         f"attempt: {attempt}\n"
         "\n"
@@ -95,6 +95,14 @@ def make_runner(tmp_path: Path, *, pane_map_path=None) -> MissionCognitiveRunner
         pane_map_path=pane_map_path,
         workspace_override=str(tmp_path / "mission-ws"),
         events_path=tmp_path / "events.jsonl",
+    )
+
+
+def stage_artifact(ws: Path, mission_id: str) -> None:
+    """Write the deliverable with the REAL mission_id in its envelope
+    (P2-F02: the artifact must match the mission it belongs to)."""
+    (ws / "WORK-PCP-002.md").write_text(
+        envelope_text(mission_id=mission_id), encoding="utf-8"
     )
 
 
@@ -119,9 +127,12 @@ async def test_runner_cognitive_mission_completed(tmp_path: Path):
     adapter = MockHerdrAdapter(wait_status="done")
     ws = Path(runner.workspace_override)
     ws.mkdir(parents=True, exist_ok=True)
-    (ws / "WORK-PCP-002.md").write_text(envelope_text(), encoding="utf-8")
 
-    result = await runner.run_cognitive_mission(adapter, workspace=str(ws))
+    result = await runner.run_cognitive_mission(
+        adapter,
+        workspace=str(ws),
+        on_plan_ready=lambda mission_id: stage_artifact(ws, mission_id),
+    )
     assert result.status == MissionStatus.COMPLETED
     assert result.completed_step_ids == ("step-1",)
 
@@ -153,6 +164,28 @@ async def test_runner_cognitive_mission_artifact_missing(tmp_path: Path):
     assert not (ws / "WORK-PCP-002.md").exists()
 
 
+@pytest.mark.asyncio
+async def test_runner_cognitive_mission_artifact_wrong_mission(tmp_path: Path):
+    # P2-F02 cross-mission: an artifact whose envelope names a DIFFERENT
+    # mission is stale for THIS mission and must be rejected by the verifier —
+    # the runner must never complete on a foreign artifact.
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done")
+    ws = Path(runner.workspace_override)
+    ws.mkdir(parents=True, exist_ok=True)
+
+    result = await runner.run_cognitive_mission(
+        adapter,
+        workspace=str(ws),
+        on_plan_ready=lambda mission_id: stage_artifact(
+            ws, "SOME-OTHER-MISSION"
+        ),
+    )
+    assert result.status != MissionStatus.COMPLETED
+    attempts = runner.store.attempts(result.mission_id, step_id="step-1")
+    assert attempts[-1].status.value in ("failed",)
+
+
 # ---------------------------------------------------------------------------
 # (d) F-07: mission already terminal -> no re-dispatch (observer wired)
 # ---------------------------------------------------------------------------
@@ -162,9 +195,12 @@ async def test_runner_mission_state_observer_stops(tmp_path: Path):
     adapter = MockHerdrAdapter(wait_status="done")
     ws = Path(runner.workspace_override)
     ws.mkdir(parents=True, exist_ok=True)
-    (ws / "WORK-PCP-002.md").write_text(envelope_text(), encoding="utf-8")
 
-    first = await runner.run_cognitive_mission(adapter, workspace=str(ws))
+    first = await runner.run_cognitive_mission(
+        adapter,
+        workspace=str(ws),
+        on_plan_ready=lambda mission_id: stage_artifact(ws, mission_id),
+    )
     assert first.status == MissionStatus.COMPLETED
     assert adapter.calls.count("ensure_agent") == 1
 

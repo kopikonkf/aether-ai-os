@@ -21,27 +21,41 @@ from aether.utils.ids import new_id
 
 @dataclass(frozen=True)
 class ReceiptIdempotencyKey:
-    """(work_id, attempt_number, principal_id) — the APCB idempotency tuple."""
+    """(mission_id, work_id, attempt_number, principal_id) — the APCB
+    ExecutionIdentity canonical tuple (P2-F01).
 
+    Every APCB receipt is keyed by the full ExecutionIdentity so the same
+    WORK-X attempt-1 on two different missions are distinct executions and
+    never collide (cross-mission idempotency isolation).
+    """
+
+    mission_id: str
     work_id: str
     attempt_number: int
     principal_id: str
 
-    def as_tuple(self) -> tuple[str, int, str]:
-        return (self.work_id, self.attempt_number, self.principal_id)
+    def as_tuple(self) -> tuple[str, str, int, str]:
+        return (self.mission_id, self.work_id, self.attempt_number, self.principal_id)
 
     def __str__(self) -> str:
-        return f"{self.work_id}#{self.attempt_number}@{self.principal_id}"
+        return f"{self.mission_id}/{self.work_id}#{self.attempt_number}@{self.principal_id}"
 
 
 def execution_receipt_key(
-    work_id: str, attempt_number: int, principal_id: str
+    mission_id: str, work_id: str, attempt_number: int, principal_id: str
 ) -> ReceiptIdempotencyKey:
-    return ReceiptIdempotencyKey(work_id=work_id, attempt_number=attempt_number, principal_id=principal_id)
+    return ReceiptIdempotencyKey(
+        mission_id=mission_id,
+        work_id=work_id,
+        attempt_number=attempt_number,
+        principal_id=principal_id,
+    )
 
 
 def dispatch_eligibility_key(receipt: "BridgeExecutionReceipt") -> ReceiptIdempotencyKey:
-    return execution_receipt_key(receipt.work_id, receipt.attempt_number, receipt.principal_id)
+    return execution_receipt_key(
+        receipt.mission_id, receipt.work_id, receipt.attempt_number, receipt.principal_id
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +108,9 @@ class BridgeExecutionReceipt:
 
     @property
     def idempotency_key(self) -> ReceiptIdempotencyKey:
-        return execution_receipt_key(self.work_id, self.attempt_number, self.principal_id)
+        return execution_receipt_key(
+            self.mission_id, self.work_id, self.attempt_number, self.principal_id
+        )
 
     def is_terminal(self) -> bool:
         return self.state == ExecutionReceiptStatus.TERMINAL

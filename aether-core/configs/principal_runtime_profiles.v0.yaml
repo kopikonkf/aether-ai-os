@@ -231,6 +231,7 @@ herdr:
   local_only: true
   execution_receipt_required: true
   dispatch_idempotency_key:
+    - mission_id
     - work_id
     - attempt_number
     - principal_id

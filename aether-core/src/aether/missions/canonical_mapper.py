@@ -99,9 +99,11 @@ def build_mission_artifact_verify(
     Reuses the canonical envelope parser (aether.apcb.cli.parse_artifact_envelope)
     and enforces the same authority rules as the CLI verifier: the named
     artifact must exist in the work item's workspace, be non-empty, and its
-    envelope header (work_id, principal_id, attempt) must match the work item.
-    A 1-byte placeholder or a stale artifact from another attempt is rejected.
-    Returns None when no artifact is expected (no artifact gate).
+    envelope header must match the work item on all five identity fields
+    (protocol, mission_id, work_id, principal_id, attempt). A 1-byte placeholder,
+    a stale artifact from another attempt, or an artifact produced under another
+    mission is rejected. Returns None when no artifact is expected (no artifact
+    gate).
     """
     if not expected_artifact:
         return None
@@ -116,6 +118,10 @@ def build_mission_artifact_verify(
             if not (p.is_file() and p.stat().st_size > 0):
                 return False
             header = parse_artifact_envelope(p.read_text("utf-8", errors="replace"))
+            if header.get("protocol") != "aether.apcb.task.v1":
+                return False
+            if header.get("mission_id") != work.mission_id:
+                return False
             if header.get("work_id") != work.work_id:
                 return False
             if header.get("principal_id") != work.principal_id:

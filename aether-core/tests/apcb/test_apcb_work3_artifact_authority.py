@@ -1,4 +1,4 @@
-"""WORK-PCP-003 — artifact authority + pane-send no-fabrication (deterministic).
+"""WORK-PCP-003 â€” artifact authority + pane-send no-fabrication (deterministic).
 
 Covers WORK-1 recommendations 1, 2, 5 / ADR-0057 (K1) implemented in WORK-3:
 
@@ -12,7 +12,7 @@ Covers WORK-1 recommendations 1, 2, 5 / ADR-0057 (K1) implemented in WORK-3:
       when a terminal unknown/failed receipt has the artifact (append-only;
       the receipt is NOT rewritten, K2 still holds).
 
-All tests are deterministic with a mock adapter — no live herdr, no repo
+All tests are deterministic with a mock adapter â€” no live herdr, no repo
 mutation, no dispatch to a real pane.
 """
 from __future__ import annotations
@@ -132,7 +132,7 @@ def ready_work(**overrides) -> WorkItemView:
 
 
 # ---------------------------------------------------------------------------
-# (a) terminal "completed" requires the artifact (ADR-0057 §4)
+# (a) terminal "completed" requires the artifact (ADR-0057 Â§4)
 # ---------------------------------------------------------------------------
 class TestDispatchArtifactAuthority:
     def test_completed_with_artifact(self, profiles, receipts, tmp_path):
@@ -239,7 +239,7 @@ class TestReconcileArtifactFound:
         assert decision.terminal_outcome == "completed"
         assert decision.metadata.get("reconcile_artifact_found") is True
         # append-only: the original terminal receipt is NOT rewritten
-        original = receipts.get_by_components("WORK-PCP-003", 1, "qwen")
+        original = receipts.get_by_components("MISSION-PCP-001", "WORK-PCP-003", 1, "qwen")
         assert original.terminal_outcome == "unknown"
 
     def test_failed_terminal_artifact_promotes(self, profiles, receipts, tmp_path):
@@ -257,8 +257,8 @@ class TestReconcileArtifactFound:
         assert decision.status == "promoted"
         assert decision.terminal_outcome == "completed"
         assert decision.metadata.get("reconcile_artifact_found") is True
-        # K2: exactly one terminal per tuple — the failed terminal is untouched
-        original = receipts.get_by_components("WORK-PCP-003", 1, "qwen")
+        # K2: exactly one terminal per tuple â€” the failed terminal is untouched
+        original = receipts.get_by_components("MISSION-PCP-001", "WORK-PCP-003", 1, "qwen")
         assert original.terminal_outcome == "failed"
 
     def test_no_artifact_no_promotion(self, profiles, receipts, tmp_path):
@@ -323,7 +323,7 @@ class TestMissionStateObserver:
 
 
 # ---------------------------------------------------------------------------
-# (d) F-03: mission-state check BEFORE artifact-promotion (contract §11 3-4)
+# (d) F-03: mission-state check BEFORE artifact-promotion (contract Â§11 3-4)
 # ---------------------------------------------------------------------------
 class TestMissionStateBeforeArtifact:
     def test_mission_terminal_artifact_stale_not_promoted(self, profiles, receipts, tmp_path):
@@ -360,7 +360,7 @@ class TestMissionStateBeforeArtifact:
         decision = dispatcher.reconcile(ready_work())
         assert decision.status == "terminal"
         assert decision.terminal_outcome == "failed"
-        # exactly one terminal remains on disk — no second terminal written
+        # exactly one terminal remains on disk â€” no second terminal written
         assert len(receipts.notes()) == 0
 
     def _terminal_receipt(self, outcome="unknown", attempt=1):
@@ -382,11 +382,11 @@ class TestMissionStateBeforeArtifact:
 from aether.apcb.cli import _build_artifact_verify
 
 
-def _envelope_artifact_text(attempt=1, work_id="WORK-PCP-003", principal_id="qwen"):
+def _envelope_artifact_text(attempt=1, work_id="WORK-PCP-003", principal_id="qwen", mission_id="MISSION-PCP-001"):
     return (
         "protocol: aether.apcb.task.v1\n"
         f"work_id: {work_id}\n"
-        "mission_id: MISSION-PCP-001\n"
+        f"mission_id: {mission_id}\n"
         f"principal_id: {principal_id}\n"
         f"attempt: {attempt}\n"
         "\n"
@@ -445,6 +445,62 @@ class TestArtifactEnvelope:
         decision = dispatcher.dispatch(ready_work(workspace_id=str(tmp_path)))
         assert decision.dispatched is True
         assert decision.terminal_outcome == "completed"
+        assert decision.metadata.get("reconcile_artifact_found") is not True
+
+    def test_stale_artifact_cross_mission_rejected(self, profiles, receipts, tmp_path):
+        # P2-F02: an artifact whose envelope names MISSION-A must NEVER be
+        # accepted as the deliverable for MISSION-B even when work_id /
+        # principal / attempt all match. Cross-mission artifact authority.
+        artifact = tmp_path / "WORK-PCP-003.md"
+        artifact.write_text(
+            _envelope_artifact_text(attempt=1, mission_id="MISSION-A"),
+            encoding="utf-8",
+        )
+        adapter = MockAdapter(wait_status="done")
+        dispatcher = make_dispatcher(
+            profiles,
+            receipts,
+            adapter,
+            artifact_verify=_build_artifact_verify("WORK-PCP-003.md"),
+        )
+        decision = dispatcher.dispatch(
+            ready_work(workspace_id=str(tmp_path), mission_id="MISSION-B")
+        )
+        assert decision.dispatched is True
+        assert decision.terminal_outcome == "completed_without_artifact"
+        assert decision.metadata.get("artifact_missing") is True
+
+    def test_reconcile_stale_artifact_cross_mission_not_promoted(self, profiles, receipts, tmp_path):
+        # MISSION-A's artifact tried during a MISSION-B reconcile must be
+        # rejected (NOT promoted to completed) — mission is part of identity.
+        receipts.persist(
+            BridgeExecutionReceipt(
+                work_id="WORK-PCP-003",
+                attempt_number=1,
+                principal_id="qwen",
+                mission_id="MISSION-B",
+                state=ExecutionReceiptStatus.TERMINAL,
+                terminal_outcome="unknown",
+                herdr_execution_ref="herdr://pane/w7:p3",
+                observed_at="2026-08-13T00:00:00Z",
+            )
+        )
+        artifact = tmp_path / "WORK-PCP-003.md"
+        artifact.write_text(
+            _envelope_artifact_text(attempt=1, mission_id="MISSION-A"),
+            encoding="utf-8",
+        )
+        adapter = MockAdapter(wait_status="unknown")
+        dispatcher = make_dispatcher(
+            profiles,
+            receipts,
+            adapter,
+            artifact_verify=_build_artifact_verify("WORK-PCP-003.md"),
+        )
+        decision = dispatcher.reconcile(
+            ready_work(workspace_id=str(tmp_path), mission_id="MISSION-B")
+        )
+        assert decision.status != "promoted"
         assert decision.metadata.get("reconcile_artifact_found") is not True
 
     def test_reconcile_stale_artifact_not_promoted(self, profiles, receipts, tmp_path):

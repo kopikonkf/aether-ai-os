@@ -65,7 +65,8 @@ class PrincipalRuntimeProfiles:
         self.execution_profiles: dict[str, ExecutionProfile] = {}
         self.routing: dict[str, list[str]] = {}
         self.handoff_protocol: str = "aether-canonical-artifact"
-        self.dispatch_idempotency_key: tuple[str, str, str] = (
+        self.dispatch_idempotency_key: tuple[str, str, str, str] = (
+            "mission_id",
             "work_id",
             "attempt_number",
             "principal_id",

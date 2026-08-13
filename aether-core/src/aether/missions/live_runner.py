@@ -333,6 +333,7 @@ class MissionCognitiveRunner:
         objective: str = "Produce the canonical PCP-002 deliverable artifact.",
         step_title: str = "Deliver bounded step artifact",
         success_criteria: tuple[str, ...] | None = None,
+        on_plan_ready: Callable[[str], None] | None = None,
     ) -> MissionExecution:
         """Run one bounded cognitive mission to completion via APCB.
 
@@ -341,6 +342,13 @@ class MissionCognitiveRunner:
         whose action carries the canonical mission metadata, approves it, and
         runs it. Returns the MissionExecution (caller reads the store for
         attempts/evidence).
+
+        `on_plan_ready(mission_id)` (optional) is invoked once the mission plan
+        is created and approved but BEFORE the orchestrator runs the step. It is
+        the caller's hook to stage the deliverable artifact in the workspace
+        with the real mission_id in its envelope (P2-F02: the artifact envelope
+        must match the mission it belongs to — a hardcoded placeholder mission
+        id would be rejected by the verifier).
         """
         ws = workspace or self._default_workspace()
         Path(ws).mkdir(parents=True, exist_ok=True)
@@ -374,4 +382,6 @@ class MissionCognitiveRunner:
             channel="test",
             reason="Approve bounded cognitive experiment.",
         )
+        if on_plan_ready is not None:
+            on_plan_ready(plan.mission_id)
         return await orchestrator.run(plan.mission_id, principal="founder")
