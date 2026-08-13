@@ -72,6 +72,13 @@ class ApcbMissionActionExecutor:
     item from mission action metadata + the principal profile registry. When
     both are omitted the executor fails closed (ValueError) — APCB never runs a
     step without a governed principal/profile derivation.
+
+    `mission_state_observer` is an optional exposure for the live runner: the
+    canonical Aether mission-state observer (aether.missions.mission_state_observer)
+    so the dispatcher honours LIVE mission terminal state during dispatch/
+    reconcile (F-07). The dispatcher itself must be constructed with the
+    observer — this executor merely carries it for callers that build the
+    dispatcher inside a factory.
     """
 
     def __init__(
@@ -80,6 +87,7 @@ class ApcbMissionActionExecutor:
         work_mapper: Callable[[ActionProposal, int], WorkItemView] | None = None,
         *,
         profiles: PrincipalRuntimeProfiles | None = None,
+        mission_state_observer: Callable[[str], str] | None = None,
     ) -> None:
         self._dispatcher_factory: Callable[[], APCBDispatcher] = (
             dispatcher if callable(dispatcher) else (lambda: dispatcher)
@@ -93,6 +101,7 @@ class ApcbMissionActionExecutor:
                 )
             work_mapper = build_canonical_work_mapper(profiles)
         self.work_mapper = work_mapper
+        self.mission_state_observer = mission_state_observer
 
     # ------------------------------------------------------------------ #
     # MissionActionExecutor protocol                                      #
