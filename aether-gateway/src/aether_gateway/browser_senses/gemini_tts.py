@@ -5,16 +5,30 @@ import os
 import uuid
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-import livekit.rtc as rtc
-from livekit.agents import tts
-from livekit.agents import APIConnectOptions
-
 from aether.voice.adapters import GeminiExactTextTTSAdapter
 from aether.voice.contracts import VoiceArtifact, VoiceSynthesisRequest
 from aether.voice.runtime import VoiceDeploymentManifest
 
 
-class _GeminiChunkedStream(tts.ChunkedStream):
+# Lazy-load livekit imports inside functions to avoid ModuleNotFoundError
+# when livekit is not installed (e.g., tests without [livekit] extra)
+def _import_livekit():
+    import livekit.rtc as rtc
+    from livekit.agents import tts
+    from livekit.agents import APIConnectOptions
+    return rtc, tts, APIConnectOptions
+
+
+# Base class for ChunkedStream - use dynamic import to avoid module-level livekit import
+class _ChunkedStreamBase:
+    pass
+
+def _get_chunked_stream_base():
+    _, tts_mod, _ = _import_livekit()
+    return tts_mod.ChunkedStream
+
+
+class _GeminiChunkedStream(_get_chunked_stream_base()):
     """ChunkedStream implementation for Gemini Exact-Text TTS."""
 
     def __init__(
@@ -22,9 +36,10 @@ class _GeminiChunkedStream(tts.ChunkedStream):
         *,
         tts: "GeminiExactTTS",
         input_text: str,
-        conn_options: APIConnectOptions,
+        conn_options: Any,
         delivery_instruction: str,
     ) -> None:
+        rtc_mod, tts_mod, _ = _import_livekit()
         super().__init__(
             tts=tts,
             input_text=input_text,
@@ -33,6 +48,7 @@ class _GeminiChunkedStream(tts.ChunkedStream):
         self._delivery_instruction = delivery_instruction
         self._manifest = tts._manifest
         self._adapter = tts._adapter
+        self._rtc, _, _ = _import_livekit()
 
     async def _main_task(self) -> None:
         try:
@@ -64,7 +80,8 @@ class _GeminiChunkedStream(tts.ChunkedStream):
 
             # Create AudioFrame from PCM (L16, 24kHz, mono)
             # artifact is L16 PCM @ 24000 Hz, 1 channel
-            frame = rtc.AudioFrame(
+            rtc_mod, _, _ = _import_livekit()
+            frame = rtc_mod.AudioFrame(
                 data=audio_bytes,
                 sample_rate=self._manifest.sample_rate,
                 num_channels=self._manifest.channels,
@@ -72,9 +89,10 @@ class _GeminiChunkedStream(tts.ChunkedStream):
             )
 
             # Push synthesized audio frame
+            _, tts_mod, _ = _import_livekit()
             segment_id = str(uuid.uuid4())
             await self._event_ch.send(
-                tts.SynthesizedAudio(
+                tts_mod.SynthesizedAudio(
                     frame=frame,
                     request_id=str(uuid.uuid4()),
                     is_final=True,
@@ -88,7 +106,12 @@ class _GeminiChunkedStream(tts.ChunkedStream):
             raise
 
 
-class GeminiExactTTS(tts.TTS):
+def _get_tts_base():
+    _, tts_mod, _ = _import_livekit()
+    return tts_mod.TTS
+
+
+class GeminiExactTTS(_get_tts_base()):
     """LiveKit TTS wrapper for Gemini Exact-Text TTS (Founder Alpha).
 
     Wraps `GeminiExactTextTTSAdapter` to provide a LiveKit-compatible TTS
@@ -104,8 +127,9 @@ class GeminiExactTTS(tts.TTS):
         self._manifest = VoiceDeploymentManifest.from_yaml(manifest_path)
         self._adapter = GeminiExactTextTTSAdapter(self._manifest)
 
+        rtc_mod, tts_mod, api_connect = _import_livekit()
         super().__init__(
-            capabilities=tts.TTSCapabilities(streaming=False),
+            capabilities=tts_mod.TTSCapabilities(streaming=False),
             sample_rate=self._manifest.sample_rate,
             num_channels=self._manifest.channels,
         )
@@ -122,30 +146,38 @@ class GeminiExactTTS(tts.TTS):
         self,
         text: str,
         *,
-        conn_options: Optional[APIConnectOptions] = None,
+        conn_options: Optional[Any] = None,
         delivery_instruction: str = "Speak naturally and clearly.",
-    ) -> tts.ChunkedStream:
+    ) -> Any:
+        _, tts_mod, api_connect = _import_livekit()
         return _GeminiChunkedStream(
             tts=self,
             input_text=text,
-            conn_options=conn_options or APIConnectOptions(),
+            conn_options=conn_options or api_connect(),
             delivery_instruction=delivery_instruction,
         )
 
     def stream(
         self,
         *,
-        conn_options: Optional[APIConnectOptions] = None,
-    ) -> tts.SynthesizeStream:
+        conn_options: Optional[Any] = None,
+    ) -> Any:
         # Non-streaming TTS: return a stream that buffers full text then synthesizes
+        rtc_mod, tts_mod, api_connect = _import_livekit()
         return _GeminiSynthesizeStream(self)
 
 
-class _GeminiSynthesizeStream(tts.SynthesizeStream):
+def _get_synthesize_stream_base():
+    _, tts_mod, _ = _import_livekit()
+    return tts_mod.SynthesizeStream
+
+
+class _GeminiSynthesizeStream(_get_synthesize_stream_base()):
     """Streaming adapter for non-streaming Gemini TTS (buffers all text then synthesizes)."""
 
-    def __init__(self, tts: GeminiExactTTS, conn_options: Optional[APIConnectOptions] = None) -> None:
-        super().__init__(tts=tts, conn_options=conn_options or APIConnectOptions())
+    def __init__(self, tts: Any, conn_options: Optional[Any] = None) -> None:
+        _, tts_mod, api_connect = _import_livekit()
+        super().__init__(tts=tts, conn_options=conn_options or api_connect())
         self._buffer: List[str] = []
 
     def push_text(self, text: str) -> None:
@@ -160,7 +192,7 @@ class _GeminiSynthesizeStream(tts.SynthesizeStream):
                 chunked = self._tts.synthesize(text)
                 asyncio.create_task(self._consume_chunked(chunked))
 
-    async def _consume_chunked(self, chunked: tts.ChunkedStream) -> None:
+    async def _consume_chunked(self, chunked: Any) -> None:
         async for audio in chunked:
             self._event_ch.send(audio)
         self._event_ch.close()

@@ -22,9 +22,8 @@ def test_livekit_worker_delegates_cognition_to_gateway() -> None:
     assert "/api/browser-senses/worker/chat" in worker
     assert "Aether Gateway is the only cognitive authority" in worker
     assert "inference.STT" in worker
-    assert "inference.TTS" in worker
+    assert "GeminiExactTTS" in worker
     assert "fallback=config.stt_fallback()" in worker
-    assert "fallback=config.tts_fallback()" in worker
 
 
 def test_one_domain_deployment_routes_senses_to_aether_and_root_to_aionui() -> None:
