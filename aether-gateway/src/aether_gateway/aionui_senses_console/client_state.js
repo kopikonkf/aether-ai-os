@@ -116,6 +116,7 @@ const AUTH_TRANSITIONS = new Map([
   ])],
   [AuthSessionState.CLOSED, new Set([
     AuthSessionState.BOOTSTRAP_REQUIRED,
+    AuthSessionState.BOOTSTRAP_PENDING,
     AuthSessionState.CONNECTING,
     AuthSessionState.READY,
   ])],
@@ -930,6 +931,10 @@ export function deriveClientPresentation(state) {
     externalSpeechLabel,
     canConnect: [
       AuthSessionState.READY,
+      AuthSessionState.CLOSED,
+    ].includes(state.authSession),
+    canPair: [
+      AuthSessionState.BOOTSTRAP_REQUIRED,
       AuthSessionState.CLOSED,
     ].includes(state.authSession),
     canSend: (

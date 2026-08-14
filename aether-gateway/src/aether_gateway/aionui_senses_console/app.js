@@ -113,7 +113,8 @@ function renderClientState(clientState) {
   $('pairingState').textContent = presentation.authLabel;
 
   $('pairButton').disabled = (
-    clientState.authSession === AuthSessionState.BOOTSTRAP_PENDING
+    !presentation.canPair
+    || clientState.authSession === AuthSessionState.BOOTSTRAP_PENDING
     || !foreground
   );
   $('connectButton').disabled = !presentation.canConnect || !state.deviceKey || !foreground;
