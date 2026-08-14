@@ -227,6 +227,14 @@ class HerdrExecutionAdapter:
                 error="pane-send agent: no lifecycle; caller must reconcile + verify artifact",
             )
         deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+        # F-06 pane liveness: an agent that was idle BEFORE the prompt is
+        # observed as "idle" on the very first poll, before it registers the
+        # task — treating that as completion would record an unknown terminal
+        # before the worker writes the artifact. Give a short initial settle so
+        # the worker transitions out of the pre-prompt idle state, then poll.
+        initial_settle = min(8.0, max(0.0, deadline - time.monotonic()))
+        if initial_settle > 0:
+            time.sleep(initial_settle)
         while time.monotonic() < deadline:
             obs = self.observe_agent(agent_ref)
             if obs.is_terminal or obs.status == "idle":
