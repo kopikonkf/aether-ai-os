@@ -33,7 +33,7 @@ from aether.contracts.missions import (
 from aether.executive.cognitive_executive import CognitiveExecutive, CognitiveLoopResult
 from aether.executive.cognitive_observer import CognitiveObservation, CognitiveObserver
 from aether.executive.cognitive_planner import CognitivePlanner, DuplicateGovernanceError
-from aether.executive.cognitive_reasoner import CognitiveDirective, RuleBasedReasoner
+from aether.executive.cognitive_reasoner import CognitiveDirective, CognitiveStepSpec, RuleBasedReasoner
 from aether.missions.live_runner import MissionCognitiveRunner
 from aether.missions.orchestrator import MissionOrchestrator
 
@@ -715,3 +715,109 @@ async def test_multi_step_bound_respected(tmp_path: Path):
     assert adapter.calls.count("prompt_agent") == 2
     assert result.decisions[-1]["action"] == "stop"
     assert "bounded" in result.decisions[-1]["rationale"]
+
+# ---------------------------------------------------------------------------
+# MISSION-PCP-005 WORK-3 — multi-principal evidence (Gate 6 acceptance G6-A)
+# ---------------------------------------------------------------------------
+_PCP005_PRINCIPALS = ("claude", "gemini", "qwen", "deepseek", "chatgpt")
+_PCP005_PROFILES = {
+    "claude": "herdr:freebuff",
+    "gemini": "herdr:claude",
+    "qwen": "herdr:cline",
+    "deepseek": "herdr:kilo",
+    "chatgpt": "herdr:opencode",
+}
+
+
+def make_multi_principal_directive(
+    ws: str, *, step_count: int = 5, work_prefix: str = "WORK-PCP-005"
+) -> CognitiveDirective:
+    """Deterministic 5-step directive with a DIFFERENT principal per step.
+
+    Gate 6 acceptance G6-A: principal_id is distinct across steps; every step
+    also carries its own execution_profile so the planner emits per-step
+    canonical metadata. Linear depends_on chain (step-N -> step-N+1).
+    """
+    principals = _PCP005_PRINCIPALS[:step_count]
+    steps = tuple(
+        CognitiveStepSpec(
+            step_id=f"step-{index}",
+            work_id=f"{work_prefix}-S{index}",
+            objective=f"Deliver step {index} of {step_count} as principal {principal}.",
+            expected_artifact=f"{work_prefix}-S{index}.md",
+            depends_on=(f"step-{index - 1}",) if index > 1 else (),
+            acceptance=(f"produce {work_prefix}-S{index}.md",),
+            principal_id=principal,
+            execution_profile=_PCP005_PROFILES[principal],
+        )
+        for index, principal in enumerate(principals, start=1)
+    )
+    return CognitiveDirective(
+        objective=f"Multi-principal cognitive mission ({step_count} steps)",
+        expected_artifact=f"{work_prefix}.md",
+        principal_id="chatgpt",
+        execution_profile="herdr:opencode",
+        workspace_id=ws,
+        capabilities=("systems_integration",),
+        max_steps=step_count,
+        budget_usd=10.0,
+        stop_conditions=("stop when budget exhausted",),
+        rationale="deterministic multi-principal directive",
+        steps=steps,
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_principal_completes_with_distinct_principals(tmp_path: Path):
+    # Gate 6 G6-A: a 5-step plan runs to COMPLETED with governance exactly once,
+    # NO Founder relay, and each step executed by a DIFFERENT principal whose id
+    # flows through canonical metadata -> evidence evaluation.
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=5)
+
+    result = await executive.run_closed_loop(make_multi_principal_directive(ws))
+    assert result.completed is True
+    assert result.governance_count == 1
+    assert result.steps_executed == tuple(f"step-{i}" for i in range(1, 6))
+    principals = [ev["principal_id"] for ev in result.evidence_evaluations]
+    assert principals == list(_PCP005_PRINCIPALS)
+    assert len(set(principals)) == 5  # distinct across steps (G6-A)
+
+
+@pytest.mark.asyncio
+async def test_multi_principal_evidence_carries_principal_id(tmp_path: Path):
+    # Gate 6 traceability: every evidence evaluation names the principal that
+    # produced the step, distinct per step, with accepted artifacts.
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=5)
+
+    result = await executive.run_closed_loop(make_multi_principal_directive(ws))
+    assert len(result.evidence_evaluations) == 5
+    assert all(ev["artifact_present"] is True for ev in result.evidence_evaluations)
+    assert all(ev["attempt_status"] == "completed" for ev in result.evidence_evaluations)
+    assert all(ev["terminal_outcome"] == "completed" for ev in result.evidence_evaluations)
+    # Principal on every step evidence, matching the directive per step.
+    for index, ev in enumerate(result.evidence_evaluations, start=1):
+        assert ev["step_id"] == f"step-{index}"
+        assert ev["principal_id"] == _PCP005_PRINCIPALS[index - 1]
+
+
+@pytest.mark.asyncio
+async def test_multi_principal_artifact_chain_across_principals(tmp_path: Path):
+    # Gate 6 G6-C: step N+1's prompt carries step N's artifact as relevant_artifacts
+    # even when the executing principal changes between steps.
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=5)
+
+    result = await executive.run_closed_loop(make_multi_principal_directive(ws))
+    assert result.completed is True
+    assert len(adapter.prompts) == 5
+    for index in (1, 2, 3, 4):
+        nxt = adapter.prompts[index]
+        assert f"WORK-PCP-005-S{index}.md" in nxt  # step N artifact consumed by step N+1

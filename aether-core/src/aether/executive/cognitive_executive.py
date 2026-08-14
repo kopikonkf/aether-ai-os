@@ -302,6 +302,7 @@ class CognitiveExecutive:
         work_id = str(metadata.get(MISSION_WORK_ID) or "WORK-PCP-003")
         return {
             "step_id": step.step_id,
+            "principal_id": str(metadata.get(MISSION_PRINCIPAL_ID) or ""),
             "attempt_status": latest.status.value if latest is not None else "none",
             "artifact_present": self._artifact_authoritative(metadata, mission_id),
             "terminal_outcome": self._receipt_terminal(mission_id, work_id),
@@ -326,6 +327,7 @@ class CognitiveExecutive:
             evidence.append(
                 {
                     "step_id": step.step_id,
+                    "principal_id": str(metadata.get(MISSION_PRINCIPAL_ID) or ""),
                     "attempt_status": latest.status.value if latest is not None else "none",
                     "artifact_present": self._artifact_authoritative(metadata, mission_id),
                     "terminal_outcome": self._receipt_terminal(mission_id, work_id),

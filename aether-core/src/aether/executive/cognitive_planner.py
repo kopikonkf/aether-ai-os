@@ -6,6 +6,13 @@ CognitiveDirective (WORK-2) into a canonical mission plan via MissionOrchestrato
 constitutional approval at the start (decide approved=True, principal="founder").
 There is no per-step approval in the loop.
 
+Gate 6 (MISSION-PCP-005 WORK-2): _build_multi_steps sets mission_principal_id /
+mission_execution_profile PER STEP from the step spec (falling back to the
+directive for backward compat), honouring the WORK-1 per-step principal contract.
+plan_from_directive also fail-closes on a step that resolves to an empty
+effective principal before the plan is built. The artifact chain
+(relevant_artifacts / relevant_evidence) is unchanged.
+
 NON-ACTIVATION: planning and governing never execute a mission step; they only
 write the plan + the single decision into the canonical store.
 """
@@ -57,6 +64,10 @@ class CognitivePlanner:
     N+1 (Gate 5 acceptance item 3). A single-step directive keeps the legacy
     one-step plan shape.
 
+    Gate 6 (PCP-005): each step's mission_principal_id / mission_execution_profile
+    is resolved from the step spec (falling back to the directive), so a
+    reasoner can assign a DIFFERENT principal per step.
+
     govern() is a one-time invariant per mission — a second call always raises
     DuplicateGovernanceError (programmer error), even if the store already holds
     a decision. A store-level pre-existing decision is otherwise honoured
@@ -73,6 +84,17 @@ class CognitivePlanner:
     # ------------------------------------------------------------------ #
     def plan_from_directive(self, directive: CognitiveDirective) -> MissionPlan:
         blockers = directive.validate()
+
+        # Gate 6 (G6-A): plan-time fail-closed check — before building the plan,
+        # every step must resolve to a non-empty effective principal. A step
+        # whose spec.principal_id is None AND whose directive.principal_id is
+        # empty is a blocker. The legacy single-step path (steps == ()) and the
+        # legacy multi-step fallback (directive principal inherited) are unchanged.
+        if directive.steps:
+            for spec in directive.steps:
+                if not (spec.principal_id or directive.principal_id):
+                    blockers.append(f"step {spec.step_id} has no effective principal")
+
         if blockers:
             raise ValueError("invalid directive: " + ", ".join(blockers))
 
@@ -178,6 +200,11 @@ class CognitivePlanner:
         `relevant_artifacts` = [step N expected artifact] and `relevant_evidence`
         = [step N work_id] so APCB's prompt factory forwards step N's deliverable
         as the input context for step N+1 (Gate 5 acceptance item 3).
+
+        Gate 6 (PCP-005): mission_principal_id / mission_execution_profile are
+        resolved PER STEP from the step spec (falling back to the directive), so
+        a reasoner can assign a DIFFERENT principal per step. When a spec has no
+        per-step overrides, the metadata is byte-for-byte identical to legacy.
         """
         specs = directive.steps
         artifacts_by_id = {spec.step_id: spec.expected_artifact for spec in specs}
@@ -193,11 +220,24 @@ class CognitivePlanner:
                 prior_work = work_ids_by_id.get(dep)
                 if prior_work:
                     prior_evidence.append(prior_work)
+
+            # Gate 6 (G6-A): effective per-step principal/profile; fall back to the
+            # directive for backward compat (legacy -> byte-for-byte identical).
+            principal = spec.principal_id or directive.principal_id
+            profile = spec.execution_profile or directive.execution_profile
+            # G6-B: a step with an EXPLICIT per-step principal must not inherit the
+            # directive-level capabilities (which belong to the directive's principal).
+            # Leave them empty so the canonical mapper derives the step's required
+            # capabilities from that principal's own registry entry.
+            step_capabilities = (
+                () if spec.principal_id else list(directive.capabilities)
+            )
+
             metadata: dict[str, Any] = {
-                MISSION_PRINCIPAL_ID: directive.principal_id,
-                MISSION_EXECUTION_PROFILE: directive.execution_profile,
+                MISSION_PRINCIPAL_ID: principal,
+                MISSION_EXECUTION_PROFILE: profile,
                 MISSION_WORKSPACE_ID: directive.workspace_id,
-                MISSION_CAPABILITIES: list(directive.capabilities),
+                MISSION_CAPABILITIES: step_capabilities,
                 MISSION_EXPECTED_ARTIFACT: spec.expected_artifact,
                 MISSION_WORK_ID: spec.work_id,
                 "objective": spec.objective,

@@ -234,3 +234,144 @@ def test_enforce_bounds_rejects_too_many_steps():
     except InvalidDirectiveError:
         return
     raise AssertionError("expected InvalidDirectiveError for too many steps")
+
+
+# --- PCP-005 WORK-1 additions (per-step principal directive) ---
+# PCP-005 WORK-1 additions (per-step principal directive)
+from types import SimpleNamespace
+
+import pytest
+
+from aether.executive.cognitive_observer import CognitiveObservation
+from aether.executive.cognitive_reasoner import (
+    CognitiveDirective,
+    CognitiveStepSpec,
+    RuleBasedReasoner,
+    _DEFAULT_PROFILE_BY_PRINCIPAL,
+    _DEFAULT_STEP_PRINCIPALS,
+)
+
+
+class _FakeRegistry:
+    """Duck-typed PrincipalRuntimeProfiles stand-in (no real YAML in unit tests)."""
+
+    def __init__(self, entries):
+        self._entries = entries
+
+    def get_principal(self, pid):
+        return self._entries.get(pid)
+
+
+def _observe(summary="state snapshot"):
+    return CognitiveObservation(observed_at="2026-08-13T00:00:00Z", summary=summary)
+
+
+def _registry():
+    """Minimal fake mirroring principal_runtime_profiles.v0.yaml principals."""
+    return _FakeRegistry(
+        {
+            "chatgpt": SimpleNamespace(model_provider="openai", execution_profiles=("herdr:opencode",)),
+            "claude": SimpleNamespace(model_provider="anthropic", execution_profiles=("herdr:freebuff",)),
+            "gemini": SimpleNamespace(model_provider="google", execution_profiles=("herdr:claude",)),
+            "qwen": SimpleNamespace(model_provider="alibaba", execution_profiles=("herdr:cline",)),
+            "deepseek": SimpleNamespace(model_provider="deepseek", execution_profiles=("herdr:kilo",)),
+            "kimi": SimpleNamespace(model_provider="moonshot", execution_profiles=("herdr:kimi",)),
+            "opencode": SimpleNamespace(model_provider="opencode", execution_profiles=("herdr:opencode",)),
+        }
+    )
+
+
+def test_multi_principal_steps_distinct():
+    reasoner = RuleBasedReasoner(
+        plan_steps=5, step_principals=_DEFAULT_STEP_PRINCIPALS, work_prefix="WORK-PCP-005"
+    )
+    directive = reasoner.reason(_observe())
+    assert len(directive.steps) == 5
+    principals = tuple(spec.principal_id for spec in directive.steps)
+    assert principals == _DEFAULT_STEP_PRINCIPALS  # (claude, gemini, qwen, deepseek, chatgpt)
+    assert len(set(principals)) == 5
+    assert directive.require_distinct_principals is True
+    assert directive.validate() == []
+
+
+def test_legacy_steps_inherit_directive_principal():
+    reasoner = RuleBasedReasoner(plan_steps=3, principal_id="chatgpt", execution_profile="herdr:opencode")
+    directive = reasoner.reason(_observe())
+    assert len(directive.steps) == 3
+    assert directive.require_distinct_principals is False
+    assert all(spec.principal_id is None for spec in directive.steps)
+    assert all(spec.execution_profile is None for spec in directive.steps)
+    assert directive.validate() == []  # backward compat
+
+
+def test_step_principals_length_mismatch_raises():
+    with pytest.raises(ValueError):
+        RuleBasedReasoner(plan_steps=3, step_principals=("claude", "gemini"))
+
+
+def test_validate_rejects_unregistered_principal_with_profiles():
+    directive = CognitiveDirective(
+        objective="o",
+        expected_artifact="a",
+        principal_id="chatgpt",
+        execution_profile="herdr:opencode",
+        workspace_id="w",
+        max_steps=1,
+        steps=(
+            CognitiveStepSpec(
+                step_id="s1", work_id="w1", objective="o", expected_artifact="a",
+                principal_id="ghost",
+            ),
+        ),
+    )
+    blockers = directive.validate(profiles=_registry())
+    assert "step s1 principal ghost not registered" in blockers
+
+
+def test_validate_rejects_conflated_principal_with_profiles():
+    directive = CognitiveDirective(
+        objective="o",
+        expected_artifact="a",
+        principal_id="chatgpt",
+        execution_profile="herdr:opencode",
+        workspace_id="w",
+        max_steps=1,
+        steps=(
+            CognitiveStepSpec(
+                step_id="s1", work_id="w1", objective="o", expected_artifact="a",
+                principal_id="opencode", execution_profile="herdr:opencode",
+            ),
+        ),
+    )
+    blockers = directive.validate(profiles=_registry())
+    assert "step s1 principal/model_provider conflated" in blockers
+
+
+def test_validate_rejects_duplicate_principal_when_required():
+    directive = CognitiveDirective(
+        objective="o",
+        expected_artifact="a",
+        principal_id="chatgpt",
+        execution_profile="herdr:opencode",
+        workspace_id="w",
+        max_steps=2,
+        require_distinct_principals=True,
+        steps=(
+            CognitiveStepSpec(step_id="s1", work_id="w1", objective="o", expected_artifact="a", principal_id="claude"),
+            CognitiveStepSpec(step_id="s2", work_id="w2", objective="o", expected_artifact="a", principal_id="claude"),
+        ),
+    )
+    blockers = directive.validate()
+    assert "duplicate principal across steps: claude" in blockers
+
+
+def test_to_dict_round_trip_includes_per_step_principal():
+    reasoner = RuleBasedReasoner(
+        plan_steps=2, step_principals=("claude", "gemini"), work_prefix="WORK-PCP-005"
+    )
+    data = reasoner.reason(_observe()).to_dict()
+    assert data["require_distinct_principals"] is True
+    assert data["steps"][0]["principal_id"] == "claude"
+    assert data["steps"][0]["execution_profile"] == _DEFAULT_PROFILE_BY_PRINCIPAL["claude"]
+    assert data["steps"][1]["principal_id"] == "gemini"
+    assert data["steps"][1]["execution_profile"] == _DEFAULT_PROFILE_BY_PRINCIPAL["gemini"]

@@ -175,8 +175,16 @@ def build_canonical_work_mapper(
         )
         capabilities = tuple(meta.get(MISSION_CAPABILITIES) or ())
         if not capabilities:
-            hint = _OPERATION_CAPABILITY.get(action.operation or "")
-            capabilities = (hint,) if hint else ()
+            # G6-B: a per-principal step (no explicit mission_capabilities) requires
+            # exactly the capabilities its OWN principal is registered with — never
+            # an inherited directive capability the principal lacks. Fall back to the
+            # operation hint only when the principal is not registered.
+            principal = profiles.get_principal(principal_id)
+            if principal is not None and principal.capabilities:
+                capabilities = tuple(sorted(principal.capabilities))
+            else:
+                hint = _OPERATION_CAPABILITY.get(action.operation or "")
+                capabilities = (hint,) if hint else ()
         work_meta = dict(meta)
         if meta.get(MISSION_EXPECTED_ARTIFACT) is not None:
             work_meta[MISSION_EXPECTED_ARTIFACT] = meta[MISSION_EXPECTED_ARTIFACT]
