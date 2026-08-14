@@ -217,6 +217,18 @@ class CognitiveDirective:
                         model_provider = getattr(registered, "model_provider", None)
                         if model_provider == principal or model_provider == profile:
                             blockers.append(f"step {step_label} principal/model_provider conflated")
+                        # R-PCP005-1 (WORK-4): a per-step execution_profile must be
+                        # one the principal is actually registered with. An explicit
+                        # profile that belongs to a DIFFERENT principal is a blocker
+                        # (fail-closed), never silently remapped at dispatch.
+                        if (
+                            spec.execution_profile
+                            and profile
+                            and profile not in getattr(registered, "execution_profiles", ())
+                        ):
+                            blockers.append(
+                                f"step {step_label} profile {profile} not registered to principal {principal}"
+                            )
             if self.require_distinct_principals:
                 seen: set[str] = set()
                 for principal in effective_principals:
