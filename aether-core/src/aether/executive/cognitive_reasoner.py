@@ -37,8 +37,43 @@ class InvalidDirectiveError(ValueError):
 
 
 @dataclass(frozen=True)
+class CognitiveStepSpec:
+    """Bounded, governance-traceable description of ONE plan step.
+
+    A multi-step directive (MISSION-PCP-004) carries a tuple of these specs;
+    the planner turns each spec into a canonical MissionStep with its own
+    work_id / expected_artifact / depends_on, and links step N+1 to step N via
+    `relevant_artifacts` so the deliverable of step N becomes the evidence /
+    input context for step N+1 (Gate 5 acceptance item 3).
+    """
+
+    step_id: str
+    work_id: str
+    objective: str
+    expected_artifact: str
+    depends_on: tuple[str, ...] = ()
+    acceptance: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "step_id": self.step_id,
+            "work_id": self.work_id,
+            "objective": self.objective,
+            "expected_artifact": self.expected_artifact,
+            "depends_on": list(self.depends_on),
+            "acceptance": list(self.acceptance),
+        }
+
+
+@dataclass(frozen=True)
 class CognitiveDirective:
-    """Bounded, governance-traceable instruction for one cognitive step."""
+    """Bounded, governance-traceable instruction for one cognitive mission.
+
+    Single-step (legacy, PCP-003): objective + expected_artifact describe one
+    step and `steps` stays empty. Multi-step (PCP-004): `steps` carries the
+    bounded plan decomposition; the top-level objective/expected_artifact remain
+    the mission-level fallback the planner uses when `steps` is empty.
+    """
 
     objective: str
     expected_artifact: str
@@ -50,6 +85,7 @@ class CognitiveDirective:
     budget_usd: float = 10.0
     stop_conditions: tuple[str, ...] = ()
     rationale: str = ""
+    steps: tuple[CognitiveStepSpec, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serializable form for evidence / traceability."""
@@ -64,6 +100,7 @@ class CognitiveDirective:
             "budget_usd": self.budget_usd,
             "stop_conditions": list(self.stop_conditions),
             "rationale": self.rationale,
+            "steps": [spec.to_dict() for spec in self.steps],
         }
 
     def validate(self) -> list[str]:
@@ -73,6 +110,13 @@ class CognitiveDirective:
         rule-based reasoner legitimately emits an empty workspace and leaves a
         concrete binding to the planner/executor. A concrete workspace is only
         enforced at the execution boundary (enforce_bounds), never here.
+
+        When `steps` is non-empty (multi-step), every step spec must be
+        well-formed: unique step_ids, work_id/objective/expected_artifact set,
+        depends_on referencing known steps, no self-dependency, bounded to
+        MAX_STEPS, and max_steps must cover the step count (the loop bound is
+        min(executive.max_steps, directive.max_steps), so a plan with N steps
+        needs max_steps >= N to reach completion).
         """
         blockers: list[str] = []
         if not self.objective:
@@ -87,6 +131,24 @@ class CognitiveDirective:
             blockers.append("max_steps")
         if self.budget_usd < 0:
             blockers.append("budget_usd")
+        if self.steps:
+            ids = [spec.step_id for spec in self.steps]
+            if len(ids) != len(set(ids)):
+                blockers.append("step ids must be unique")
+            if len(self.steps) > MAX_STEPS:
+                blockers.append(f"steps exceed MAX_STEPS={MAX_STEPS}")
+            known = set(ids)
+            for spec in self.steps:
+                if not spec.step_id or not spec.work_id or not spec.objective or not spec.expected_artifact:
+                    blockers.append(f"step {spec.step_id or '?'} incomplete (step_id/work_id/objective/expected_artifact)")
+                    continue
+                missing = set(spec.depends_on) - known
+                if missing:
+                    blockers.append(f"step {spec.step_id} depends on unknown steps: {', '.join(sorted(missing))}")
+                if spec.step_id in spec.depends_on:
+                    blockers.append(f"step {spec.step_id} cannot depend on itself")
+            if self.max_steps < len(self.steps):
+                blockers.append(f"max_steps {self.max_steps} below step count {len(self.steps)}")
         return blockers
 
 
@@ -97,7 +159,16 @@ class CognitiveReasoner(Protocol):
 
 
 class RuleBasedReasoner:
-    """Deterministic default reasoner (rule-based, no model, no dispatch)."""
+    """Deterministic default reasoner (rule-based, no model, no dispatch).
+
+    Single-step (legacy): emits a directive whose single expected artifact is
+    `expected_artifact`. Multi-step (PCP-004): when `plan_steps` > 1 the reasoner
+    deterministically decomposes the mission into `plan_steps` chained steps —
+    each with its own work_id (``<work_prefix>-S{n}``), expected artifact
+    (``<work_prefix>-S{n}.md``) and a linear depends_on chain, so the planner can
+    build a bounded multi-step plan and the executive can chain artifacts step
+    N -> step N+1.
+    """
 
     _DEFAULT_CAPABILITIES = ("systems_integration",)
     _DEFAULT_STOP_CONDITIONS = ("stop when budget exhausted",)
@@ -108,25 +179,58 @@ class RuleBasedReasoner:
         principal_id: str = "chatgpt",
         execution_profile: str = "herdr:opencode",
         expected_artifact: str = "WORK-PCP-003.md",
+        plan_steps: int = 1,
+        work_prefix: str = "WORK-PCP-003",
     ) -> None:
         self._workspace_override = workspace_override
         self._principal_id = principal_id
         self._execution_profile = execution_profile
         self._expected_artifact = expected_artifact
+        self._plan_steps = max(1, int(plan_steps))
+        self._work_prefix = work_prefix
 
     def reason(self, observation: CognitiveObservation) -> CognitiveDirective:
         summary = observation.summary or ""
-        return CognitiveDirective(
+        base = dict(
             objective=f"Address observed Aether state: {summary}",
-            expected_artifact=self._expected_artifact,
             principal_id=self._principal_id,
             execution_profile=self._execution_profile,
             workspace_id=self._workspace_override or "",
             capabilities=self._DEFAULT_CAPABILITIES,
-            max_steps=1,
             budget_usd=10.0,
             stop_conditions=self._DEFAULT_STOP_CONDITIONS,
             rationale="rule-based: deterministic default",
+        )
+        if self._plan_steps <= 1:
+            return CognitiveDirective(
+                expected_artifact=self._expected_artifact,
+                max_steps=1,
+                **base,
+            )
+        steps: list[CognitiveStepSpec] = []
+        for index in range(1, self._plan_steps + 1):
+            work_id = f"{self._work_prefix}-S{index}"
+            artifact = f"{work_id}.md"
+            depends_on = (f"step-{index - 1}",) if index > 1 else ()
+            acceptance = (
+                f"produce {artifact}",
+                f"step {index - 1} artifact is input context" if index > 1 else "first step needs no input artifact",
+            )
+            steps.append(
+                CognitiveStepSpec(
+                    step_id=f"step-{index}",
+                    work_id=work_id,
+                    objective=f"Deliver {artifact} as step {index} of {self._plan_steps}.",
+                    expected_artifact=artifact,
+                    depends_on=depends_on,
+                    acceptance=acceptance,
+                )
+            )
+        return CognitiveDirective(
+            expected_artifact=self._expected_artifact,
+            max_steps=len(steps),
+            steps=tuple(steps),
+            **base,
         )
 
 
@@ -150,9 +254,18 @@ def enforce_bounds(directive: CognitiveDirective) -> CognitiveDirective:
         raise InvalidDirectiveError(
             "directive missing required fields: " + ", ".join(sorted(missing))
         )
+    clamped_steps = directive.steps
+    if len(clamped_steps) > MAX_STEPS:
+        raise InvalidDirectiveError(
+            f"directive exceeds MAX_STEPS={MAX_STEPS}: {len(clamped_steps)} steps"
+        )
+    if clamped_steps:
+        max_steps = max(1, min(MAX_STEPS, max(directive.max_steps, len(clamped_steps))))
+    else:
+        max_steps = max(1, min(MAX_STEPS, directive.max_steps))
     return dataclasses.replace(
         directive,
-        max_steps=max(1, min(MAX_STEPS, directive.max_steps)),
+        max_steps=max_steps,
         budget_usd=max(0.0, min(MAX_BUDGET, directive.budget_usd)),
     )
 
