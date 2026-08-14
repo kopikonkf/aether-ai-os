@@ -113,6 +113,14 @@ class CognitiveExecutive:
     def _receipts(self) -> ReceiptStore:
         if self._receipts_inst is None:
             self._receipts_inst = ReceiptStore(self._runner.receipts_path)
+        else:
+            # The executor's dispatcher writes receipts through a SEPARATE
+            # ReceiptStore instance (its own in-memory index). Recompute this
+            # read-side index from the append-only log so per-step evidence
+            # reflects receipts the dispatcher appended AFTER this instance was
+            # first constructed (Gate 5 multi-step: step N+1 receipts must be
+            # visible to the loop's evidence evaluation).
+            self._receipts_inst._recompute_from_log()
         return self._receipts_inst
 
     # ------------------------------------------------------------------ #
@@ -180,10 +188,18 @@ class CognitiveExecutive:
             progress_made = (
                 len(self._completed_step_ids(plan, store)) > completed_before
             )
-            action, rationale = self.decide_next(
-                status, remaining, step_count, bound, progress_made=progress_made
-            )
             attempted = self._last_attempted_step(store, mission_id) or plan.steps[0].step_id
+            # 7/8. EVIDENCE + DECIDE — the just-attempted step's observed outcome
+            #       grounds the continue/stop decision (Gate 5 acceptance item 4).
+            step_evidence = self._step_evidence(plan, store, mission_id, attempted)
+            action, rationale = self.decide_next(
+                status,
+                remaining,
+                step_count,
+                bound,
+                progress_made=progress_made,
+                evidence=step_evidence,
+            )
             decisions.append(
                 {"step_id": attempted, "action": action, "rationale": rationale}
             )
@@ -209,7 +225,7 @@ class CognitiveExecutive:
         )
 
     # ------------------------------------------------------------------ #
-    # Decide next (bounded, deterministic)                                #
+    # Decide next (bounded, deterministic, evidence-driven)               #
     # ------------------------------------------------------------------ #
     @staticmethod
     def decide_next(
@@ -218,6 +234,7 @@ class CognitiveExecutive:
         step_count: int,
         bound: int,
         progress_made: bool = True,
+        evidence: dict[str, Any] | None = None,
     ) -> tuple[str, str]:
         """Return (action, rationale): "continue" or "stop".
 
@@ -225,10 +242,22 @@ class CognitiveExecutive:
         (PAUSED / WAITING_APPROVAL / REVIEW_REQUIRED) stop as "blocked" ONLY
         when no step progress was made (R4): the loop must not churn without
         advancing. A PAUSED continuation checkpoint after a completed step
-        (progress_made=True) still continues under the bound. Otherwise the
-        loop continues only while steps remain AND the iteration count is under
-        the bound.
+        (progress_made=True) still continues under the bound.
+
+        Evidence-driven (Gate 5 acceptance item 4): when `evidence` for the just
+        attempted step is supplied and shows the step did NOT complete (failed /
+        missing artifact / non-terminal receipt), the loop stops with the
+        evidence-named rationale — the decision is grounded in the observed
+        outcome, not just the status machine.
         """
+        if evidence is not None:
+            attempt = str(evidence.get("attempt_status") or "none")
+            artifact = bool(evidence.get("artifact_present"))
+            if attempt == "failed" or not artifact:
+                return (
+                    "stop",
+                    f"step evidence failed (attempt={attempt}, artifact_present={artifact})",
+                )
         if status in _TERMINAL_STATUSES:
             return "stop", f"mission terminal state={status.value}"
         if status in {
@@ -251,6 +280,33 @@ class CognitiveExecutive:
     # ------------------------------------------------------------------ #
     # Evidence + helpers                                                  #
     # ------------------------------------------------------------------ #
+    def _step_evidence(
+        self,
+        plan,
+        store,
+        mission_id: str,
+        step_id: str,
+    ) -> dict[str, Any]:
+        """Build the evidence dict for ONE just-attempted step (Gate 5 item 4).
+
+        Mirrors the per-step fields of _evaluate_evidence so the loop's
+        continue/stop decision is grounded in the observed outcome: attempt
+        status, ADR-0057 artifact presence, and the APCB receipt terminal.
+        Unknown step ids degrade to a neutral evidence (no stop trigger).
+        """
+        step = next((item for item in plan.steps if item.step_id == step_id), None)
+        if step is None:
+            return {"step_id": step_id, "attempt_status": "none", "artifact_present": False}
+        latest = store.latest_attempt(mission_id, step.step_id)
+        metadata = dict(step.action.metadata or {})
+        work_id = str(metadata.get(MISSION_WORK_ID) or "WORK-PCP-003")
+        return {
+            "step_id": step.step_id,
+            "attempt_status": latest.status.value if latest is not None else "none",
+            "artifact_present": self._artifact_authoritative(metadata, mission_id),
+            "terminal_outcome": self._receipt_terminal(mission_id, work_id),
+        }
+
     def _evaluate_evidence(
         self,
         plan,

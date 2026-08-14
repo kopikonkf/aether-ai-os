@@ -24,7 +24,7 @@ from aether.contracts.missions import (
     OpportunityEvidence,
     OpportunityEvidenceStance,
 )
-from aether.executive.cognitive_reasoner import CognitiveDirective
+from aether.executive.cognitive_reasoner import CognitiveDirective, CognitiveStepSpec
 from aether.missions.canonical_mapper import (
     MISSION_CAPABILITIES,
     MISSION_EXECUTION_PROFILE,
@@ -46,11 +46,18 @@ class DuplicateGovernanceError(RuntimeError):
 
 
 class CognitivePlanner:
-    """Plans a single bounded cognitive step from a directive and governs it once.
+    """Plans a bounded cognitive mission from a directive and governs it once.
 
     plan_from_directive is fail-closed: an invalid directive (validate() reports
-    blockers) raises ValueError with the directive's blockers. govern() is a
-    one-time invariant per mission — a second call always raises
+    blockers) raises ValueError with the directive's blockers. A multi-step
+    directive (steps non-empty, MISSION-PCP-004) is decomposed into N canonical
+    MissionSteps with a linear depends_on chain and per-step canonical metadata;
+    step N+1 carries `relevant_artifacts` referencing step N's expected artifact
+    so the deliverable of step N becomes the evidence / input context of step
+    N+1 (Gate 5 acceptance item 3). A single-step directive keeps the legacy
+    one-step plan shape.
+
+    govern() is a one-time invariant per mission — a second call always raises
     DuplicateGovernanceError (programmer error), even if the store already holds
     a decision. A store-level pre-existing decision is otherwise honoured
     idempotently by orchestrator.decide().
@@ -101,6 +108,30 @@ class CognitivePlanner:
             confidence=0.6,
         )
 
+        steps = (
+            self._build_multi_steps(directive)
+            if directive.steps
+            else (self._build_legacy_step(directive),)
+        )
+        step_count = len(steps)
+        plan = self._orchestrator.create_plan(
+            brief_id=brief.brief_id,
+            objective=directive.objective,
+            northstar_alignment="Creates external value while preserving truth, reversibility, and evidence-first execution.",
+            northstar_principle_ids=("SP1", "SP5"),
+            strategy_tags=("business_experimentation",),
+            steps=steps,
+            budget=MissionBudget(
+                max_cost_usd=directive.budget_usd,
+                max_duration_seconds=600,
+                max_step_attempts=max(directive.max_steps, step_count),
+            ),
+            stop_conditions=directive.stop_conditions,
+        )
+        self._directives[plan.mission_id] = directive
+        return plan
+
+    def _build_legacy_step(self, directive: CognitiveDirective) -> MissionStep:
         metadata: dict[str, Any] = {
             MISSION_PRINCIPAL_ID: directive.principal_id,
             MISSION_EXECUTION_PROFILE: directive.execution_profile,
@@ -112,7 +143,7 @@ class CognitivePlanner:
             "constraints": list(directive.stop_conditions),
             "acceptance_criteria": [f"produce {directive.expected_artifact}"],
         }
-        step = MissionStep(
+        return MissionStep(
             step_id=_STEP_ID,
             title="Execute bounded cognitive step",
             action=ActionProposal(
@@ -129,22 +160,68 @@ class CognitivePlanner:
             max_attempts=1,
             estimated_cost_usd=1.0,
         )
-        plan = self._orchestrator.create_plan(
-            brief_id=brief.brief_id,
-            objective=directive.objective,
-            northstar_alignment="Creates external value while preserving truth, reversibility, and evidence-first execution.",
-            northstar_principle_ids=("SP1", "SP5"),
-            strategy_tags=("business_experimentation",),
-            steps=(step,),
-            budget=MissionBudget(
-                max_cost_usd=directive.budget_usd,
-                max_duration_seconds=600,
-                max_step_attempts=directive.max_steps,
-            ),
-            stop_conditions=directive.stop_conditions,
-        )
-        self._directives[plan.mission_id] = directive
-        return plan
+
+    def _build_multi_steps(
+        self, directive: CognitiveDirective
+    ) -> tuple[MissionStep, ...]:
+        """Decompose a multi-step directive into N canonical MissionSteps.
+
+        Each spec becomes a MissionStep with its own canonical work_id /
+        expected_artifact and a linear depends_on chain. Step N+1 carries
+        `relevant_artifacts` = [step N expected artifact] and `relevant_evidence`
+        = [step N work_id] so APCB's prompt factory forwards step N's deliverable
+        as the input context for step N+1 (Gate 5 acceptance item 3).
+        """
+        specs = directive.steps
+        artifacts_by_id = {spec.step_id: spec.expected_artifact for spec in specs}
+        work_ids_by_id = {spec.step_id: spec.work_id for spec in specs}
+        ordered: list[MissionStep] = []
+        for spec in specs:
+            prior_artifacts: list[str] = []
+            prior_evidence: list[str] = []
+            for dep in spec.depends_on:
+                prior_artifact = artifacts_by_id.get(dep)
+                if prior_artifact:
+                    prior_artifacts.append(prior_artifact)
+                prior_work = work_ids_by_id.get(dep)
+                if prior_work:
+                    prior_evidence.append(prior_work)
+            metadata: dict[str, Any] = {
+                MISSION_PRINCIPAL_ID: directive.principal_id,
+                MISSION_EXECUTION_PROFILE: directive.execution_profile,
+                MISSION_WORKSPACE_ID: directive.workspace_id,
+                MISSION_CAPABILITIES: list(directive.capabilities),
+                MISSION_EXPECTED_ARTIFACT: spec.expected_artifact,
+                MISSION_WORK_ID: spec.work_id,
+                "objective": spec.objective,
+                "constraints": list(directive.stop_conditions),
+                "acceptance_criteria": [*spec.acceptance],
+            }
+            if prior_artifacts:
+                # Gate 5 acceptance item 3: step N artifact -> step N+1 context.
+                metadata["relevant_artifacts"] = prior_artifacts
+                metadata["relevant_evidence"] = prior_evidence
+            ordered.append(
+                MissionStep(
+                    step_id=spec.step_id,
+                    title=f"Execute {spec.step_id} ({spec.work_id})",
+                    action=ActionProposal(
+                        target=ActionTarget.RUNTIME,
+                        operation="implement",
+                        required_scopes=(ActionScope.EXECUTE,),
+                        reason=f"Run bounded cognitive step {spec.step_id}.",
+                        risk=ActionRisk.LOW,
+                        reversible=True,
+                        metadata=metadata,
+                    ),
+                    success_criteria=spec.acceptance
+                    or (f"{spec.expected_artifact} exists and is non-empty",),
+                    depends_on=spec.depends_on,
+                    max_attempts=1,
+                    estimated_cost_usd=1.0,
+                )
+            )
+        return tuple(ordered)
 
     # ------------------------------------------------------------------ #
     # Govern (one-time constitutional approval)                           #

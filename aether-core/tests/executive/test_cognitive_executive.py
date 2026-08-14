@@ -52,14 +52,19 @@ class MockHerdrAdapter:
     When write_artifact=True, prompt_agent parses the canonical envelope out of
     the prompt and writes the expected deliverable into the workspace with a
     MATCHING envelope (mission_id/work_id/principal/attempt), so the ADR-0057
-    artifact authority accepts the step.
+    artifact authority accepts the step. The artifact filename is derived from
+    the prompt's work_id (`<work_id>.md`) so multi-step plans (each step has its
+    own work_id) produce distinct, envelope-matched deliverables. Every prompt
+    text is recorded for artifact-chain assertions (Gate 5 item 3).
     """
 
-    def __init__(self, wait_status="done", write_artifact=True, expected_artifact="WORK-PCP-003.md"):
+    def __init__(self, wait_status="done", write_artifact=True, expected_artifact="WORK-PCP-003.md", fail_work_ids=()):
         self.wait_status = wait_status
         self.write_artifact = write_artifact
         self.expected_artifact = expected_artifact
+        self.fail_work_ids = set(fail_work_ids)
         self.calls: list[str] = []
+        self.prompts: list[str] = []
         self.agent_ref = "herdr://pane/w7:p3"
 
     def detect_adapter(self, herdr_agent_kind: str) -> AdapterConformanceStatus:
@@ -72,6 +77,7 @@ class MockHerdrAdapter:
 
     def prompt_agent(self, agent_ref, task_context):
         self.calls.append("prompt_agent")
+        self.prompts.append(str(task_context))
         if self.write_artifact:
             self._write_artifact_from_prompt(task_context)
         return f"{agent_ref}/prompt"
@@ -81,11 +87,15 @@ class MockHerdrAdapter:
         workspace_id = header.get("workspace_id") or ""
         if not workspace_id:
             return
+        work_id = header.get("work_id") or "WORK-PCP-003"
+        if work_id in self.fail_work_ids:
+            return
+        artifact = self.expected_artifact if self.expected_artifact else f"{work_id}.md"
         ws = Path(workspace_id)
         ws.mkdir(parents=True, exist_ok=True)
-        (ws / self.expected_artifact).write_text(
+        (ws / artifact).write_text(
             envelope_text(
-                work_id=header.get("work_id") or "WORK-PCP-003",
+                work_id=work_id,
                 principal_id=header.get("principal_id") or "chatgpt",
                 attempt=int(header.get("attempt") or 1),
                 mission_id=header.get("mission_id") or "",
@@ -174,6 +184,43 @@ def make_directive(ws: str, *, max_steps: int = 1, budget_usd: float = 10.0) -> 
         budget_usd=budget_usd,
         stop_conditions=("stop when budget exhausted",),
         rationale="rule-based: deterministic default",
+    )
+
+
+def make_multi_directive(
+    ws: str, *, step_count: int = 3, work_prefix: str = "WORK-PCP-004"
+) -> CognitiveDirective:
+    """Deterministic 3-step bounded directive (Gate 5 acceptance item 1).
+
+    Each step carries its own work_id / expected_artifact and a linear
+    depends_on chain (step-1 -> step-2 -> step-3), matching the rule-based
+    reasoner's decomposition (WORK-PCP-004-S1..S3).
+    """
+    from aether.executive.cognitive_reasoner import CognitiveStepSpec
+
+    steps = tuple(
+        CognitiveStepSpec(
+            step_id=f"step-{index}",
+            work_id=f"{work_prefix}-S{index}",
+            objective=f"Deliver step {index} of {step_count}.",
+            expected_artifact=f"{work_prefix}-S{index}.md",
+            depends_on=(f"step-{index - 1}",) if index > 1 else (),
+            acceptance=(f"produce {work_prefix}-S{index}.md",),
+        )
+        for index in range(1, step_count + 1)
+    )
+    return CognitiveDirective(
+        objective=f"Multi-step cognitive mission ({step_count} steps)",
+        expected_artifact=f"{work_prefix}.md",
+        principal_id="chatgpt",
+        execution_profile="herdr:opencode",
+        workspace_id=ws,
+        capabilities=("systems_integration",),
+        max_steps=step_count,
+        budget_usd=10.0,
+        stop_conditions=("stop when budget exhausted",),
+        rationale="deterministic multi-step directive",
+        steps=steps,
     )
 
 
@@ -539,3 +586,132 @@ async def test_evidence_rejects_stale_artifact_envelope(tmp_path: Path):
     )
     ev = result.evidence_evaluations[0]
     assert ev["artifact_present"] is False
+
+
+# ---------------------------------------------------------------------------
+# MISSION-PCP-004 — Gate 5 multi-step closed cognitive loop
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_closed_loop_completes_multi_step(tmp_path: Path):
+    # Gate 5 acceptance: a 3-step plan runs to COMPLETED with governance exactly
+    # once and NO Founder relay between steps (governance_count stays 1).
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=3)
+
+    result = await executive.run_closed_loop(make_multi_directive(ws))
+    assert result.completed is True
+    assert result.status == MissionStatus.COMPLETED.value
+    assert result.governance_count == 1
+    assert result.steps_executed == ("step-1", "step-2", "step-3")
+    assert runner.store.current_status(result.mission_id) == MissionStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_multi_step_governance_once_no_founder_relay(tmp_path: Path):
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=3)
+
+    result = await executive.run_closed_loop(make_multi_directive(ws))
+    decision = runner.store.get_decision(result.mission_id)
+    assert decision is not None
+    assert decision.decision == MissionDecisionType.APPROVE
+    approved_transitions = [
+        t for t in runner.store.transitions(result.mission_id)
+        if t.to_status == MissionStatus.APPROVED
+    ]
+    # Govern exactly once at the start; the 2 continuation resumes must NOT add
+    # an approval transition (no Founder relay between steps).
+    assert len(approved_transitions) == 1
+
+
+@pytest.mark.asyncio
+async def test_multi_step_evidence_chain_artifacts(tmp_path: Path):
+    # Gate 5 acceptance item 3: artifact of step N is evidence/input context for
+    # step N+1. The mock records every prompt; step-2's prompt must carry
+    # relevant_artifacts naming step-1's artifact, and step-3's must name
+    # step-2's artifact (via the planner's metadata -> prompt factory).
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=3)
+
+    result = await executive.run_closed_loop(make_multi_directive(ws))
+    assert result.completed is True
+    assert len(adapter.prompts) == 3
+    p2, p3 = adapter.prompts[1], adapter.prompts[2]
+    assert "WORK-PCP-004-S1.md" in p2  # step-2 consumes step-1 artifact
+    assert "WORK-PCP-004-S2.md" in p3  # step-3 consumes step-2 artifact
+    # And the artifact files exist on disk with matching envelopes.
+    ws_path = Path(runner.workspace_override)
+    for index in (1, 2, 3):
+        artifact = ws_path / f"WORK-PCP-004-S{index}.md"
+        assert artifact.exists()
+        header = _parse_prompt(artifact.read_text("utf-8"))
+        assert header["mission_id"] == result.mission_id
+        assert header["work_id"] == f"WORK-PCP-004-S{index}"
+
+
+@pytest.mark.asyncio
+async def test_multi_step_evidence_driven_decisions(tmp_path: Path):
+    # Gate 5 acceptance items 4+5: the executive observes the outcome of every
+    # step, records a per-step evidence evaluation, and decides continue/stop
+    # grounded in that evidence (all 3 artifacts accepted -> COMPLETED).
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=3)
+
+    result = await executive.run_closed_loop(make_multi_directive(ws))
+    assert len(result.decisions) == 3
+    assert [d["action"] for d in result.decisions] == ["continue", "continue", "stop"]
+    assert len(result.evidence_evaluations) == 3
+    assert all(ev["artifact_present"] is True for ev in result.evidence_evaluations)
+    assert all(ev["attempt_status"] == "completed" for ev in result.evidence_evaluations)
+    assert all(ev["terminal_outcome"] == "completed" for ev in result.evidence_evaluations)
+    assert result.decisions[-1]["step_id"] == "step-3"
+
+
+@pytest.mark.asyncio
+async def test_multi_step_stops_on_failed_step(tmp_path: Path):
+    # Gate 5: a step that fails (missing artifact -> _ArtifactGatedExecutor
+    # fails the step) must STOP the loop — no later step is dispatched, and the
+    # decision rationale names the failed step evidence.
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(
+        wait_status="done",
+        expected_artifact=None,
+        fail_work_ids=("WORK-PCP-004-S2",),
+    )
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=3)
+
+    result = await executive.run_closed_loop(make_multi_directive(ws))
+    assert result.completed is False
+    assert result.status in (MissionStatus.FAILED.value, MissionStatus.STOPPED.value)
+    # step-2 failed -> stop; step-3 must never be dispatched.
+    assert adapter.calls.count("prompt_agent") == 2
+    assert result.decisions[-1]["step_id"] == "step-2"
+    assert result.decisions[-1]["action"] == "stop"
+    assert "evidence failed" in result.decisions[-1]["rationale"]
+
+
+@pytest.mark.asyncio
+async def test_multi_step_bound_respected(tmp_path: Path):
+    # A 3-step plan with max_steps=2 must never run step-3 (bounded), leaving
+    # the mission PAUSED at the continuation checkpoint with 1 step remaining.
+    runner = make_runner(tmp_path)
+    adapter = MockHerdrAdapter(wait_status="done", expected_artifact=None)
+    ws = str(Path(runner.workspace_override))
+    executive = make_executive(runner, adapter, max_steps=2)
+
+    result = await executive.run_closed_loop(make_multi_directive(ws))
+    assert result.completed is False
+    assert result.status == MissionStatus.PAUSED.value
+    assert len(result.steps_executed) == 2
+    assert adapter.calls.count("prompt_agent") == 2
+    assert result.decisions[-1]["action"] == "stop"
+    assert "bounded" in result.decisions[-1]["rationale"]
