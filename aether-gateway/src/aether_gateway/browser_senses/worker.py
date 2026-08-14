@@ -300,7 +300,7 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
     if not readiness["ready"]:
         raise RuntimeError("LiveKit worker is not ready: " + json.dumps(readiness, sort_keys=True))
 
-    from livekit.agents import Agent, AgentServer, AgentSession, JobContext, ModelSettings, cli, inference
+    from livekit.agents import Agent, AgentServer, AgentSession, JobContext, ModelSettings, cli, inference, llm
     from livekit.plugins import silero
 
     try:
@@ -316,6 +316,24 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
     client = AetherGatewayVoiceClient(config)
     server = AgentServer()
 
+    class AetherGatewayLLMSentinel(llm.LLM):
+        """Pipeline sentinel.
+
+        Aether Gateway is the real cognitive authority. This LLM exists only
+        because LiveKit requires a non-None LLM object to enable the normal
+        user-turn -> reply -> llm_node -> TTS pipeline.
+
+        AetherMindAgent.llm_node() must remain the only implementation that
+        produces cognitive response text. Sentinel.chat() is intentionally
+        unreachable so any accidental bypass of llm_node() fails loudly.
+        """
+
+        async def chat(self, *args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError(
+                "AetherGatewayLLMSentinel.chat() must never be called; "
+                "AetherMindAgent.llm_node() owns cognitive generation."
+            )
+
     class AetherMindAgent(Agent):
         def __init__(
             self,
@@ -328,7 +346,8 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
                 instructions=(
                     "Aether Gateway is the only cognitive authority. Do not answer from a secondary model. "
                     "Forward each completed user turn to Aether and speak the exact returned text."
-                )
+                ),
+                llm=AetherGatewayLLMSentinel(),
             )
             self.room_name = room_name
             self.participant_identity = participant_identity
@@ -340,7 +359,9 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             del tools, model_settings
             text = _latest_user_text(chat_ctx)
             if not text:
+                print("[AETHER-VOICE] llm_node skipped: empty user text", flush=True)
                 return
+            print(f"[AETHER-VOICE] llm_node text={text!r}", flush=True)
             turn = self.turns.begin()
             self.terminal_status = None
             await self.notify_turn(turn_state_payload(turn, "accepted"))
