@@ -21,7 +21,7 @@ import pytest
 
 from aether.contracts.missions import MissionDecisionType, MissionStatus
 from aether.executive.cognitive_planner import CognitivePlanner, DuplicateGovernanceError
-from aether.executive.cognitive_reasoner import CognitiveDirective
+from aether.executive.cognitive_reasoner import CognitiveDirective, CognitiveStepSpec
 from aether.missions.orchestrator import MissionOrchestrator
 from aether.missions.store import SQLiteMissionStore
 
@@ -130,3 +130,106 @@ def test_plan_from_directive_fail_closed_invalid(tmp_path: Path):
     planner, _, _ = make_planner(tmp_path)
     with pytest.raises(ValueError, match="invalid directive"):
         planner.plan_from_directive(valid_directive(objective=""))
+
+
+# ---------------------------------------------------------------------------
+# MISSION-PCP-004 WORK-2 — multi-step plan (Gate 5 acceptance items 1+3)
+# ---------------------------------------------------------------------------
+def multi_step_directive(**overrides) -> CognitiveDirective:
+    fields = {
+        "objective": "Multi-step cognitive mission (3 steps)",
+        "expected_artifact": "WORK-PCP-004.md",
+        "principal_id": "chatgpt",
+        "execution_profile": "herdr:opencode",
+        "workspace_id": "workspace://pcp-004",
+        "capabilities": ("systems_integration",),
+        "max_steps": 3,
+        "budget_usd": 10.0,
+        "stop_conditions": ("stop when budget exhausted",),
+        "rationale": "deterministic multi-step directive",
+        "steps": (
+            CognitiveStepSpec("step-1", "WORK-PCP-004-S1", "Deliver step 1 of 3.", "WORK-PCP-004-S1.md", (), ("produce WORK-PCP-004-S1.md",)),
+            CognitiveStepSpec("step-2", "WORK-PCP-004-S2", "Deliver step 2 of 3.", "WORK-PCP-004-S2.md", ("step-1",), ("produce WORK-PCP-004-S2.md",)),
+            CognitiveStepSpec("step-3", "WORK-PCP-004-S3", "Deliver step 3 of 3.", "WORK-PCP-004-S3.md", ("step-2",), ("produce WORK-PCP-004-S3.md",)),
+        ),
+    }
+    fields.update(overrides)
+    return CognitiveDirective(**fields)
+
+
+def test_plan_from_directive_creates_multi_step_plan(tmp_path: Path):
+    planner, _, _ = make_planner(tmp_path)
+    directive = multi_step_directive()
+    plan = planner.plan_from_directive(directive)
+    assert plan.mission_id
+    assert len(plan.steps) == 3
+    # Linear depends_on chain: step-1 -> step-2 -> step-3.
+    assert plan.steps[0].depends_on == ()
+    assert plan.steps[1].depends_on == ("step-1",)
+    assert plan.steps[2].depends_on == ("step-2",)
+    # Per-step canonical metadata: distinct work_id / expected_artifact.
+    meta2 = dict(plan.steps[1].action.metadata)
+    assert meta2["mission_work_id"] == "WORK-PCP-004-S2"
+    assert meta2["mission_expected_artifact"] == "WORK-PCP-004-S2.md"
+    assert meta2["mission_principal_id"] == directive.principal_id
+    assert meta2["mission_execution_profile"] == directive.execution_profile
+    # Budget must cover 3 steps (1 attempt each).
+    assert plan.budget.max_step_attempts >= 3
+    assert plan.budget.max_cost_usd == directive.budget_usd
+
+
+def test_plan_artifact_chain_metadata(tmp_path: Path):
+    # Gate 5 acceptance item 3: step N+1 carries relevant_artifacts referencing
+    # step N's artifact + relevant_evidence referencing step N's work_id, so the
+    # APCB prompt factory forwards step N's deliverable as context to step N+1.
+    planner, _, _ = make_planner(tmp_path)
+    plan = planner.plan_from_directive(multi_step_directive())
+    meta1 = dict(plan.steps[0].action.metadata)
+    meta2 = dict(plan.steps[1].action.metadata)
+    meta3 = dict(plan.steps[2].action.metadata)
+    assert "relevant_artifacts" not in meta1  # first step has no input artifact
+    assert meta2["relevant_artifacts"] == ["WORK-PCP-004-S1.md"]
+    assert meta2["relevant_evidence"] == ["WORK-PCP-004-S1"]
+    assert meta3["relevant_artifacts"] == ["WORK-PCP-004-S2.md"]
+    assert meta3["relevant_evidence"] == ["WORK-PCP-004-S2"]
+    # Acceptance criteria carry each step's own artifact.
+    assert meta2["acceptance_criteria"] == ["produce WORK-PCP-004-S2.md"]
+
+
+def test_plan_multi_step_govern_once(tmp_path: Path):
+    planner, _, store = make_planner(tmp_path)
+    plan = planner.plan_from_directive(multi_step_directive())
+    planner.govern(plan)
+    assert store.get_decision(plan.mission_id).decision == MissionDecisionType.APPROVE
+    with pytest.raises(DuplicateGovernanceError):
+        planner.govern(plan)
+
+
+def test_plan_multi_step_fail_closed_invalid_chain(tmp_path: Path):
+    planner, _, _ = make_planner(tmp_path)
+    directive = multi_step_directive(
+        steps=(
+            CognitiveStepSpec("step-1", "WORK-PCP-004-S1", "s1", "WORK-PCP-004-S1.md", (), ("produce X.md",)),
+            CognitiveStepSpec("step-2", "WORK-PCP-004-S2", "s2", "WORK-PCP-004-S2.md", ("step-9",), ("produce Y.md",)),
+        )
+    )
+    with pytest.raises(ValueError, match="invalid directive"):
+        planner.plan_from_directive(directive)
+
+
+def test_plan_multi_step_budget_scales_with_step_count(tmp_path: Path):
+    # Red-team R-PCP004-1/R-PCP004-2 (WORK-4): a 3-step plan's cost budget must
+    # cover the estimated cost of ALL steps and its duration budget must scale
+    # with the step count so a bounded multi-step live run is not stopped
+    # mid-loop. Legacy single-step plan keeps the exact directive budget.
+    planner, _, _ = make_planner(tmp_path)
+    multi = planner.plan_from_directive(multi_step_directive(budget_usd=1.0))
+    # 3 steps x 1.0 estimated each -> budget lifted to cover all steps even when
+    # the directive budget (1.0) is smaller.
+    assert multi.budget.max_cost_usd >= 3.0
+    assert multi.budget.max_duration_seconds == 1800  # 600 * 3
+    assert multi.budget.max_step_attempts >= 3
+    single = planner.plan_from_directive(valid_directive(budget_usd=2.0))
+    assert single.budget.max_cost_usd == 2.0
+    assert single.budget.max_duration_seconds == 600
+    assert single.budget.max_step_attempts == 1
