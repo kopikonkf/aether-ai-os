@@ -609,6 +609,26 @@ test('invalid auth transitions fail closed', () => {
   );
 });
 
+test('closed session may re-enter pairing (bootstrap-pending) after disconnect', () => {
+  let state = activeState();
+  state = reduceClientState(state, event('SESSION_CLOSED'));
+  assert.equal(state.authSession, AuthSessionState.CLOSED);
+  const closed = reduceClientState(state, event('PAIRING_REQUESTED'));
+  assert.equal(closed.authSession, AuthSessionState.BOOTSTRAP_PENDING);
+});
+
+test('pairing button is stale when the device is already paired', () => {
+  const ready = pairedState();
+  assert.equal(deriveClientPresentation(ready).canPair, false);
+
+  let closed = activeState();
+  closed = reduceClientState(closed, event('SESSION_CLOSED'));
+  assert.equal(deriveClientPresentation(closed).canPair, true);
+
+  const required = createInitialClientState();
+  assert.equal(deriveClientPresentation(required).canPair, true);
+});
+
 test('Senses shell renders all reducer axes and a private text-only control', async () => {
   const html = await readFile(
     new URL('../src/aether_gateway/aionui_senses_console/index.html', import.meta.url),
