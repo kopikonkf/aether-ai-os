@@ -215,3 +215,21 @@ def test_plan_multi_step_fail_closed_invalid_chain(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="invalid directive"):
         planner.plan_from_directive(directive)
+
+
+def test_plan_multi_step_budget_scales_with_step_count(tmp_path: Path):
+    # Red-team R-PCP004-1/R-PCP004-2 (WORK-4): a 3-step plan's cost budget must
+    # cover the estimated cost of ALL steps and its duration budget must scale
+    # with the step count so a bounded multi-step live run is not stopped
+    # mid-loop. Legacy single-step plan keeps the exact directive budget.
+    planner, _, _ = make_planner(tmp_path)
+    multi = planner.plan_from_directive(multi_step_directive(budget_usd=1.0))
+    # 3 steps x 1.0 estimated each -> budget lifted to cover all steps even when
+    # the directive budget (1.0) is smaller.
+    assert multi.budget.max_cost_usd >= 3.0
+    assert multi.budget.max_duration_seconds == 1800  # 600 * 3
+    assert multi.budget.max_step_attempts >= 3
+    single = planner.plan_from_directive(valid_directive(budget_usd=2.0))
+    assert single.budget.max_cost_usd == 2.0
+    assert single.budget.max_duration_seconds == 600
+    assert single.budget.max_step_attempts == 1

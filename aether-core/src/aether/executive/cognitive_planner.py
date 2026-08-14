@@ -122,8 +122,15 @@ class CognitivePlanner:
             strategy_tags=("business_experimentation",),
             steps=steps,
             budget=MissionBudget(
-                max_cost_usd=directive.budget_usd,
-                max_duration_seconds=600,
+                # Red-team R-PCP004-2 (WORK-4): a multi-step plan's cost budget must
+                # cover the estimated cost of ALL steps (1.0 per step); a small
+                # directive budget must not make an accepted plan stop at step 1.
+                max_cost_usd=max(directive.budget_usd, float(step_count)),
+                # Red-team R-PCP004-1 (WORK-4): the execution duration budget scales
+                # with the step count so a bounded multi-step live run (each step
+                # waits on its pane with a bounded timeout) is not stopped mid-loop
+                # by the 600s single-step default.
+                max_duration_seconds=600 * step_count,
                 max_step_attempts=max(directive.max_steps, step_count),
             ),
             stop_conditions=directive.stop_conditions,
