@@ -233,3 +233,130 @@ def test_plan_multi_step_budget_scales_with_step_count(tmp_path: Path):
     assert single.budget.max_cost_usd == 2.0
     assert single.budget.max_duration_seconds == 600
     assert single.budget.max_step_attempts == 1
+
+
+# --- PCP-005 WORK-2 additions (per-step principal metadata) ---
+# PCP-005 WORK-2 additions (planner per-step principal metadata)
+def multi_principal_directive(**overrides) -> CognitiveDirective:
+    """5-step directive, one DISTINCT principal per step + matching profile."""
+    pairs = [
+        ("claude", "herdr:freebuff"),
+        ("gemini", "herdr:claude"),
+        ("qwen", "herdr:cline"),
+        ("deepseek", "herdr:kilo"),
+        ("chatgpt", "herdr:opencode"),
+    ]
+    steps = tuple(
+        CognitiveStepSpec(
+            f"step-{i + 1}",
+            f"WORK-PCP-005-S{i + 1}",
+            f"Deliver step {i + 1} of 5.",
+            f"WORK-PCP-005-S{i + 1}.md",
+            (f"step-{i}",) if i > 0 else (),
+            (f"produce WORK-PCP-005-S{i + 1}.md",),
+            principal_id=p,
+            execution_profile=prof,
+        )
+        for i, (p, prof) in enumerate(pairs)
+    )
+    fields = {
+        "objective": "Multi-principal cognitive mission (5 steps)",
+        "expected_artifact": "WORK-PCP-005.md",
+        "principal_id": "chatgpt",
+        "execution_profile": "herdr:opencode",
+        "workspace_id": "workspace://pcp-005",
+        "capabilities": ("systems_integration",),
+        "max_steps": 5,
+        "budget_usd": 10.0,
+        "stop_conditions": ("stop when budget exhausted",),
+        "rationale": "deterministic multi-principal directive",
+        "steps": steps,
+    }
+    fields.update(overrides)
+    return CognitiveDirective(**fields)
+
+
+def test_plan_multi_principal_per_step_metadata(tmp_path):
+    planner, _, _ = make_planner(tmp_path)
+    plan = planner.plan_from_directive(multi_principal_directive())
+    expected = [
+        ("claude", "herdr:freebuff"),
+        ("gemini", "herdr:claude"),
+        ("qwen", "herdr:cline"),
+        ("deepseek", "herdr:kilo"),
+        ("chatgpt", "herdr:opencode"),
+    ]
+    assert len(plan.steps) == 5
+    for step, (princ, prof) in zip(plan.steps, expected):
+        meta = dict(step.action.metadata)
+        assert meta["mission_principal_id"] == princ
+        assert meta["mission_execution_profile"] == prof
+    # Artifact chain intact: step n+1 relevant_artifacts == [step n expected artifact].
+    for n in range(4):
+        meta_next = dict(plan.steps[n + 1].action.metadata)
+        assert meta_next["relevant_artifacts"] == [f"WORK-PCP-005-S{n + 1}.md"]
+        assert meta_next["relevant_evidence"] == [f"WORK-PCP-005-S{n + 1}"]
+
+
+def test_plan_principal_mixed_override_and_fallback(tmp_path):
+    planner, _, _ = make_planner(tmp_path)
+    directive = multi_principal_directive(
+        max_steps=2,
+        steps=(
+            CognitiveStepSpec(
+                "step-1", "WORK-PCP-005-S1", "Deliver step 1 of 2.",
+                "WORK-PCP-005-S1.md", (), ("produce WORK-PCP-005-S1.md",),
+                principal_id="claude", execution_profile="herdr:freebuff",
+            ),
+            # step-2 has NO per-step principal/profile -> inherits the directive.
+            CognitiveStepSpec(
+                "step-2", "WORK-PCP-005-S2", "Deliver step 2 of 2.",
+                "WORK-PCP-005-S2.md", ("step-1",), ("produce WORK-PCP-005-S2.md",),
+            ),
+        ),
+    )
+    plan = planner.plan_from_directive(directive)
+    meta1 = dict(plan.steps[0].action.metadata)
+    meta2 = dict(plan.steps[1].action.metadata)
+    assert meta1["mission_principal_id"] == "claude"
+    assert meta1["mission_execution_profile"] == "herdr:freebuff"
+    assert meta2["mission_principal_id"] == directive.principal_id
+    assert meta2["mission_execution_profile"] == directive.execution_profile
+
+
+def test_plan_fail_closed_step_without_effective_principal(tmp_path):
+    planner, _, _ = make_planner(tmp_path)
+    directive = multi_principal_directive(
+        principal_id="",
+        max_steps=1,
+        steps=(
+            CognitiveStepSpec(
+                "step-1", "WORK-PCP-005-S1", "Deliver step 1 of 1.",
+                "WORK-PCP-005-S1.md", (), ("produce WORK-PCP-005-S1.md",),
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="invalid directive"):
+        planner.plan_from_directive(directive)
+
+
+def test_plan_legacy_three_step_inherits_directive_principal(tmp_path):
+    # Backward compat: specs with no per-step principal -> byte-identical behavior,
+    # every step's metadata principal/profile equals the directive's.
+    planner, _, _ = make_planner(tmp_path)
+    directive = multi_step_directive()
+    plan = planner.plan_from_directive(directive)
+    assert len(plan.steps) == 3
+    for step in plan.steps:
+        meta = dict(step.action.metadata)
+        assert meta["mission_principal_id"] == directive.principal_id
+        assert meta["mission_execution_profile"] == directive.execution_profile
+
+
+def test_plan_multi_principal_govern_once(tmp_path):
+    planner, _, store = make_planner(tmp_path)
+    plan = planner.plan_from_directive(multi_principal_directive())
+    planner.govern(plan)
+    assert store.get_decision(plan.mission_id).decision == MissionDecisionType.APPROVE
+    with pytest.raises(DuplicateGovernanceError):
+        planner.govern(plan)
