@@ -15,6 +15,8 @@ from typing import Any, Awaitable, Callable
 
 import requests
 
+from aether_gateway.browser_senses.gemini_tts import GeminiExactTTS
+
 
 TURN_CONTROL_TOPIC = "aether.senses.turn-control.v1"
 TURN_STATE_TOPIC = "aether.senses.turn-state.v1"
@@ -417,10 +419,8 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
                 language=config.stt_language,
                 fallback=config.stt_fallback() or None,
             ),
-            "tts": inference.TTS(
-                config.tts_model,
-                voice=config.tts_voice,
-                fallback=config.tts_fallback() or None,
+            "tts": GeminiExactTTS(
+                manifest_path="configs/runtime/gemini_tts_founder_alpha.yaml",
             ),
         }
         if config.turn_detector == "multilingual" and MultilingualModel is not None:
