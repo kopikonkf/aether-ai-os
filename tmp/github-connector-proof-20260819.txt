@@ -1,3 +1,0 @@
-GitHub connector write-access proof.
-Created by the ChatGPT GitHub connector on 2026-08-19.
-This file is intentionally temporary and exists only on the proof branch.
