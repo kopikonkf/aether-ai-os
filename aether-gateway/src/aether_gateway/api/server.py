@@ -30,8 +30,10 @@ AIONUI_MISSION_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_missi
 AIONUI_OPPORTUNITY_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_opportunity_console"
 AIONUI_EXPERIMENT_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_experiment_console"
 AIONUI_SENSES_CONSOLE_DIR = Path(__file__).resolve().parents[1] / "aionui_senses_console"
-# Preserve caller-provided AETHER_HOME so VPS shell values win.
-load_dotenv(AETHER_CORE_DIR / ".env", override=False)
+# Preserve caller-provided AETHER_HOME so VPS shell values win. The release
+# tree may not carry a runtime `.env`; AETHER_HOME is the durable location.
+# load_dotenv_files(AETHER_CORE_DIR / ".env", ...) is applied below alongside
+# AETHER_HOME/.env after aether.paths is importable.
 
 from aether.actions import (
     ActionControlConflict, ActionControlIntegrityError, ApprovalNotFound,
@@ -64,7 +66,14 @@ from aether.events import EventBus
 from aether.executive.engine import CircadianExecutiveEngine
 from aether.evolution import (EvolutionBlocked, EvolutionDecisionConflict, EvolutionNotFound, InternalEvolutionEngine, SQLiteEvolutionStore, capability_gap, evolution_fingerprint)
 from aether.governance import ActionGovernor
-from aether.paths import AetherPaths, get_aether_home
+from aether.paths import AetherPaths, get_aether_home, load_dotenv_files
+# Runtime (opaque, host-provisioned) env lives under AETHER_HOME, not the
+# immutable release tree, so promotion does not silently lose secrets.
+load_dotenv_files(
+    load_dotenv,
+    [AETHER_CORE_DIR / ".env", get_aether_home() / ".env"],
+    override=False,
+)
 from aether.senses import SenseEventPath
 from aether.memory import AetherMemoryFabric, ObsidianMemoryProjector, SQLiteCanonicalMemoryStore, SQLiteLexicalMemoryProvider
 from aether.knowledge import MemoryCurator, ObsidianKnowledgeProjector, SQLiteKnowledgeProposalStore

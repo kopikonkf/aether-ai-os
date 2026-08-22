@@ -10,6 +10,20 @@ import platform
 from pathlib import Path
 
 
+def load_dotenv_files(load_dotenv_callable, paths, *, override=True):
+    """Load ``.env`` files in order with a python-dotenv-compatible callable.
+
+    Lazy: missing paths are skipped; later files win per key when override=True
+    (layering a durable AETHER_HOME runtime env over an immutable release default).
+    """
+    for p in paths:
+        if not p:
+            continue
+        path = Path(p)
+        if path.exists():
+            load_dotenv_callable(path, override=override)
+
+
 def get_aether_home() -> Path:
     """Resolve the canonical Aether home directory across platforms."""
     env = os.environ.get("AETHER_HOME")
