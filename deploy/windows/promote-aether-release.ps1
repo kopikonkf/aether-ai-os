@@ -13,7 +13,9 @@ param(
     [switch]$AllowNonElevated,
     [switch]$SkipAclCheck,
     [switch]$Start,
-    [switch]$SkipValidate
+    [switch]$SkipValidate,
+    [switch]$IncludeSenseWorker,
+    [switch]$SkipReleaseVenv
 )
 
 Set-StrictMode -Version Latest
@@ -303,9 +305,12 @@ $receipt = [ordered]@{
     published_this_run = $false
     partial_publish_removed = $false
     reconciled = @()
+    service_python = $null
+    rollback_service_python = $null
     running_paths_proven = $false
     service_mutation_started = $false
     restart_proven = $false
+    worker_deactivated = $false
     rollback_triggered = $false
     rollback_reason = $null
     rollback_running_path_proven = $false
@@ -319,11 +324,125 @@ $receipt = [ordered]@{
     failure_phase = $null
 }
 
+function Assert-ReleaseVenv {
+    param([Parameter(Mandatory = $true)][string]$ReleasePath)
+
+    $venvDir = Join-Path $ReleasePath ".venv"
+    if (-not (Test-Path -LiteralPath $venvDir -PathType Container)) {
+        throw "Release venv does not exist at $venvDir. Run Build-ReleaseVenv first."
+    }
+    $marker = Join-Path $venvDir ".aether-venv.json"
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        throw "Release venv at $venvDir has no provenance marker $marker."
+    }
+    try {
+        $meta = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+        if ([string]$meta.release_sha -ne $originMain) {
+            throw "Release venv was built for $($meta.release_sha), not $originMain."
+        }
+        if ([string]$meta.livekit_agents -ne "1.6.9") {
+            throw "Release venv has wrong livekit-agents version: $($meta.livekit_agents)."
+        }
+    }
+    catch {
+        throw "Assert-ReleaseVenv failed: $_"
+    }
+    $venvPython = Join-Path $venvDir "Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+        throw "Release venv python not found: $venvPython"
+    }
+    # Verify the INSTALLED package versions (marker alone is insufficient; the
+    # environment may differ from the marker).
+    $versions = & $venvPython -c "import importlib.metadata; print(importlib.metadata.version('livekit-agents')); print(importlib.metadata.version('livekit-api')); print(importlib.metadata.version('livekit-plugins-silero'))" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release venv LiveKit SDK version query failed: $versions"
+    }
+    $expected = @("1.6.9", "1.2.0", "1.6.9")
+    $got = @($versions -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    for ($i = 0; $i -lt $expected.Count; $i++) {
+        if ($got[$i] -ne $expected[$i]) {
+            throw "Release venv package version mismatch at index ${i}: expected $($expected[$i]), got $($got[$i])."
+        }
+    }
+    $imports = & $venvPython -c "import livekit.agents; import livekit.api; import livekit.plugins.silero; print('imports OK')" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Release venv LiveKit SDK import failed: $imports"
+    }
+    Write-Host "Release venv verified: $imports ($(($got -join ',')))"
+}
+
+function Build-ReleaseVenv {
+    param(
+        [Parameter(Mandatory = $true)][string]$ReleasePath,
+        [Parameter(Mandatory = $true)][string]$TargetSha
+    )
+
+    $venvDir = Join-Path $ReleasePath ".venv"
+    if (Test-Path -LiteralPath $venvDir -PathType Container) {
+        # An existing venv is only accepted if its metadata proves it was built
+        # for this exact release tree. Otherwise rebuild.
+        $marker = Join-Path $venvDir ".aether-venv.json"
+        $accept = $false
+        if (Test-Path -LiteralPath $marker -PathType Leaf) {
+            try {
+                $meta = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+                $accept = ([string]$meta.release_sha -eq $TargetSha)
+            }
+            catch {
+                $accept = $false
+            }
+        }
+        if ($accept) {
+            Write-Host "Release venv already verified for $TargetSha at $venvDir; skipping creation."
+            return
+        }
+        Remove-Item -LiteralPath $venvDir -Recurse -Force -ErrorAction Stop
+    }
+    $python = $PythonPath
+    if (-not $python -or -not (Test-Path -LiteralPath $python -PathType Leaf)) {
+        $python = (Get-Command python.exe -ErrorAction Stop).Source
+    }
+    Write-Host "Building release venv at $venvDir using $python"
+    try {
+        & $python -m venv $venvDir
+        if ($LASTEXITCODE -ne 0) { throw "venv creation failed (exit $LASTEXITCODE)" }
+        $venvPython = Join-Path $venvDir "Scripts\python.exe"
+        if (-not (Test-Path -LiteralPath $venvPython -PathType Leaf)) {
+            throw "venv python not found after creation: $venvPython"
+        }
+        & $venvPython -m pip install --upgrade pip --quiet
+        # Non-editable install: the packages are COPIED into the venv so the
+        # venv is self-contained and immutable for this release.
+        & $venvPython -m pip install --no-cache-dir "$ReleasePath\aether-core" "$ReleasePath\aether-tools" "$ReleasePath\aether-gateway[livekit]" --quiet
+        if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
+        # Verify the SDK is importable and the pinned versions are correct.
+        $verify = (& $venvPython -c "import importlib.metadata; print(importlib.metadata.version('livekit-agents')); print(importlib.metadata.version('livekit-api')); print(importlib.metadata.version('livekit-plugins-silero'))") -join ";"
+        if ($LASTEXITCODE -ne 0) { throw "venv verification failed: $verify" }
+        # Write the provenance marker so future promotions can trust this venv.
+        $marker = Join-Path $venvDir ".aether-venv.json"
+        $meta = [ordered]@{
+            schema = "aether.release-venv.v1"
+            release_sha = $TargetSha
+            built_at = (Get-Date).ToUniversalTime().ToString("o")
+            python = $python
+            livekit_agents = "1.6.9"
+            livekit_api = "1.2.0"
+            livekit_plugins_silero = "1.6.9"
+        }
+        $meta | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $marker -Encoding UTF8
+        Write-Host "Release venv built and verified: $verify"
+    }
+    catch {
+        throw "Build-ReleaseVenv failed: $_"
+    }
+}
+
 function Invoke-Installer {
     param(
         [Parameter(Mandatory = $true)][string]$ReleasePath,
         [Parameter(Mandatory = $true)][string]$TargetSha,
-        [Parameter(Mandatory = $true)][string]$Phase
+        [Parameter(Mandatory = $true)][string]$Phase,
+        [switch]$IncludeSenseWorker
     )
 
     # Always drive the CURRENT (safe) installer from the target release, never
@@ -334,7 +453,15 @@ function Invoke-Installer {
         if (-not (Test-Path -LiteralPath $hook -PathType Leaf)) {
             throw "AETHER_PROMO_INSTALL_CMD not found: $hook"
         }
-        & $hook -ReleasePath $ReleasePath -TargetSha $TargetSha -AetherHome $AetherHome -HostAddress $HostAddress -Port ([string]$Port) -Phase $Phase
+        # Only pass -IncludeSenseWorker when the seam declares support (test
+        # seams predate the worker and would error on an unknown switch).
+        $hookText = Get-Content -LiteralPath $hook -Raw -ErrorAction SilentlyContinue
+        if ($IncludeSenseWorker -and $null -ne $hookText -and $hookText.Contains("IncludeSenseWorker")) {
+            & $hook -ReleasePath $ReleasePath -TargetSha $TargetSha -AetherHome $AetherHome -HostAddress $HostAddress -Port ([string]$Port) -Phase $Phase -IncludeSenseWorker
+        }
+        else {
+            & $hook -ReleasePath $ReleasePath -TargetSha $TargetSha -AetherHome $AetherHome -HostAddress $HostAddress -Port ([string]$Port) -Phase $Phase
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "installer hook failed (phase=$Phase, exit=$LASTEXITCODE)"
         }
@@ -352,7 +479,16 @@ function Invoke-Installer {
         "-HostAddress", $HostAddress,
         "-Port", [string]$Port
     )
-    if ($PythonPath) {
+    if ($IncludeSenseWorker) {
+        $installerArgs += @("-InstallSenseWorker")
+    }
+    # Blocker 1 (review REV7): the bootstrap python that CREATED the venv must
+    # never be bound as the service python. The installer resolves the release
+    # venv itself (<release>\.venv\Scripts\python.exe) and binds service host +
+    # child runner to exactly that. For rollback to a pre-venv release the
+    # installer falls back to -PythonPath when the release has no venv; the
+    # receipt records the exact python bound per service.
+    if ($PythonPath -and -not (Test-Path -LiteralPath (Join-Path $ReleasePath ".venv\Scripts\python.exe") -PathType Leaf)) {
         $installerArgs += @("-PythonPath", $PythonPath)
     }
     & powershell.exe @installerArgs | Out-Null
@@ -364,7 +500,10 @@ function Invoke-Installer {
 function Restart-GatewayServices {
     # Restart failures are NEVER swallowed. Either the restart hook fails the
     # run or the real Get-Service/Restart-Service errors propagate.
-    param([Parameter(Mandatory = $true)][string]$ReleasePath)
+    param(
+        [Parameter(Mandatory = $true)][string]$ReleasePath,
+        [switch]$IncludeSenseWorker
+    )
 
     $hook = $env:AETHER_PROMO_RESTART_CMD
     if ($hook -and (Test-Path -LiteralPath $hook -PathType Leaf)) {
@@ -374,7 +513,12 @@ function Restart-GatewayServices {
         }
         return
     }
-    foreach ($name in @("AetherGateway", "AetherWatchdog")) {
+    $serviceNames = @("AetherGateway")
+    if ($IncludeSenseWorker) {
+        $serviceNames += "AetherSenseWorker"
+    }
+    $serviceNames += "AetherWatchdog"
+    foreach ($name in $serviceNames) {
         $svc = Get-Service -Name $name -ErrorAction Stop
         if ($null -eq $svc) {
             throw "Service '$name' missing; cannot restart for promotion."
@@ -422,6 +566,20 @@ function Test-RollbackManifest {
     }
 }
 
+function Get-BoundServicePython {
+    # Blocker 1 (review REV7): the receipt must report the EXACT python bound
+    # per service. Read the live service-manifest written by the installer.
+    $manifestPath = Join-Path $AetherHome "services\service-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { return $null }
+    try {
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+        return [string]$manifest.service_python
+    }
+    catch {
+        return $null
+    }
+}
+
 function Invoke-UniversalRollback {
     param([string]$Reason)
 
@@ -436,15 +594,43 @@ function Invoke-UniversalRollback {
         throw $receipt.rollback_error
     }
 
-    Invoke-Installer -ReleasePath $rollbackPath -TargetSha $RollbackRelease -Phase "rollback"
-    Restart-GatewayServices -ReleasePath $rollbackPath
+    # Worker rollback compatibility: the rollback release (e.g. 956a48a) predates
+    # -SecretEnvPath support in aether-service-runner.ps1. Re-pointing the worker
+    # to that runner would crash-loop (no secret injection). The honest choice is
+    # to stop + set the worker to Manual and reconcile only Gateway/Watchdog, then
+    # record worker_deactivated=true so the outcome is explicit, not a hang.
+    $rollbackRunner = Join-Path $rollbackPath "deploy\windows\aether-service-runner.ps1"
+    $rollbackSupportsSecretEnv = $false
+    if (Test-Path -LiteralPath $rollbackRunner -PathType Leaf) {
+        $rollbackRunnerText = Get-Content -LiteralPath $rollbackRunner -Raw -ErrorAction SilentlyContinue
+        $rollbackSupportsSecretEnv = ($null -ne $rollbackRunnerText -and $rollbackRunnerText.Contains('$SecretEnvPath'))
+    }
+    $workerDeactivated = $false
+    if ($IncludeSenseWorker -and -not $rollbackSupportsSecretEnv) {
+        $workerSvc = Get-Service -Name "AetherSenseWorker" -ErrorAction SilentlyContinue
+        if ($null -ne $workerSvc -and $workerSvc.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+            Stop-Service -Name "AetherSenseWorker" -Force -ErrorAction Stop | Out-Null
+        }
+        Set-Service -Name "AetherSenseWorker" -StartupType Manual -ErrorAction SilentlyContinue
+        $workerDeactivated = $true
+        $receipt.worker_deactivated = $true
+    }
+
+    # Reconcile only the services the rollback release can safely host.
+    $rollbackIncludeWorker = ($IncludeSenseWorker -and $rollbackSupportsSecretEnv)
+    Invoke-Installer -ReleasePath $rollbackPath -TargetSha $RollbackRelease -Phase "rollback" -IncludeSenseWorker:$rollbackIncludeWorker
+    Restart-GatewayServices -ReleasePath $rollbackPath -IncludeSenseWorker:$rollbackIncludeWorker
     $receipt.restart_proven = $true
 
     # Every postcondition is observed independently, then aggregated. The
     # aggregate may only become true when ALL of them hold.
     $runningPathOk = $false
     try {
-        $runningPathOk = (Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $rollbackPath)
+        $rollbackBoundNames = @("AetherGateway", "AetherWatchdog")
+        if ($rollbackIncludeWorker) {
+            $rollbackBoundNames += "AetherSenseWorker"
+        }
+        $runningPathOk = (Confirm-ServiceBoundToRelease -Names $rollbackBoundNames -ReleasePath $rollbackPath)
     }
     catch {
         $runningPathOk = $false
@@ -469,6 +655,9 @@ function Invoke-UniversalRollback {
     $manifestOk = Test-RollbackManifest
     $receipt.rollback_manifest_proven = $manifestOk
 
+    # Blocker 1 (review REV7): report the EXACT python bound per service.
+    $receipt.rollback_service_python = Get-BoundServicePython
+
     $proven = ($runningPathOk -and $healthOk -and $aclOk -and $manifestOk)
     $receipt.rollback_proven = $proven
     if (-not $proven) {
@@ -484,6 +673,12 @@ function Invoke-UniversalRollback {
 
 $serviceMutationStarted = $false
 $rollbackAttempted = $false
+
+# -SkipReleaseVenv is a TEST-ONLY escape hatch (seams build no venv). Production
+# must never set it: a real promotion always builds/verifies the release venv.
+if ($SkipReleaseVenv -and -not $AllowNonElevated) {
+    throw "-SkipReleaseVenv is only permitted in test seams (-AllowNonElevated). Refusing to run in production."
+}
 
 try {
     # ---- Stage into a temporary directory + durable metadata, then publish. ----
@@ -516,22 +711,44 @@ try {
         }
         $releaseMeta | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $staging "AETHER_RELEASE.json") -Encoding UTF8
 
+        # Build the release-specific venv BEFORE the atomic publish so a failed
+        # build never leaves a published-but-broken release behind.
+        if (-not $SkipReleaseVenv) {
+            Build-ReleaseVenv -ReleasePath $staging -TargetSha $originMain
+        }
+
         # Atomic publish: rename staging -> final.
         Move-Item -LiteralPath $staging -Destination $targetRelease -ErrorAction Stop
         $receipt.published_this_run = $true
     }
 
     # --- Reconcile services to the new release. ---
+    # The release venv must be verified BEFORE any service mutation, both for a
+    # freshly published release and a reused one. -SkipReleaseVenv is a TEST-ONLY
+    # escape hatch (seams build no venv); production never sets it.
+    if (-not $SkipReleaseVenv) {
+        Assert-ReleaseVenv -ReleasePath $targetRelease
+    }
     $serviceMutationStarted = $true
     $receipt.service_mutation_started = $true
-    Invoke-Installer -ReleasePath $targetRelease -TargetSha $originMain -Phase "promote"
+    Invoke-Installer -ReleasePath $targetRelease -TargetSha $originMain -Phase "promote" -IncludeSenseWorker:$IncludeSenseWorker
     $receipt.reconciled = @("AetherGateway", "AetherWatchdog")
+    if ($IncludeSenseWorker) {
+        $receipt.reconciled += "AetherSenseWorker"
+    }
+    # Blocker 1 (review REV7): report the EXACT python bound per service (must
+    # be the verified release venv, never the bootstrap python that built it).
+    $receipt.service_python = Get-BoundServicePython
 
     # --- Restart in governed order, then prove live processes bind the release. ---
-    Restart-GatewayServices -ReleasePath $targetRelease
+    Restart-GatewayServices -ReleasePath $targetRelease -IncludeSenseWorker:$IncludeSenseWorker
     $receipt.restart_proven = $true
 
-    Confirm-ServiceBoundToRelease -Names @("AetherGateway", "AetherWatchdog") -ReleasePath $targetRelease | Out-Null
+    $boundNames = @("AetherGateway", "AetherWatchdog")
+    if ($IncludeSenseWorker) {
+        $boundNames += "AetherSenseWorker"
+    }
+    Confirm-ServiceBoundToRelease -Names $boundNames -ReleasePath $targetRelease | Out-Null
     $receipt.running_paths_proven = $true
 
     # Health gate against the exact target release.

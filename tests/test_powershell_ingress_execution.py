@@ -34,6 +34,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -866,6 +867,7 @@ def _promote_cmd(
         "-AllowNonElevated",
         "-HealthAttempts", "1",
         "-HealthTimeoutSeconds", "1",
+        "-SkipReleaseVenv",
     ]
     if skip_acl_check:
         cmd.append("-SkipAclCheck")
@@ -1158,3 +1160,207 @@ def test_release_promotion_dacl_post_rollback_failure_aggregate_false(tmp_path: 
     assert receipt["rollback_proven"] is False
     assert "acl" in (receipt.get("rollback_error") or "")
     assert (result._releases / result._sha / "AETHER_RELEASE.json").is_file()  # type: ignore[attr-defined]
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_installer_does_not_pass_secret_env_to_legacy_runner(tmp_path: Path):
+    """Regression (review 5a4fa71): the installer must be capability-aware.
+    When the release's runner predates $SecretEnvPath, the composed service argv
+    (observed via test seam) must NOT contain -SecretEnvPath. A modern runner
+    MUST contain it - but only when the LiveKit capability is enabled."""
+    for runner_label, runner_body, expect_secret_arg in [
+        ("legacy-no-secret-env",
+         "param([string]$Role, [string]$ReleasePath, [string]$AetherHome, "
+         "[string]$HostAddress, [int]$Port, [string]$PythonPath, [string]$ServiceName)\n",
+         False),
+        ("modern-with-secret-env",
+         "param([string]$Role, [string]$SecretEnvPath, [string]$ReleasePath, "
+         "[string]$AetherHome, [string]$HostAddress, [int]$Port, "
+         "[string]$PythonPath, [string]$ServiceName)\n",
+         True),
+    ]:
+        release = tmp_path / f"release-{runner_label}"
+        (release / "deploy" / "windows").mkdir(parents=True)
+        (release / "deploy" / "windows" / "aether-service-runner.ps1").write_text(
+            runner_body, encoding="utf-8",
+        )
+        (release / "deploy" / "windows" / "aether-windows-service.py").write_text(
+            "import sys\nprint(sys.argv)\n", encoding="utf-8",
+        )
+        (release / "deploy" / "windows" / "aether-watchdog.ps1").write_text(
+            "param([string]$AetherHome, [string]$HealthUrl, [string[]]$ServiceNames)\n",
+            encoding="utf-8",
+        )
+
+        argv_log = tmp_path / f"argv-{runner_label}.json"
+        aether_home = tmp_path / f"home-{runner_label}"
+        # Do NOT pre-create aether_home: Ensure-ProtectedAetherHome applies the
+        # exact SYSTEM+Admins DACL when it creates a new AETHER_HOME. A dir
+        # created with a default DACL would fail the installer's ACL assert.
+
+        result = subprocess.run(
+            [
+                POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(WINDOWS / "install-aether-services.ps1"),
+                "-ReleasePath", str(release),
+                "-PythonPath", str(sys.executable),
+                "-AetherHome", str(aether_home),
+                "-InstallSenseWorker",
+            ],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ, "AETHER_SERVICE_ARGV_LOG": str(argv_log),
+                 "AETHER_INSTALLER_SKIP_SCM": "1"},
+        )
+        assert argv_log.is_file(), f"argv log not written for {runner_label}:\n{result.stdout}\n{result.stderr}"
+        payload = json.loads(argv_log.read_text(encoding="utf-8-sig"))
+        assert payload["runner_supports_secret_env"] == expect_secret_arg, (
+            f"runner_supports_secret_env mismatch for {runner_label}: "
+            f"expected {expect_secret_arg}, got {payload['runner_supports_secret_env']}"
+        )
+        gateway_args = " ".join(payload["gateway_args"])
+        if expect_secret_arg:
+            assert "-SecretEnvPath" in gateway_args, (
+                f"modern runner should have -SecretEnvPath in args: {gateway_args[:200]}"
+            )
+        else:
+            assert "-SecretEnvPath" not in gateway_args, (
+                f"legacy runner should NOT have -SecretEnvPath in args: {gateway_args[:200]}"
+            )
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_installer_base_gateway_stays_secret_independent(tmp_path: Path):
+    """Blocker 2 (review REV7): WITHOUT -InstallSenseWorker the Gateway must keep
+    its secret-independent startup path - no -SecretEnvPath in the composed
+    service argv, even for a modern runner, and the install succeeds."""
+    release = tmp_path / "release-base"
+    (release / "deploy" / "windows").mkdir(parents=True)
+    (release / "deploy" / "windows" / "aether-service-runner.ps1").write_text(
+        "param([string]$Role, [string]$SecretEnvPath, [string]$ReleasePath, "
+        "[string]$AetherHome, [string]$HostAddress, [int]$Port, "
+        "[string]$PythonPath, [string]$ServiceName)\n",
+        encoding="utf-8",
+    )
+    (release / "deploy" / "windows" / "aether-windows-service.py").write_text(
+        "import sys\nprint(sys.argv)\n", encoding="utf-8",
+    )
+    (release / "deploy" / "windows" / "aether-watchdog.ps1").write_text(
+        "param([string]$AetherHome, [string]$HealthUrl, [string[]]$ServiceNames)\n",
+        encoding="utf-8",
+    )
+    argv_log = tmp_path / "argv-base.json"
+    result = subprocess.run(
+        [
+            POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(WINDOWS / "install-aether-services.ps1"),
+            "-ReleasePath", str(release),
+            "-PythonPath", str(sys.executable),
+            "-AetherHome", str(tmp_path / "home-base"),
+        ],
+        capture_output=True, text=True, timeout=120,
+        env={**os.environ, "AETHER_SERVICE_ARGV_LOG": str(argv_log),
+             "AETHER_INSTALLER_SKIP_SCM": "1"},
+    )
+    assert argv_log.is_file(), f"argv log not written:\n{result.stdout}\n{result.stderr}"
+    payload = json.loads(argv_log.read_text(encoding="utf-8-sig"))
+    gateway_args = " ".join(payload["gateway_args"])
+    assert "-SecretEnvPath" not in gateway_args, (
+        f"base Gateway must NOT receive -SecretEnvPath: {gateway_args[:200]}"
+    )
+    assert payload["sense_args"] == []
+    assert result.returncode == 0, f"base install should succeed without secret file:\n{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_installer_livekit_enabled_without_secret_fails_pre_mutation(tmp_path: Path):
+    """Blocker 2 (review REV7): with -InstallSenseWorker the secrets must be
+    valid BEFORE any SCM mutation. A missing secret file must fail the install
+    pre-mutation (never bind services and crash-loop afterwards)."""
+    release = tmp_path / "release-livekit"
+    (release / "deploy" / "windows").mkdir(parents=True)
+    (release / "deploy" / "windows" / "aether-service-runner.ps1").write_text(
+        "param([string]$Role, [string]$SecretEnvPath, [string]$ReleasePath, "
+        "[string]$AetherHome, [string]$HostAddress, [int]$Port, "
+        "[string]$PythonPath, [string]$ServiceName)\n",
+        encoding="utf-8",
+    )
+    (release / "deploy" / "windows" / "aether-windows-service.py").write_text(
+        "import sys\nprint(sys.argv)\n", encoding="utf-8",
+    )
+    (release / "deploy" / "windows" / "aether-watchdog.ps1").write_text(
+        "param([string]$AetherHome, [string]$HealthUrl, [string[]]$ServiceNames)\n",
+        encoding="utf-8",
+    )
+    aether_home = tmp_path / "home-livekit"
+    result = subprocess.run(
+        [
+            POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(WINDOWS / "install-aether-services.ps1"),
+            "-ReleasePath", str(release),
+            "-PythonPath", str(sys.executable),
+            "-AetherHome", str(aether_home),
+            "-InstallSenseWorker",
+        ],
+        capture_output=True, text=True, timeout=120,
+        env={**os.environ, "AETHER_INSTALLER_SKIP_SCM": "1",
+             "AETHER_INSTALLER_ENFORCE_PREFLIGHT": "1"},
+    )
+    assert result.returncode != 0, (
+        "LiveKit-enabled install with missing secret file must fail pre-mutation"
+    )
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "not provisioned" in combined.lower(), (
+        f"expected a 'not provisioned' preflight failure, got: {combined[-800:]}"
+    )
+    # Pre-mutation: no service manifest was ever written (no services rebound).
+    assert not (aether_home / "services" / "service-manifest.json").is_file()
+
+
+@pytest.mark.skipif(POWERSHELL is None, reason="PowerShell not available")
+def test_installer_binds_release_venv_over_bootstrap_python(tmp_path: Path):
+    """Blocker 1 (review REV7): a release venv must take priority over any
+    requested bootstrap/legacy python. Composed service argv must point at
+    <release>\\.venv\\Scripts\\python.exe, not the external -PythonPath."""
+    release = tmp_path / "release-venv"
+    (release / "deploy" / "windows").mkdir(parents=True)
+    (release / "deploy" / "windows" / "aether-service-runner.ps1").write_text(
+        "param([string]$Role, [string]$SecretEnvPath, [string]$ReleasePath, "
+        "[string]$AetherHome, [string]$HostAddress, [int]$Port, "
+        "[string]$PythonPath, [string]$ServiceName)\n",
+        encoding="utf-8",
+    )
+    (release / "deploy" / "windows" / "aether-windows-service.py").write_text(
+        "import sys\nprint(sys.argv)\n", encoding="utf-8",
+    )
+    (release / "deploy" / "windows" / "aether-watchdog.ps1").write_text(
+        "param([string]$AetherHome, [string]$HealthUrl, [string[]]$ServiceNames)\n",
+        encoding="utf-8",
+    )
+    venv_python = release / ".venv" / "Scripts" / "python.exe"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    argv_log = tmp_path / "argv-venv.json"
+    result = subprocess.run(
+        [
+            POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(WINDOWS / "install-aether-services.ps1"),
+            "-ReleasePath", str(release),
+            "-PythonPath", str(sys.executable),
+            "-AetherHome", str(tmp_path / "home-venv"),
+        ],
+        capture_output=True, text=True, timeout=120,
+        env={**os.environ, "AETHER_SERVICE_ARGV_LOG": str(argv_log),
+             "AETHER_INSTALLER_SKIP_SCM": "1"},
+    )
+    assert argv_log.is_file(), f"argv log not written:\n{result.stdout}\n{result.stderr}"
+    payload = json.loads(argv_log.read_text(encoding="utf-8-sig"))
+    venv_python = str(venv_python).lower()
+    service_python = str(payload.get("service_python") or "").lower()
+    assert venv_python in service_python, (
+        f"release venv python must be bound as service python: "
+        f"get {service_python!r}, want {venv_python!r}"
+    )
+    assert sys.executable.lower() not in service_python, (
+        f"bootstrap python must NOT be bound as service python: {service_python!r}"
+    )

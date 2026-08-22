@@ -311,9 +311,9 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
         RoomOptions = None  # type: ignore[assignment]
 
     try:
-        from livekit.plugins.turn_detector.multilingual import MultilingualModel
+        from livekit.agents.inference import TurnDetector
     except ModuleNotFoundError:
-        MultilingualModel = None  # type: ignore[assignment]
+        TurnDetector = None  # type: ignore[assignment]
 
     client = AetherGatewayVoiceClient(config)
     server = AgentServer()
@@ -423,8 +423,8 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
                 manifest_path="configs/runtime/gemini_tts_founder_alpha.yaml",
             ),
         }
-        if config.turn_detector == "multilingual" and MultilingualModel is not None:
-            session_kwargs["turn_detection"] = MultilingualModel()
+        if config.turn_detector == "multilingual" and TurnDetector is not None:
+            session_kwargs["turn_detection"] = TurnDetector()
         session = AgentSession(**session_kwargs)
 
         async def notify_turn(payload: dict[str, Any]) -> None:
@@ -555,6 +555,10 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
 
 
 def main() -> int:
+    # Credentials are injected exclusively by the service runner from the
+    # canonical protected secret file (role-scoped allowlist, strict parser).
+    # There is intentionally NO --env-file flag here: a second, weaker parser
+    # would create a second credential boundary (review REV7 follow-up).
     config = LiveKitWorkerConfig.from_env()
     if len(sys.argv) == 1 or sys.argv[1] == "status":
         print(json.dumps(config.readiness(), indent=2))

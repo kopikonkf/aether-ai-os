@@ -34,7 +34,7 @@ jobs:
       - name: Install source packages
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ./aether-core -e ./aether-tools -e "./aether-gateway[dev]"
+          python -m pip install -e ./aether-core -e ./aether-tools -e "./aether-gateway[dev,livekit]"
       - name: Compile source
         run: python -m compileall -q aether-core/src aether-tools/src aether-gateway/src scripts deploy/windows
       - name: Senses client reducer tests

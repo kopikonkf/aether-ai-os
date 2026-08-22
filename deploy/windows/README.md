@@ -34,9 +34,42 @@ Optional LiveKit worker:
 
     .\deploy\windows\install-aether-services.ps1 -InstallSenseWorker -Start
 
-Optional explicit Python path:
+LiveKit wiring is OPTIONAL (BREV7 / review REV7 Blocker 2): without
+`-InstallSenseWorker` the Gateway keeps its secret-independent startup path and
+never reads the secret file. With the flag, the secrets must exist and be valid
+BEFORE any service mutation; a missing or malformed file fails the install
+pre-mutation rather than crash-looping services after they are rebound.
 
-    .\deploy\windows\install-aether-services.ps1 -PythonPath C:\Aether\releases\Aether_OS_v0.19.2-founder-alpha-frozen.2\.venv\Scripts\python.exe -Start
+Both the Gateway (when LiveKit-enabled) and the LiveKit Sense Worker read their
+credentials from a canonical protected secret file at
+`C:\ProgramData\Aether\secrets\senses-livekit.env`. Provision it from a
+protected source env file OUTSIDE the repo (so rotated credentials never need
+to be stored in the dev tree):
+
+    .\scripts\provision-sense-worker-secrets.ps1 -SourceEnvPath C:\ProgramData\Aether\secrets\source-livekit.env
+
+The source file must be DACL-protected (SYSTEM + Administrators only, no
+inheritance) and must not be a reparse point. The provisioner writes a unique
+protected temp file, exact-verifies it, and atomically replaces the canonical
+file via `File.Replace`. Secrets are never accepted as command-line arguments.
+
+The service runner injects a role-scoped allowlist of keys into each service
+process (gateway: `LIVEKIT_URL/API_KEY/API_SECRET/AGENT_NAME/AETHER_SENSE_WORKER_TOKEN`;
+worker: same set). The runner refuses to load an unprotected file, an unexpected
+ACE, or a malformed/partial file, and never logs raw values. Never copy `.env`
+into a release, and never set LiveKit credentials as Machine-scope environment
+variables.
+
+Service python: an immutable release is bound to its own verified virtual
+environment `<release>\.venv\Scripts\python.exe` (built in staging and asserted
+before any service mutation). The bootstrap python that created the venv is
+never bound as the service python. Rollback to a legacy pre-venv release falls
+back to an explicit `-PythonPath`; the promotion receipt records the exact
+python bound per service.
+
+A `-PythonPath` may be supplied to override the release venv fallback for a
+legacy rollback release only; a release that has a venv ALWAYS binds
+`<release>\.venv\Scripts\python.exe` (self-contained immutable release).
 
 The installer is idempotent for existing service registrations. It rewrites the
 binary path, startup mode, recovery actions, and dependency configuration. In
