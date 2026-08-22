@@ -272,9 +272,15 @@ runtime path stays `WIRED:NO / ACTIVE:NO / FOUNDER-PROVEN:NO` until then.
   receipt, services bound to `C:\aether\releases\74263187...`, /health /senses
   /api/browser-senses/status 200, ACL protected, Caddy public 401 with the
   live host-agnostic hot-fix).
-- **Phase C (Senses) stays HOLD until PR #47 is merged.**
-- After merge: controlled Caddy reconcile (no bcrypt/tunnel/Gateway/AETHER_HOME
-  change) -> local/public proof -> device matrix (Windows Chromium + Android PWA).
+- **PR #47 MERGED** `main@9b47560a9df3dd636b0deba4e6c41276b34ca868`; controlled
+  Caddy reconcile PASS; full proof contract **PASS** — receipt v2
+  `C:\ProgramData\Aether\runtime\ingress\caddy-reconcile-receipt-v2.json`
+  (blob `53b7cea...`, receipt sha256 `3d698fcb...`, host matrix, authenticated 200,
+  invalid 401, header-strip, public aethers+www, backup/recovery disposition).
+- **Phase C (Senses) HOLD-RELEASE-READY**: supplementary proof PASS; awaiting Chief
+  Architect release of hold (verdict #5226495226). No approval Founder required.
+- Next after release: device matrix (Windows Chromium + Android PWA) -> provider/LiveKit
+  proof.
 - Do NOT repeat Phase A/B or any full Fase A–E.
 
 ## Cloudflare ingress PR #47 (host-agnostic Caddy listener, 2026-08-08)
