@@ -311,9 +311,9 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
         AgentSession,
         JobContext,
         ModelSettings,
-        TurnHandlingOptions,
         cli,
         inference,
+        llm,
     )
     from livekit.plugins import silero
 
@@ -422,9 +422,26 @@ def run_livekit_worker(config: LiveKitWorkerConfig | None = None) -> None:
             if config.greeting:
                 await self.session.say(config.greeting, add_to_chat_ctx=False)
 
-        async def on_user_turn_completed(self, turn_ctx: Any, new_message: Any) -> None:
-            text = str(getattr(new_message, "text_content", "") or "")
-            print(f"[AETHER-VOICE] user_turn_completed text={text!r}", flush=True)
+        async def llm_node(self, chat_ctx: Any, tools: list[Any], model_settings: ModelSettings):
+            del tools, model_settings
+            try:
+                items = list(getattr(chat_ctx, "items", ()) or ())
+            except Exception:
+                items = []
+            follow = ""
+            for item in reversed(items):
+                if str(getattr(item, "role", "")).lower() in ("user", "chatrole.user"):
+                    text = getattr(item, "text_content", None)
+                    if callable(text):
+                        text = text()
+                    if text:
+                        follow = str(text).strip()
+                        break
+            print(f"[AETHER-VOICE] llm_node invoked follow={follow!r}", flush=True)
+            if not follow:
+                follow = "Saya belum mendengar dengan jelas."
+            yield follow
+            return
 
     @server.rtc_session(agent_name=config.agent_name)
     async def aether_sense_session(ctx: JobContext) -> None:
